@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Whatsapp
+Exec=chromium --app=https://web.whatsapp.com
+Icon=/home/ahaan/.local/share/icons/webapps/whatsapp.png
+Type=Application
+Keywords=wa;
+

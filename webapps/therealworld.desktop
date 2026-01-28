@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=TRW
+Exec=chromium --app=https://app.jointherealworld.com/checklist
+Icon=/home/ahaan/.local/share/icons/webapps/trw.png
+Type=Application
+

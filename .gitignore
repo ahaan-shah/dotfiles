@@ -1,0 +1,11 @@
+# Logs
+*.log
+
+# Cache folders
+.cache/
+cache/
+
+# Temp files
+*.tmp
+*.bak
+*.swp
