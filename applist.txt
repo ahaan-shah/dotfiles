@@ -1,0 +1,9 @@
+Main Arch repo:
+firefox chromium yazi rofi kitty hyprland gnome-calculator imv mpv nautilus btop htop discord steam fastfetch cava waybar hyprpaper hypridle hyprlock swaync swayosd python python-pywal hyprpicker vim nano neovim libreoffice-still okular zathura bluetui starship obs-studio obsidian
+
+
+AUR:
+
+neofetch wlogout fum vscodium-bin librewolf-bin spotify google-chrome nomacs brave-bin clock-tui
+
+
