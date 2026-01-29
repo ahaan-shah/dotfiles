@@ -1,9 +1,14 @@
 Main Arch repo:
-firefox chromium yazi rofi kitty hyprland gnome-calculator imv mpv nautilus btop htop discord steam fastfetch cava waybar hyprpaper hypridle hyprlock swaync swayosd python python-pywal hyprpicker vim nano neovim libreoffice-still okular zathura bluetui starship obs-studio obsidian
+chromium yazi rofi kitty hyprland gnome-calculator imv mpv nautilus btop htop discord steam fastfetch cava waybar hyprpaper hypridle hyprlock swaync swayosd python python-pywal hyprpicker vim nano neovim libreoffice-still okular zathura bluetui starship obs-studio obsidian dysk figlet hyprshot fprintd minicom otf-codenewroman-nerd papirus-icon-theme rofimoji tealdeer ttf-hack-nerd ttf-ubuntu-mono-nerd ttf-ubuntu-nerd wget zip unzip pulsemixer
 
 
 AUR:
 
-neofetch wlogout fum vscodium-bin librewolf-bin spotify google-chrome nomacs brave-bin clock-tui
+neofetch wlogout fum-bin vscodium-bin librewolf-bin spotify google-chrome nomacs brave-bin clock-tui bibata-cursor-theme python-pywalfox 
 
+For obs to work:
+gstreamer-vaapi
+
+For pipewire to work: 
+pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber sof-firmware alsa-ucm-conf 
 
