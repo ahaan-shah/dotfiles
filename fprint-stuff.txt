@@ -1,0 +1,22 @@
+change this in /etc/security/faillock.conf
+
+deny = 20
+fail_interval = 600
+unlock_time = 120
+
+
+paste the stuff below into /etc/pam.d/hyprlock
+
+# Fingerprint via Hyprlock (NOT PAM) happens separately
+
+# Password auth
+auth    sufficient    pam_unix.so try_first_pass likeauth nullok nodelay
+
+# Deny if password fails
+auth    required      pam_deny.so
+
+# Standard account/session handling
+account include       system-local-login
+password include      system-local-login
+session include       system-local-login
+
