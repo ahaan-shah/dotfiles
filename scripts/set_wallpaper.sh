@@ -19,7 +19,7 @@ CAVA_CONFIG="$HOME/.config/cava/config"
 
 # Update hyprpaper.conf (assuming single monitor setup)
 echo "wallpaper {" > "$HYPERPAPER_CONFIG"
-echo "monitor = eDP-2" >> $HYPERPAPER_CONFIG
+echo "monitor = eDP-1" >> $HYPERPAPER_CONFIG
 echo "path = $WALLPAPER_PATH" >> $HYPERPAPER_CONFIG
 echo "fit_mode = cover" >> $HYPERPAPER_CONFIG
 echo "}" >> $HYPERPAPER_CONFIG
@@ -31,6 +31,9 @@ hyprpaper & disown
 
 # Apply pywal colorscheme
 wal -i "$WALLPAPER_PATH"
+
+# Update Spicetify theme from pywal colors
+~/.config/scripts/pywal-spicetify.sh
 
 # Update Hyprlock background path while keeping other settings
 sed -i "s|path = .*|path = $WALLPAPER_PATH|g" "$HYPRLOCK_CONFIG"

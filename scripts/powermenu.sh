@@ -9,6 +9,10 @@ choice=$(echo -e "$options" | rofi -dmenu -i -p "Power" \
 
 case "$choice" in
     Sleep)
+        pkill rofi
+        sleep 0.2
+        loginctl lock-session
+        sleep 0.2
         systemctl suspend
         ;;
     Shutdown)
