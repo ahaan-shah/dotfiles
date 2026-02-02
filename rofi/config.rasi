@@ -1,0 +1,10 @@
+/* Dark theme. */
+@import "~/.cache/wal/colors-rofi-dark"
+
+configuration {
+    show-icons: true;
+    drun-display-format: "{name}";
+    drun-match-fields: "name,generic,comment,keywords";
+
+}
+

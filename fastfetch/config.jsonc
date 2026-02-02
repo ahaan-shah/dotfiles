@@ -1,0 +1,108 @@
+{
+    "logo": {
+    "color": {
+            "1": "cyan",
+            "2": "cyan"
+        },
+            "padding": {
+                "top": 1
+            }
+        },
+    "display": {
+        "separator": "   ",
+        "color": {
+            "separator": "1" // Bold
+        },
+        "constants": [
+            "───────────────────────────"
+        ],
+        "key": {
+            "type": "both",
+            "paddingLeft": 4
+        }
+    },
+    "modules": [
+        {
+            "type": "title",
+            "format": "                              {user-name-colored}{at-symbol-colored}{host-name-colored}"
+        },
+        "break",
+        {
+            "type": "custom",
+            "format": "┌{$1} {#1}System Information{#} {$1}┐"
+        },
+        "break",
+        {
+            "key": "OS           ",
+            "keyColor": "cyan",
+            "type": "os"
+        },
+        {
+            "key": "Machine      ",
+            "keyColor": "cyan",
+            "type": "host"
+        },
+        {
+            "key": "Kernel       ",
+            "keyColor": "cyan",
+            "type": "kernel"
+        },
+        {
+            "key": "Uptime       ",
+            "keyColor": "cyan",
+            "type": "uptime"
+        },
+        {
+            "key": "Resolution   ",
+            "keyColor": "cyan",
+            "type": "display",
+            "compactType": "original-with-refresh-rate"
+        },
+        {
+            "key": "WM           ",
+            "keyColor": "cyan",
+            "type": "wm"
+        },
+        {
+            "key": "DE           ",
+            "keyColor": "cyan",
+            "type": "de"
+        },
+        {
+            "key": "Shell        ",
+            "keyColor": "cyan",
+            "type": "shell"
+        },
+        {
+            "key": "Terminal     ",
+            "keyColor": "cyan",
+            "type": "terminal"
+        },
+        {
+            "key": "CPU          ",
+            "keyColor": "cyan",
+            "type": "cpu"
+        },
+        {
+            "key": "GPU          ",
+            "keyColor": "cyan",
+            "type": "gpu"
+        },
+        {
+            "key": "Memory       ",
+            "keyColor": "cyan",
+            "type": "memory"
+        },
+        "break",
+        {
+            "type": "custom",
+            "format": "└{$1}────────────────────{$1}┘"
+        },
+        "break",
+        {
+            "type": "colors",
+            "paddingLeft": 34,
+            "symbol": "circle"
+        }
+    ]
+}
