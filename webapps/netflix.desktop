@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=Netflix
-Exec=chromium --app=https://www.netflix.com/in/
-Icon=/home/ahaan/.local/share/icons/webapps/netflix.png
-Type=Application
-Categories=Utility;
-Keywords=nf;
-

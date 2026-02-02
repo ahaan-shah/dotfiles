@@ -6,7 +6,7 @@ AUR:
 
 neofetch wlogout fum-bin vscodium-bin librewolf-bin spotify google-chrome nomacs brave-bin clock-tui bibata-cursor-theme python-pywalfox 
 
-For obs to work:
+For obs to work with nvidia:
 gstreamer-vaapi
 
 For pipewire to work: 

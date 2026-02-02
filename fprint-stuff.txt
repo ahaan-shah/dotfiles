@@ -20,13 +20,3 @@ account include       system-local-login
 password include      system-local-login
 session include       system-local-login
 
-
-#paste this in /etc/pam.d/sddm
-
-#%PAM-1.0
-
-auth        include     system-login
-account     include     system-login
-password    include     system-login
-session     optional    pam_keyinit.so          force revoke
-session     include     system-login

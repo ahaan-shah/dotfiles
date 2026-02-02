@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=LMS
-Exec=chromium --app=https://lighthouse.manipal.edu/
-Icon=/home/ahaan/.local/share/icons/webapps/mit.png
-Type=Application
-Categories=Utility;
-Keywords=study;college;lms;
-

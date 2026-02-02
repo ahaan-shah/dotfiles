@@ -1,7 +1,0 @@
-[Desktop Entry]
-Name=Coursera
-Exec=chromium --app=https://www.coursera.org/?skipBrowseRedirect=true
-Icon=/home/ahaan/.local/share/icons/webapps/coursera.png
-Type=Application
-Categories=Utility;
-

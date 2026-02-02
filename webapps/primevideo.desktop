@@ -1,7 +1,0 @@
-[Desktop Entry]
-Name=Prime Video
-Exec=chromium --app=https://www.primevideo.com/region/eu/storefront?ref_=atv_pr_sw_sc
-Icon=/home/ahaan/.local/share/icons/webapps/primevideo.png
-Type=Application
-Categories=Video;
-Keywords=pv;
