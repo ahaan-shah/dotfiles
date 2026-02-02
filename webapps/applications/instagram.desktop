@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Instagram
+Exec=chromium --app=https://www.instagram.com/
+Icon=/home/ahaan/.local/share/icons/webapps/instagram.png
+Type=Application
+Keywords=ig;

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Gmail
+Exec=chromium --app=https://mail.google.com/mail/u/1/#inbox
+Icon=/home/ahaan/.local/share/icons/webapps/gmail.png
+Type=Application
+Categories=Utility;

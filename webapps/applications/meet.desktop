@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Meet
+Exec=chromium --app=https://meet.google.com/landing?hs=197&authuser=1&pli=1
+Icon=/home/ahaan/.local/share/icons/webapps/meet.png
+Type=Application
+Categories=Utility;

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Youtube
+Exec=brave --app=https://www.youtube.com/
+Icon=/home/ahaan/.local/share/icons/webapps/youtube.png
+Type=Application
+Categories=Utility;
+Keywords=yt;
+
