@@ -1,35 +1,45 @@
 #!/bin/bash
 
-# Function to backup a configuration file
-backup_file() {
+DOTDIR="$HOME/.config/dotfiles"
+
+sync() {
     local src="$1"
     local dst="$2"
 
-    if [ -f "$src" ]; then
-        cp -p "$src" "$dst"
-#        echo "Backed up $src to $dst"
+    if [ -e "$src" ]; then
+        mkdir -p "$dst"
+        rsync -a --delete "$src"/ "$dst"/
+        #echo "Synced $src → $dst"
     else
-        echo "Warning: Source file $src does not exist."
+        echo "Missing: $src"
     fi
 }
 
-# Backup configurations
-backup_file "/home/ahaan/.config/cava/config" "/home/ahaan/.config/bkps/cava/configbkp"
-backup_file "/home/ahaan/.config/fastfetch/config.jsonc" "/home/ahaan/.config/bkps/fastfetch/configbkp.jsonc"
-backup_file "/home/ahaan/.config/hypr/hypridle.conf" "/home/ahaan/.config/bkps/hypr/hypridlebkp.conf"
-backup_file "/home/ahaan/.config/hypr/hyprlock.conf" "/home/ahaan/.config/bkps/hypr/hyprlockbkp.conf"
-backup_file "/home/ahaan/.config/hypr/hyprpaper.conf" "/home/ahaan/.config/bkps/hypr/hyprpaperbkp.conf"
-backup_file "/home/ahaan/.config/hypr/hyprland.conf" "/home/ahaan/.config/bkps/hypr/hyprlandbkp.conf"
-backup_file "/home/ahaan/.config/kitty/kitty.conf" "/home/ahaan/.config/bkps/kitty/kittybkp.conf"
-backup_file "/home/ahaan/.config/neofetch/config.conf" "/home/ahaan/.config/bkps/neofetch/configbkp.conf"
-backup_file "/home/ahaan/.config/rofi/config.rasi" "/home/ahaan/.config/bkps/rofi/configbkp.rasi"
-backup_file "/home/ahaan/.config/swaync/config.json" "/home/ahaan/.config/bkps/swaync/configbkp.json"
-backup_file "/home/ahaan/.config/swaync/style.css" "/home/ahaan/.config/bkps/swaync/stylebkp.css"
-backup_file "/home/ahaan/.config/waybar/config.jsonc" "/home/ahaan/.config/bkps/waybar/configbkp.jsonc"
-backup_file "/home/ahaan/.config/waybar/style.css" "/home/ahaan/.config/bkps/waybar/stylebkp.css"
-backup_file "/home/ahaan/.config/wlogout/layout" "/home/ahaan/.config/bkps/wlogout/layoutbkp"
-backup_file "/home/ahaan/.config/wlogout/style.css" "/home/ahaan/.config/bkps/wlogout/stylebkp.css"
-backup_file "/home/ahaan/.bashrc" "/home/ahaan/.config/bkps/bash/bashrcbkp"
+# ---------------- CONFIG FOLDERS ----------------
+sync "$HOME/.config/hypr"        "$DOTDIR/hypr"
+sync "$HOME/.config/waybar"      "$DOTDIR/waybar"
+sync "$HOME/.config/rofi"        "$DOTDIR/rofi"
+sync "$HOME/.config/kitty"       "$DOTDIR/kitty"
+sync "$HOME/.config/cava"        "$DOTDIR/cava"
+sync "$HOME/.config/fastfetch"   "$DOTDIR/fastfetch"
+sync "$HOME/.config/neofetch"    "$DOTDIR/neofetch"
+sync "$HOME/.config/fum"         "$DOTDIR/fum"
+sync "$HOME/.config/swaync"      "$DOTDIR/swaync"
+sync "$HOME/.config/swayosd"     "$DOTDIR/swayosd"
+sync "$HOME/.config/scripts"     "$DOTDIR/scripts"
+
+# ---------------- SINGLE FILES ----------------
+mkdir -p "$DOTDIR/shell"
+rsync -a "$HOME/.zshrc" "$DOTDIR/shell/.zshrc"
+rsync -a "$HOME/.bashrc" "$DOTDIR/shell/.bashrc"
+
+mkdir -p "$DOTDIR"
+rsync -a "$HOME/.config/starship.toml" "$DOTDIR/starship/starship.toml"
+
+# ---------------- DESKTOP FILES ----------------
+sync "$HOME/.local/share/applications" "$DOTDIR/webapps/applications"
+sync "$HOME/.local/share/icons/webapps" "$DOTDIR/webapps/icons"
 
 echo ""
-echo "Backup process completed."
+echo "Dotfiles sync complete 🚀"
+

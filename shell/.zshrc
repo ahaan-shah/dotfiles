@@ -31,18 +31,18 @@ alias grep='grep --color=auto'
 alias cls='clear'
 
 # Personal aliases
-alias top="vtop --theme brew"
-# alias oldtop="/usr/bin/top"
 alias neo="neofetch"
 alias ff="fastfetch"
 alias yaz="yazi"
-alias bkpconfigs="/home/ahaan/.config/scripts/backup_configs.sh"
+alias bkpdots="/home/ahaan/.config/scripts/backup_configs.sh"
 alias backupnow="/home/ahaan/.config/scripts/backup_files.sh"
 alias py="python"
-alias arduinodata="/home/ahaan/college/year-2/sem4/dsp/Arduino/scripts/log_arduino.sh"
+#alias arduinodata="/home/ahaan/college/year-2/sem4/dsp/Arduino/scripts/log_arduino.sh"
 alias f="figlet"
 alias btui="bluetui"
 alias ave="source .venv/bin/activate"
+alias jnotes="jupyter notebook"
+alias jlab="jupyter lab"
 
 # system update and install and remove packages
 alias update="yay -Syu"
