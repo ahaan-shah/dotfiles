@@ -35,6 +35,9 @@ wal -i "$WALLPAPER_PATH"
 # Update Spicetify theme from pywal colors
 ~/.config/scripts/pywal-spicetify.sh
 
+#Update pywalfox
+pywalfox update
+
 # Update Hyprlock background path while keeping other settings
 sed -i "s|path = .*|path = $WALLPAPER_PATH|g" "$HYPRLOCK_CONFIG"
 
