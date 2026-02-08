@@ -13,7 +13,7 @@ rm -rf "$BACKUP_DIR"
 mkdir -p "$BACKUP_DIR"
 
 # Copy directories
-cp -r /home/ahaan/Ahahahaan "$BACKUP_DIR"
+cp -r /home/ahaan/ahahahaan "$BACKUP_DIR"
 cp -r /home/ahaan/college "$BACKUP_DIR"
 cp -r /home/ahaan/Documents "$BACKUP_DIR"
 cp -r /home/ahaan/L4-strat-dev "$BACKUP_DIR"
