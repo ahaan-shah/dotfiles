@@ -51,6 +51,7 @@ alias remove="yay -Rns "
 alias search="yay -Ss"
 
 # encryption
+alias sycrypt="gpg -c"
 alias encrypt="gpg --encrypt -r ahaanshah04@gmail.com"
 alias decrypt="gpg --decrypt"
 
@@ -62,7 +63,7 @@ eval "$(starship init zsh)"
 (cat ~/.cache/wal/sequences &)
 
 # TTY support
-source ~/.cache/wal/colors-tty.sh
+#source ~/.cache/wal/colors-tty.sh
 
 ### ---------- DEFAULT EDITOR ----------
 export EDITOR="vim"

@@ -33,6 +33,9 @@ mkdir -p "$DOTDIR/shell"
 rsync -a "$HOME/.zshrc" "$DOTDIR/shell/.zshrc"
 rsync -a "$HOME/.bashrc" "$DOTDIR/shell/.bashrc"
 
+mkdir -p "$DOTDIR/spicetify/Themes"
+rsync -a "$HOME/.config/spicetify/Themes/pywaldynamic" "$DOTDIR/spicetify/Themes"
+
 mkdir -p "$DOTDIR"
 rsync -a "$HOME/.config/starship.toml" "$DOTDIR/starship/starship.toml"
 
