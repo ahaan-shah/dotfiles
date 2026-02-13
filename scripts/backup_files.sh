@@ -25,7 +25,7 @@ cp -r /home/ahaan/Videos "$BACKUP_DIR"
 cp -r /home/ahaan/journal.txt "$BACKUP_DIR"
 cp -r /home/ahaan/reflections.txt "$BACKUP_DIR"
 cp -r /home/ahaan/memes "$BACKUP_DIR"
-cp -r /home/ahaan/.config/scripts "$BACKUP_DIR"
+cp -r /home/ahaan/Extra "$BACKUP_DIR"
 
 # Log the backup
 echo "Backup completed at $(date)" >> "$BACKUP_DIR/backup.log"

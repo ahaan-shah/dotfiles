@@ -104,7 +104,7 @@
             "interval": 1,
             "exec": "~/.config/waybar/scripts/volume.sh",
             "on-click": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
-	    "on-click-right": "kitty --title pulsemixer zsh -i -c pulsemixer",
+	    "on-click-right": "kitty --title wiremix zsh -i -c wiremix",
             "on-scroll-up": "pactl set-sink-volume @DEFAULT_SINK@ +5%",
             "on-scroll-down": "pactl set-sink-volume @DEFAULT_SINK@ -5%"
         },
