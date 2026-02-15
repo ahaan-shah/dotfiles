@@ -1,5 +1,6 @@
 {
     "layer": "top",
+    "exclusive": true,
         "position": "top",
         "reload_style_on_change": true,
         "modules-left": ["custom/notification","clock","mpris"],
@@ -31,6 +32,8 @@
 	},
 	"mpris": {
         "format": "[   {status_icon} | {dynamic} ]",
+        "format-stopped": "",
+ 	"format-disconnected": "",
         "interval": 0,
         "dynamic-len": 50,
         "status-icons": {
@@ -40,8 +43,8 @@
         },
         "dynamic-order": ["title"],
         "on-click-right": "playerctl next",
-	"player": "spotify"
-
+	"player": "spotify",
+	"exec-on-event": true
     },
         "network": {
             "format-wifi": "",
@@ -116,17 +119,6 @@
             "on-scroll-up": "brightnessctl set +5%",
             "on-scroll-down": "brightnessctl set 5%-",
             "interval": 1
-        },
-        "cpu": {
-            "format": "󰻠",
-            "tooltip": true
-        },
-        "memory": {
-            "format": ""
-        },
-        "temperature": {
-            "critical-threshold": 80,
-            "format": "",
         },
         "tray": {
             "icon-size": 14,
