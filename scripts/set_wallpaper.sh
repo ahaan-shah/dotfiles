@@ -33,7 +33,7 @@ hyprpaper & disown
 wal -i "$WALLPAPER_PATH"
 
 # Update Spicetify theme from pywal colors
-~/.config/scripts/pywal-spicetify.sh
+#~/.config/scripts/pywal-spicetify.sh
 
 #Update pywalfox
 pywalfox update
@@ -78,4 +78,4 @@ fi
 hyprctl reload
 
 # Notify user
-#notify-send "Wallpaper Updated" "Hyprpaper, Pywal, Hyprlock, Waybar, SwayNC, and Cava have been updated."
+#notify-send "Wallpaper Updated"

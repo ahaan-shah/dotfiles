@@ -11,6 +11,8 @@ case "$choice" in
     Sleep)
         pkill rofi
         sleep 0.2
+	hypridle & disown
+	sleep 0.1
         loginctl lock-session
         sleep 0.2
         systemctl suspend

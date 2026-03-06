@@ -2,7 +2,7 @@
 
 @define-color text @color15;
 @define-color bg alpha(@background, 0.93);        /* less transparent */
-@define-color bg-strong alpha(@background, 0.8); /* control center */
+@define-color bg-strong alpha(@background, 0.95); /* control center */
 @define-color mycolor @color9;
 @define-color border-color alpha(@color7, 0.8);  /* stronger thin border */
 
