@@ -33,10 +33,10 @@ hyprpaper & disown
 wal -i "$WALLPAPER_PATH"
 
 #Update Snappy-Switcher
-~/.config/scripts/snappy-switcher-pywaltheme.sh
+#~/.config/scripts/snappy-switcher-pywaltheme.sh
 
-pkill snappy-switcher --daemon
-snappy-switcher --daemon & disown
+#pkill snappy-switcher --daemon
+#snappy-switcher --daemon & disown
 
 # Update Spicetify theme from pywal colors
 #~/.config/scripts/pywal-spicetify.sh

@@ -9,12 +9,25 @@
 
 
         "hyprland/workspaces": {
-            "format": "{icon}",
-            "format-icons": {
-                "active": "",
-                "default": "",
-                "empty": ""
-            },
+	    "on-click": "activate",
+	    "activate-only": false,
+	    "all-outputs": true,
+	    "format": "{name}",
+	    "format-icons": {
+	      "1": "*",
+	      "2": "*",
+	      "3": "*",
+	      "4": "*",
+	      "5": "*",
+	      "6": "*",
+	      "7": "*",
+	      "8": "*",
+	      "9": "*",
+	      "10": "*",
+	      "urgent": "*",
+	      "active": "*",
+	      "default": "*",
+	    },
             "persistent-workspaces": {
                 "*": [ 1,2,3,4,5,6 ]
             }
@@ -28,6 +41,12 @@
         "clock": {
 	    "format": "{:%I:%M %p} ",
 	    "interval": 1,
+	    "tooltip-format": "<tt>{calendar}<tt>",
+	    "calendar": {
+		    "format": {
+			    "today": "<span color='#FFFFFF'><b>{}</b></span>"
+		    }
+	    },
 	    "on-click": "kitty --title calcurse zsh -i -c calcurse"
 	},
 	"mpris": {
