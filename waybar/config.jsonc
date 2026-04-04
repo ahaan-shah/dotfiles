@@ -63,7 +63,7 @@
         "dynamic-order": ["title"],
         "on-click-right": "playerctl next",
 	"player": "spotify",
-	"exec-on-event": true
+	"exec-on-event": false
     },
         "network": {
             "format-wifi": "",

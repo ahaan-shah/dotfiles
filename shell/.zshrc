@@ -44,6 +44,8 @@ alias ave="source .venv/bin/activate"
 alias jnotes="jupyter notebook"
 alias jlab="jupyter lab"
 
+alias connectiphone="ifuse ~/iphone && nautilus ~/iphone/DCIM"
+
 # system update and install and remove packages
 alias update="yay -Syu"
 alias install="yay -S "
