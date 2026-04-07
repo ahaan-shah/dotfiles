@@ -45,6 +45,7 @@ alias jnotes="jupyter notebook"
 alias jlab="jupyter lab"
 
 alias connectiphone="ifuse ~/iphone && nautilus ~/iphone/DCIM"
+alias ninitimes="/home/ahaan/.config/scripts/sleep-timer.sh"
 
 # system update and install and remove packages
 alias update="yay -Syu"
