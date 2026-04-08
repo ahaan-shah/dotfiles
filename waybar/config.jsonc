@@ -41,12 +41,6 @@
         "clock": {
 	    "format": "{:%I:%M %p} ",
 	    "interval": 1,
-	    "tooltip-format": "<tt>{calendar}<tt>",
-	    "calendar": {
-		    "format": {
-			    "today": "<span color='#FFFFFF'><b>{}</b></span>"
-		    }
-	    },
 	    "on-click": "kitty --title calcurse zsh -i -c calcurse"
 	},
 	"mpris": {
