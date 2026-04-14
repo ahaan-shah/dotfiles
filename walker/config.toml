@@ -1,4 +1,6 @@
 theme = "spotlight"
+hide_quick_activation = true
+hide_action_hints = true
 
 [providers]
 # What to search by default when you open Walker and start typing
