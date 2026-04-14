@@ -7,4 +7,3 @@ configuration {
     drun-match-fields: "name,generic,comment,keywords";
 
 }
-

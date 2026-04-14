@@ -32,16 +32,17 @@ hyprpaper & disown
 # Apply pywal colorscheme
 wal -i "$WALLPAPER_PATH"
 
-#Update Snappy-Switcher
-#~/.config/scripts/snappy-switcher-pywaltheme.sh
+# Update Walker theme
+bash ~/.config/scripts/update-walker-theme.sh
 
-#pkill snappy-switcher --daemon
-#snappy-switcher --daemon & disown
+# Restart walker properly
+gapplication quit dev.quoteme.Walker 2>/dev/null
+walker --gapplication-service &
 
 # Update Spicetify theme from pywal colors
 #~/.config/scripts/pywal-spicetify.sh
 
-#Update pywalfox
+# Update pywalfox
 pywalfox update
 
 # Update Hyprlock background path while keeping other settings

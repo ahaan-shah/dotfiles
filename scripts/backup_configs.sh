@@ -19,6 +19,8 @@ sync() {
 sync "$HOME/.config/hypr"        "$DOTDIR/hypr"
 sync "$HOME/.config/waybar"      "$DOTDIR/waybar"
 sync "$HOME/.config/rofi"        "$DOTDIR/rofi"
+sync "$HOME/.config/walker"      "$DOTDIR/walker"
+sync "$HOME/.config/elephant"    "$DOTDIR/elephant"
 sync "$HOME/.config/kitty"       "$DOTDIR/kitty"
 sync "$HOME/.config/cava"        "$DOTDIR/cava"
 sync "$HOME/.config/fastfetch"   "$DOTDIR/fastfetch"
