@@ -102,7 +102,6 @@ row:selected .item-box {
 .preview {
   border: 1px solid alpha(@accent_bg_color, 0.25);
   border-radius: 10px;
-  padding: 12px;
   color: @theme_fg_color;
 }
 
