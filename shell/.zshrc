@@ -28,7 +28,7 @@ source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zs
 alias ll='ls -lah'
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
-alias cls='clear'
+alias clr='clear'
 
 # Personal aliases
 alias neo="neofetch"
