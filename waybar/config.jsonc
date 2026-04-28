@@ -3,8 +3,8 @@
     "exclusive": true,
         "position": "top",
         "reload_style_on_change": true,
-        "modules-left": ["custom/notification","clock","mpris"],
-        "modules-center": ["hyprland/workspaces"],
+        "modules-left": ["custom/notification","hyprland/workspaces"],
+        "modules-center": ["clock","mpris"],
         "modules-right": ["group/expand","bluetooth","network","battery"],
 
 
@@ -13,23 +13,23 @@
 	    "activate-only": false,
 	    "all-outputs": true,
 	    "format": "{name}",
+	    "format": "{icon}",
 	    "format-icons": {
-	      "1": "*",
-	      "2": "*",
-	      "3": "*",
-	      "4": "*",
-	      "5": "*",
-	      "6": "*",
-	      "7": "*",
-	      "8": "*",
-	      "9": "*",
-	      "10": "*",
+	      "1": "1",
+	      "2": "2",
+	      "3": "3",
+	      "4": "4",
+	      "5": "5",
+	      "6": "6",
+	      "7": "7",
+	      "8": "",
+	      "9": "9",
+	      "10": "",
 	      "urgent": "*",
-	      "active": "*",
 	      "default": "*",
 	    },
             "persistent-workspaces": {
-                "*": [ 1,2,3,4,5,6 ]
+                "*": [ 1,2,3,4 ]
             }
         },
         "custom/notification": {
@@ -39,9 +39,9 @@
             "escape": true
         },
         "clock": {
-	    "format": "{:%I:%M %p} ",
+	    "format": "{:%a %d %B | %I:%M %p}",
 	    "interval": 1,
-	    "on-click": "kitty --title calcurse zsh -i -c calcurse"
+	    "on-click": "gnome-calendar"
 	},
 	"mpris": {
         "format": "[   {status_icon} | {dynamic} ]",

@@ -14,17 +14,22 @@ seconds=$((minutes * 60))
 
 echo "System will suspend in $minutes minutes..."
 
-# Wait and suspend with proper session handling
-sleep "$seconds" && {
+# Run everything detached
+(
+    sleep "$seconds"
 
     # Start hypridle safely
     hypridle & disown
     sleep 0.1
 
-    # Lock session (IMPORTANT)
+    # Lock session
     loginctl lock-session
     sleep 0.2
 
     # Suspend system
     systemctl suspend
-}
+
+) >/dev/null 2>&1 & disown
+
+# Exit immediately so terminal closes
+exit
