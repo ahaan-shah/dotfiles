@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Claude
 Exec=chromium --app=https://claude.ai/new
-Icon=/home/ahaan/.local/share/icons/webapps/claude.png
+Icon=/home/ahaan/.local/share/icons/webapps/claude.svg
 Type=Application
 Categories=Utility;
 Keywords=claude;ai;
