@@ -11,4 +11,8 @@ while true; do
     sleep 1          # brief pause so the old process is fully gone
     waybar &
     disown
+    sleep 0.5
+    CURRENT=$(hyprctl activeworkspace -j | jq '.id')
+    hyprctl dispatch togglespecialworkspace
+    hyprctl dispatch togglespecialworkspace
 done

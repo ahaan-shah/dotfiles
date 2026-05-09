@@ -1,30 +1,37 @@
 #!/usr/bin/env bash
 
 # Options
-options="Sleep\nShutdown\nReboot\nLogout"
+options=(
+"󰤄 Sleep"
+"󰐥 Shutdown"
+"󰜉 Reboot"
+"󰍃 Logout"
+)
 
 # Show rofi menu
-choice=$(echo -e "$options" | rofi -dmenu -i -p "Power" \
+choice=$(printf "%s\n" "${options[@]}" | rofi -dmenu -i -p "Power" \
     -theme-str 'window {width: 30%;} listview {lines: 8;}')
 
 case "$choice" in
-    Sleep)
+    "󰤄 Sleep")
         pkill rofi
         sleep 0.2
-	hypridle & disown
-	sleep 0.1
+        hypridle & disown
+        sleep 0.1
         loginctl lock-session
         sleep 0.2
         systemctl suspend
         ;;
-    Shutdown)
+        
+    "󰐥 Shutdown")
         systemctl poweroff
         ;;
-    Reboot)
+        
+    "󰜉 Reboot")
         systemctl reboot
         ;;
-    Logout)
-        # Detect session and log out properly
+        
+    "󰍃 Logout")
         if [ "$XDG_CURRENT_DESKTOP" = "Hyprland" ]; then
             hyprctl dispatch exit
         elif [ "$DESKTOP_SESSION" = "plasma" ]; then
@@ -34,4 +41,3 @@ case "$choice" in
         fi
         ;;
 esac
-

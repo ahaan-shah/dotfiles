@@ -4,10 +4,10 @@ PID=$(pgrep -x hypridle)
 
 if [ -n "$PID" ]; then
     pkill -x hypridle
-    notify-send "Hypridle Inactive"
+    notify-send "Always Awake ☕️"
 else
     hypridle &
     disown
-    notify-send "Hypridle Active"
+    notify-send "Sorta Awake 😴"
 fi
 

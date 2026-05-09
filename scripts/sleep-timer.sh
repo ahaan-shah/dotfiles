@@ -13,7 +13,7 @@ fi
 seconds=$((minutes * 60))
 
 echo "System will suspend in $minutes minutes..."
-
+notify-send "Arch will sleep soon 🌙"
 # Run everything detached
 (
     sleep "$seconds"
