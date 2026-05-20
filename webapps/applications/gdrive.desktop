@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Drive
 Exec=chromium --app=https://drive.google.com/drive/u/1/my-drive
+StartupWMClass=chrome-drive.google.com__drive_u_1_my-drive-Default
 Icon=/home/ahaan/.local/share/icons/webapps/gdrive.png
 Type=Application
 Categories=Utility;

@@ -8,10 +8,10 @@ INTERVAL=$((30 * 60))  # 30 minutes in seconds
 while true; do
     sleep "$INTERVAL"
     pkill waybar
-    sleep 1          # brief pause so the old process is fully gone
+    sleep 0.2          # brief pause so the old process is fully gone
     waybar &
     disown
-    sleep 0.5
+    sleep 0.2
     CURRENT=$(hyprctl activeworkspace -j | jq '.id')
     hyprctl dispatch togglespecialworkspace
     hyprctl dispatch togglespecialworkspace

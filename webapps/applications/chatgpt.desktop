@@ -2,6 +2,7 @@
 Name=ChatGPT
 Exec=chromium --app=https://chat.openai.com
 Icon=/home/ahaan/.local/share/icons/webapps/openai.svg
+StartupWMClass=chrome-chat.openai.com__-Default
 Type=Application
 Categories=Utility;
 Keywords=gpt;ai;

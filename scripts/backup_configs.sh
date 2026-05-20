@@ -29,6 +29,7 @@ sync "$HOME/.config/fum"         "$DOTDIR/fum"
 sync "$HOME/.config/swaync"      "$DOTDIR/swaync"
 sync "$HOME/.config/swayosd"     "$DOTDIR/swayosd"
 sync "$HOME/.config/scripts"     "$DOTDIR/scripts"
+sync "$HOME/.config/macdock"	 "$DOTDIR/macdock"
 sync "$HOME/Pictures/wallpapers" "$DOTDIR/wallpapers"
 
 # ---------------- SINGLE FILES ----------------

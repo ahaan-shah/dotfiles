@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Youtube
 Exec=brave --app=https://www.youtube.com/
+StartupWMClass=brave-www.youtube.com__-Default
 Icon=/home/ahaan/.local/share/icons/webapps/youtube.png
 Type=Application
 Categories=Utility;
