@@ -220,7 +220,8 @@ Item {
         id: focusAddr
         property string addr: ""
         command: ["bash", "-c",
-            "hyprctl dispatch focuswindow address:" + addr +
+            "hyprctl dispatch movetoworkspace e+0,address:" + addr +
+            " && hyprctl dispatch focuswindow address:" + addr +
             " && hyprctl dispatch bringactivetotop"]
         running: false
     }
@@ -228,7 +229,8 @@ Item {
     Process {
         id: cycleClass
         command: ["bash", "-c",
-            "hyprctl dispatch focuswindow class:" + root.windowClass +
+            "hyprctl dispatch movetoworkspace e+0,class:" + root.windowClass +
+            " && hyprctl dispatch focuswindow class:" + root.windowClass +
             " && hyprctl dispatch bringactivetotop"]
         running: false
     }

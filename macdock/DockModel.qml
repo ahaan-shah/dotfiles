@@ -65,6 +65,20 @@ ListModel {
         windowClass: "tradingview"
         separator: false
     }
+     ListElement {
+        name: "Text-Editor"
+        icon: "/usr/share/icons/Papirus/128x128/apps/text-editor.svg"
+        command: "text-editor"
+        windowClass: "org.gnome.TextEditor"
+        separator: false
+    }
+     ListElement {
+        name: "Evince"
+        icon: "/usr/share/icons/Papirus/128x128/apps/mupdf.svg"
+        command: "text-editor"
+        windowClass: "org.gnome.Evince"
+        separator: false
+    }
     ListElement {
         name: "Files"
         icon: "/usr/share/icons/WhiteSur-dark/apps/scalable/filerunner.svg"
@@ -72,12 +86,4 @@ ListModel {
         windowClass: "org.gnome.Nautilus"
         separator: false
     }
-    ListElement {
-        name: "Text-Editor"
-        icon: "/usr/share/icons/Papirus/128x128/apps/text-editor.svg"
-        command: "text-editor"
-        windowClass: "org.gnome.TextEditor"
-        separator: false
-    }
-    
 }
