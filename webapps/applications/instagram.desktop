@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Instagram
 Exec=chromium --app=https://www.instagram.com/
+StartupWMClass=chrome-www.instagram.com__-Default
 Icon=/home/ahaan/.local/share/icons/webapps/instagram.png
 Type=Application
 Keywords=ig;

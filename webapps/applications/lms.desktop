@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=LMS
 Exec=chromium --app=https://lighthouse.manipal.edu/
+StartupWMClass=chrome-lighthouse.manipal.edu__-Default
 Icon=/home/ahaan/.local/share/icons/webapps/mit.png
 Type=Application
 Categories=Utility;

@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Grok
 Exec=chromium --app=https://grok.com/
+StartupWMClass=chrome-grok.com__-Default
 Icon=/home/ahaan/.local/share/icons/webapps/grok.png
 Type=Application
 Categories=Utility;

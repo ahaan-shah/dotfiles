@@ -4,7 +4,7 @@ ListModel {
 
     ListElement {
         name: "Terminal"
-        icon: "/usr/share/icons/WhiteSur-dark/apps/scalable/terminal.svg"
+        icon: "/usr/share/icons/Papirus/128x128/apps/kitty.svg"
         command: "kitty"
         windowClass: "kitty"
         separator: false

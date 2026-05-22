@@ -65,7 +65,7 @@ QtObject {
     property string _activeBuf: ""
 
     property var _pollTimer: Timer {
-        interval: 1500
+        interval: 350
         running: true
         repeat: true
         onTriggered: {
@@ -92,7 +92,16 @@ QtObject {
             if (clientsProc.running) return
             try {
                 const arr = JSON.parse(root._clientsBuf)
-                root.windowList = arr.map(w => ({
+
+                // Skip dialog/portal windows — they should never appear in the dock
+                const skipClasses = new Set([
+                    "", "xdg-desktop-portal", "xdg-desktop-portal-gnome",
+                    "xdg-desktop-portal-gtk", "xdg-desktop-portal-kde",
+                    "gcr-prompter", "polkit-gnome-authentication-agent-1"
+                ])
+                const filtered = arr.filter(w => !skipClasses.has((w.class ?? "").toLowerCase()))
+
+                root.windowList = filtered.map(w => ({
                     class:        (w.class        ?? "").toLowerCase(),
                     initialClass: (w.initialClass ?? w.class ?? "").toLowerCase(),
                     address:      w.address       ?? "",
@@ -101,7 +110,7 @@ QtObject {
                     pid:          w.pid           ?? 0
                 }))
                 const cls = {}
-                arr.forEach(w => { if (w.class) cls[w.class.toLowerCase()] = true })
+                filtered.forEach(w => { if (w.class) cls[w.class.toLowerCase()] = true })
                 root.runningClasses = cls
             } catch (e) {}
         }

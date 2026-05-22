@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Teams
 Exec=chromium --app=https://teams.microsoft.com/v2/
+StartupWMClass=chrome-teams.microsoft.com__v2_-Default
 Icon=/home/ahaan/.local/share/icons/webapps/teams.png
 Type=Application
 Categories=Utility;

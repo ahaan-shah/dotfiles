@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Tradingview
 Exec=chromium --app=https://www.tradingview.com/chart/lCRrEItS/
+StartupWMClass=chrome-www.tradingview.com__chart_lCRrEItS_-Default
 Icon=/home/ahaan/.local/share/icons/webapps/tradingview.svg
 Type=Application
 Keywords=tv;

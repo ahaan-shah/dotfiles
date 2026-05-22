@@ -151,29 +151,6 @@ Item {
         }
     }
 
-    // ── Tooltip ───────────────────────────────────────────────────
-    ToolTip {
-        id: toolTip
-        visible:  mouseArea.containsMouse && !root.separator
-        text:     root.appName
-        delay:    400
-        timeout:  3000
-
-        contentItem: Text {
-            text:            toolTip.text
-            color:           "white"
-            font.pixelSize:  13
-            font.weight:     Font.Medium
-        }
-
-        background: Rectangle {
-            color:  Qt.rgba(0.1, 0.1, 0.1, 0.85)
-            radius: 8
-            border.color: Qt.rgba(1, 1, 1, 0.15)
-            border.width: 1
-        }
-    }
-
     // ── Mouse ─────────────────────────────────────────────────────
     MouseArea {
         id: mouseArea

@@ -1,8 +1,8 @@
-@define-color window_bg_color #11171e;
-@define-color accent_bg_color #829097;
-@define-color theme_fg_color #bbcfd9;
-@define-color error_bg_color #5D6072;
-@define-color error_fg_color #bbcfd9;
+@define-color window_bg_color #0B1118;
+@define-color accent_bg_color #9d9087;
+@define-color theme_fg_color #e1cec2;
+@define-color error_bg_color #5E535B;
+@define-color error_fg_color #e1cec2;
 
 * {
   all: unset;
