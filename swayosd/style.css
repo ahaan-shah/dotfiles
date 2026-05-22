@@ -1,3 +1,5 @@
+@import url("/home/ahaan/.cache/wal/colors-waybar.css");
+
 * {
     font-family: "Ubuntu Nerd Font";
     font-size: 18px;
@@ -6,7 +8,7 @@
 
 /* Main OSD container */
 window {
-    background: rgba(40, 40, 40, 0.85);
+    background: alpha(@background, 0.8);
     border-radius: 40px;
     padding: 1px 1px;
 }
@@ -14,6 +16,7 @@ window {
 /* Icon (volume symbol) */
 image {
     margin-right: 10px;
+    color: @color7;
 }
 
 /* Progress bar container */
@@ -30,12 +33,12 @@ trough {
 
 /* Filled part */
 progress {
-    background: #ffffff;
+    background: @color7;
     border-radius: 10px;
 }
 
 /* Percentage text */
 label {
-    color: #ffffff;
+    color: @color7;
     margin-left: 10px;
 }

@@ -63,6 +63,11 @@ pkill waybar && waybar & disown
 # Restart SwayNC (notification center)
 pkill swaync && swaync & disown
 
+# Restart SwayOSD
+pkill swayosd-server
+swayosd-server &
+disown
+
 # Handle Cava restart in the same terminal window using screen
 if pgrep -f cava > /dev/null; then
     # Find the tty where cava is running
