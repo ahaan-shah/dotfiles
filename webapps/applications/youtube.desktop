@@ -2,7 +2,7 @@
 Name=Youtube
 Exec=brave --app=https://www.youtube.com/
 StartupWMClass=brave-www.youtube.com__-Default
-Icon=/home/ahaan/.local/share/icons/webapps/youtube.png
+Icon=/usr/share/icons/Papirus-Dark/128x128/apps/youtube.svg
 Type=Application
 Categories=Utility;
 Keywords=yt;

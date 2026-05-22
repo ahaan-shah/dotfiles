@@ -105,15 +105,34 @@ Item {
             if (desktopIcon2 !== "") return desktopIcon2
         }
 
-        // 2. Try system icon theme with stripped class name
-        const prefixes = ["brave-", "chrome-", "chromium-", "msedge-", "firefox-"]
-        for (let i = 0; i < prefixes.length; i++) {
-            const p = prefixes[i]
+        // 2. Chrome/Brave webapp: class looks like "chrome-app.primevideo.com__-Default"
+        //    Strip the browser prefix, clean suffixes, then pick the most meaningful
+        //    domain segment (skip generic ones like "app", "www", "web", "mail")
+        const browserPrefixes = ["brave-", "chrome-", "chromium-", "msedge-", "firefox-"]
+        const genericSegments = new Set(["app", "www", "web", "mail", "m", "go", "get"])
+        for (let i = 0; i < browserPrefixes.length; i++) {
+            const p = browserPrefixes[i]
             if (cls.startsWith(p)) {
+                // Strip prefix and trailing junk
                 let s = cls.slice(p.length)
-                s = s.replace(/[_-]+default$/i, "").replace(/__.*$/, "")
-                const domainRoot = s.split(".")[0]
-                if (domainRoot) return "image://icon/" + domainRoot
+                s = s.replace(/__.*$/, "").replace(/[_-]+default$/i, "").toLowerCase()
+                // s is now something like "app.primevideo.com" or "youtube.com"
+                const parts = s.split(".")
+                // Walk left-to-right, skip generic segments, take first meaningful one
+                let brand = ""
+                for (const part of parts) {
+                    if (part && !genericSegments.has(part) && !/^\d+$/.test(part)) {
+                        brand = part
+                        break
+                    }
+                }
+                if (!brand && parts.length) brand = parts[0]
+                if (brand) {
+                    // Try desktop cache with the brand name first
+                    const cached = DesktopEntryCache.iconForClass(brand)
+                    if (cached !== "") return cached
+                    return "image://icon/" + brand
+                }
             }
         }
 

@@ -74,14 +74,14 @@ ListModel {
     }
      ListElement {
         name: "Evince"
-        icon: "/usr/share/icons/Papirus/128x128/apps/mupdf.svg"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/mupdf.svg"
         command: "text-editor"
         windowClass: "org.gnome.Evince"
         separator: false
     }
     ListElement {
         name: "Files"
-        icon: "/usr/share/icons/WhiteSur-dark/apps/scalable/filerunner.svg"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/nautilus-alt.svg"
         command: "nautilus"
         windowClass: "org.gnome.Nautilus"
         separator: false

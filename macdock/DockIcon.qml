@@ -21,7 +21,7 @@ Item {
     property int  magnRadius: 140
 
     // ── Running / active state (queried from WindowTracker) ───────
-    readonly property var   matchedWindows: WindowTracker.windowsFor(windowClass, appName)
+    readonly property var   matchedWindows: WindowTracker.windowsFor(windowClass, "")
     readonly property bool  isRunning:      matchedWindows.length > 0
     readonly property bool  isActive:       matchedWindows.length > 0 &&
                                             matchedWindows.some(w => w.address === WindowTracker.activeAddress)
