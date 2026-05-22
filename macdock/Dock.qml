@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
+import "."
 
 Item {
     id: root
@@ -105,34 +106,15 @@ Item {
             if (desktopIcon2 !== "") return desktopIcon2
         }
 
-        // 2. Chrome/Brave webapp: class looks like "chrome-app.primevideo.com__-Default"
-        //    Strip the browser prefix, clean suffixes, then pick the most meaningful
-        //    domain segment (skip generic ones like "app", "www", "web", "mail")
-        const browserPrefixes = ["brave-", "chrome-", "chromium-", "msedge-", "firefox-"]
-        const genericSegments = new Set(["app", "www", "web", "mail", "m", "go", "get"])
-        for (let i = 0; i < browserPrefixes.length; i++) {
-            const p = browserPrefixes[i]
+        // 2. Try system icon theme with stripped class name
+        const prefixes = ["brave-", "chrome-", "chromium-", "msedge-", "firefox-"]
+        for (let i = 0; i < prefixes.length; i++) {
+            const p = prefixes[i]
             if (cls.startsWith(p)) {
-                // Strip prefix and trailing junk
                 let s = cls.slice(p.length)
-                s = s.replace(/__.*$/, "").replace(/[_-]+default$/i, "").toLowerCase()
-                // s is now something like "app.primevideo.com" or "youtube.com"
-                const parts = s.split(".")
-                // Walk left-to-right, skip generic segments, take first meaningful one
-                let brand = ""
-                for (const part of parts) {
-                    if (part && !genericSegments.has(part) && !/^\d+$/.test(part)) {
-                        brand = part
-                        break
-                    }
-                }
-                if (!brand && parts.length) brand = parts[0]
-                if (brand) {
-                    // Try desktop cache with the brand name first
-                    const cached = DesktopEntryCache.iconForClass(brand)
-                    if (cached !== "") return cached
-                    return "image://icon/" + brand
-                }
+                s = s.replace(/[_-]+default$/i, "").replace(/__.*$/, "")
+                const domainRoot = s.split(".")[0]
+                if (domainRoot) return "image://icon/" + domainRoot
             }
         }
 
@@ -146,7 +128,7 @@ Item {
 
     // ── Pill dimensions ───────────────────────────────────────────
     readonly property real pillWidth:  iconRow.implicitWidth + dockPadH * 2
-    readonly property real pillHeight: maxIconSize + dockPadV * 2 + 12
+    readonly property real pillHeight: maxIconSize + dockPadV * 2 + 14
 
     // Total height this item occupies (pill + float gap)
     width:  pillWidth
@@ -163,9 +145,22 @@ Item {
         height: root.pillHeight
         radius: root.pillHeight / 2
 
-        color:        Qt.rgba(1, 1, 1, 0.14)
-        border.color: Qt.rgba(1, 1, 1, 0.22)
-        border.width: 1
+        // Pywal: color0 (darkest bg tone) at 0.82 alpha for the fill;
+        // color1 (first accent) at 0.55 alpha for the border.
+        color:        Qt.rgba(
+                          parseInt(WalColors.color0.slice(1,3), 16) / 255,
+                          parseInt(WalColors.color0.slice(3,5), 16) / 255,
+                          parseInt(WalColors.color0.slice(5,7), 16) / 255,
+                          0.82)
+        border.color: Qt.rgba(
+                          parseInt(WalColors.color1.slice(1,3), 16) / 255,
+                          parseInt(WalColors.color1.slice(3,5), 16) / 255,
+                          parseInt(WalColors.color1.slice(5,7), 16) / 255,
+                          0.55)
+        border.width: 2
+
+        Behavior on color        { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
+        Behavior on border.color { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
 
         layer.enabled: true
         layer.effect: MultiEffect {

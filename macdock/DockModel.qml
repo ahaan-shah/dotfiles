@@ -68,14 +68,14 @@ ListModel {
      ListElement {
         name: "Text-Editor"
         icon: "/usr/share/icons/Papirus/128x128/apps/text-editor.svg"
-        command: "text-editor"
+        command: "gnome-text-editor"
         windowClass: "org.gnome.TextEditor"
         separator: false
     }
      ListElement {
         name: "Evince"
         icon: "/usr/share/icons/Papirus-Dark/128x128/apps/mupdf.svg"
-        command: "text-editor"
+        command: "evince"
         windowClass: "org.gnome.Evince"
         separator: false
     }
