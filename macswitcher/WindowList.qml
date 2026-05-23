@@ -39,16 +39,18 @@ QtObject {
                 root.windows = arr
                     .filter(w => !root.skipClasses.has((w.class ?? "").toLowerCase()))
                     .map(w => ({
-                        class:         (w.class        ?? "").toLowerCase(),
-                        initialClass:  (w.initialClass ?? w.class ?? "").toLowerCase(),
-                        address:       w.address  ?? "",
-                        title:         w.title    ?? "",
-                        initialTitle:  w.initialTitle ?? w.title ?? "",
-                        pid:           w.pid      ?? 0,
-                        workspace:     w.workspace?.id ?? 0,
-                        workspaceName: (w.workspace?.name ?? "").toLowerCase(),
-                        floating:      w.floating ?? false
+                        class:          (w.class        ?? "").toLowerCase(),
+                        initialClass:   (w.initialClass ?? w.class ?? "").toLowerCase(),
+                        address:        w.address  ?? "",
+                        title:          w.title    ?? "",
+                        initialTitle:   w.initialTitle ?? w.title ?? "",
+                        pid:            w.pid      ?? 0,
+                        workspace:      w.workspace?.id ?? 0,
+                        workspaceName:  (w.workspace?.name ?? "").toLowerCase(),
+                        floating:       w.floating ?? false,
+                        focusHistoryID: w.focusHistoryID ?? 9999
                     }))
+                    .sort((a, b) => a.focusHistoryID - b.focusHistoryID)
             } catch(e) {}
             root._clientsBuf = ""
         }

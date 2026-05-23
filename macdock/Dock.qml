@@ -20,18 +20,16 @@ Item {
     // ── Mouse X in row coordinates (–1 = outside) ─────────────────
     property real hoverX: -1
 
-    // ── Stable insertion-order list for unpinned app classes ──────
-    // We only ever append to this; never reorder. This prevents unpinned
-    // icons from jumping around when WindowTracker re-polls.
+    // ── Stable state ──────────────────────────────────────────────
     property var _unpinnedOrder: []
+    property var dynamicApps:    []  // written atomically by _rebuild(), never a binding
 
-    // ── Merged app list: pinned + any unpinned open windows ───────
-    //
-    // We take the static DockModel, then append any window class that is
-    // currently open but has NO match in the pinned list. Unpinned entries
-    // are kept in stable insertion order via _unpinnedOrder so re-polls
-    // from WindowTracker never cause icons to jump or reorder.
-    readonly property var dynamicApps: {
+    // ── Rebuild the model ─────────────────────────────────────────
+    // Called by Connections whenever windowList changes.
+    // Keeping all mutation here (never inside a binding expression)
+    // prevents QML's binding engine from cascading re-evaluations that
+    // corrupt the Repeater model and terminate open apps.
+    function _rebuild() {
         const pinned = []
         for (let i = 0; i < dockModel.count; i++) {
             pinned.push({
@@ -44,14 +42,12 @@ Item {
             })
         }
 
-        // Collect classes already covered by pinned entries
         const coveredClasses = new Set()
         pinned.forEach(p => {
             if (p.windowClass && p.windowClass !== "")
                 coveredClasses.add(p.windowClass.toLowerCase())
         })
 
-        // Build a map of currently-open unpinned classes → their window object
         const currentlyOpen = new Set()
         const windowByClass = {}
         WindowTracker.windowList.forEach(w => {
@@ -66,16 +62,13 @@ Item {
             }
         })
 
-        // Append any newly-seen class to _unpinnedOrder (append-only, never reorder)
         const order = root._unpinnedOrder.slice()
         currentlyOpen.forEach(cls => {
             if (!order.includes(cls)) order.push(cls)
         })
-        // Prune classes that are no longer open
         const pruned = order.filter(cls => currentlyOpen.has(cls))
         root._unpinnedOrder = pruned
 
-        // Build extra list in stable insertion order
         const extra = pruned.map(cls => {
             const w = windowByClass[cls]
             return {
@@ -88,7 +81,13 @@ Item {
             }
         })
 
-        return pinned.concat(extra)
+        root.dynamicApps = pinned.concat(extra)
+    }
+
+    // Trigger rebuild whenever the window list changes
+    property var _trackerConn: Connections {
+        target: WindowTracker
+        function onWindowListChanged() { root._rebuild() }
     }
 
     // ── Icon resolution for dynamic (unpinned) windows ───────────
@@ -205,6 +204,8 @@ Item {
             }
         }
     }
+
+    Component.onCompleted: root._rebuild()
 
     // ── Mouse tracking ────────────────────────────────────────────
     MouseArea {

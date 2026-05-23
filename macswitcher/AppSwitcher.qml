@@ -15,6 +15,7 @@ Item {
 
     property int  selectedIndex: 0
     property var  appList: []
+    property bool _firstOpen: true
 
     // ── Pywal colors ─────────────────────────────────────────────
     // Edit these two property names to change what wal colors are used:
@@ -74,6 +75,7 @@ Item {
 
     function _open() {
         _reloadWal()
+        root._firstOpen = true
         WindowList.refresh()  // async — list rebuilt by onWindowsChanged on completion
         shown = true
     }
@@ -84,14 +86,9 @@ Item {
     }
 
     function _buildList() {
-        const active = WindowList.activeAddress
+        // WindowList already sorted MRU: index 0 = current, index 1 = previous
         const sorted = WindowList.windows
             .filter(w => !w.workspaceName.startsWith("special:"))
-            .slice().sort((a, b) => {
-                if (a.address === active) return -1
-                if (b.address === active) return  1
-                return 0
-            })
         root.appList = sorted.map(w => ({
             class:   w.class,
             title:   w.title || w.initialTitle || w.class,
@@ -106,8 +103,13 @@ Item {
         function onWindowsChanged() {
             if (!root.shown) return
             root._buildList()
-            if (root.selectedIndex >= root.appList.length)
+            if (root._firstOpen) {
+                // Pre-select index 1 (previous app) so first Alt+Tab lands there
+                root.selectedIndex = root.appList.length > 1 ? 1 : 0
+                root._firstOpen = false
+            } else if (root.selectedIndex >= root.appList.length) {
                 root.selectedIndex = Math.max(0, root.appList.length - 1)
+            }
         }
     }
 

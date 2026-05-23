@@ -189,7 +189,12 @@ Item {
     // ── Processes ─────────────────────────────────────────────────
     Process {
         id: launchProc
-        command: root.command !== "" ? ["bash", "-c", root.command] : ["true"]
+        // Use setsid + disown to fully detach the launched app from quickshell's
+        // process group. This means destroying this DockIcon delegate (e.g. when
+        // the Repeater rebuilds) will NOT kill the app that was launched.
+        command: root.command !== ""
+            ? ["bash", "-c", "setsid " + root.command + " &disown"]
+            : ["true"]
         running: false
     }
 
