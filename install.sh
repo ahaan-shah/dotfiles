@@ -4,7 +4,9 @@ set -e
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Installing dotfiles from: $DOTFILES_DIR"
+echo "================================================"
+echo "        Dotfiles Installer"
+echo "================================================"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -26,10 +28,98 @@ link() {
     fi
 }
 
-# ── 1. ~/.config — everything except the special cases ────────────────────────
+# ── 1. Install yay ─────────────────────────────────────────────────────────────
 
 echo ""
-echo "[1/5] Linking config directories to ~/.config ..."
+echo "[1/7] Installing yay (AUR helper) ..."
+
+if command -v yay &> /dev/null; then
+    echo "  yay already installed, skipping"
+else
+    echo "  Installing yay dependencies..."
+    sudo pacman -S --needed --noconfirm git base-devel
+
+    TMP_YAY=$(mktemp -d)
+    git clone https://aur.archlinux.org/yay.git "$TMP_YAY"
+    cd "$TMP_YAY"
+    makepkg -si --noconfirm
+    cd "$DOTFILES_DIR"
+    rm -rf "$TMP_YAY"
+    echo "  yay installed successfully"
+fi
+
+# ── 2. Install pacman packages ─────────────────────────────────────────────────
+
+echo ""
+echo "[2/7] Installing pacman packages ..."
+
+PACMAN_PACKAGES=(
+    # Shell & terminal
+    zsh
+    starship
+    fastfetch
+    neofetch
+    yazi
+    dysk
+
+    # Hyprland ecosystem
+    hypridle
+    hyprlock
+    hyprpaper
+
+    # Wayland utilities
+    waybar
+    rofi
+    swaync
+
+    # Browsers & apps
+    chromium
+    nautilus
+    gnome-text-editor
+
+    # Scripting deps
+    python
+    socat
+    jq
+    go
+)
+
+sudo pacman -S --needed --noconfirm "${PACMAN_PACKAGES[@]}"
+
+# ── 3. Install AUR packages ────────────────────────────────────────────────────
+
+echo ""
+echo "[3/7] Installing AUR packages ..."
+
+AUR_PACKAGES=(
+    # Elephant suite
+    elephant
+    elephant-desktopapplications
+    elephant-symbols
+    elephant-runner
+    elephant-calc
+    elephant-clipboard
+    elephant-websearch
+    elephant-files
+
+    # Hyprland AUR extras
+    quickshell
+    swayosd
+
+    # Other AUR
+    fum
+    walker
+    librewolf-bin
+    spotify
+    spicetify-cli
+)
+
+yay -S --needed --noconfirm "${AUR_PACKAGES[@]}"
+
+# ── 4. ~/.config — everything except the special cases ────────────────────────
+
+echo ""
+echo "[4/7] Linking config directories to ~/.config ..."
 make_dir "$HOME/.config"
 
 for item in "$DOTFILES_DIR"/*/; do
@@ -51,10 +141,10 @@ for item in "$DOTFILES_DIR"/*; do
     fi
 done
 
-# ── 2. webapps ─────────────────────────────────────────────────────────────────
+# ── 5. webapps ─────────────────────────────────────────────────────────────────
 
 echo ""
-echo "[2/5] Installing webapps ..."
+echo "[5/7] Installing webapps ..."
 
 WEBAPPS_SRC="$DOTFILES_DIR/webapps"
 
@@ -74,31 +164,23 @@ if [ -d "$WEBAPPS_SRC/icons" ]; then
     done
 fi
 
-# ── 3. fprintstuff.txt → ~ ─────────────────────────────────────────────────────
+# ── 6. Misc home files ─────────────────────────────────────────────────────────
 
 echo ""
-echo "[3/5] Linking fprintstuff.txt ..."
+echo "[6/7] Linking misc home files ..."
+
 if [ -f "$DOTFILES_DIR/fprintstuff.txt" ]; then
     link "$DOTFILES_DIR/fprintstuff.txt" "$HOME/fprintstuff.txt"
 else
     echo "  [warn] fprintstuff.txt not found, skipping"
 fi
 
-# ── 4. wallpapers → ~/Pictures/ ───────────────────────────────────────────────
-
-echo ""
-echo "[4/5] Linking wallpapers ..."
 if [ -d "$DOTFILES_DIR/wallpapers" ]; then
     make_dir "$HOME/Pictures"
     link "$DOTFILES_DIR/wallpapers" "$HOME/Pictures/wallpapers"
 else
     echo "  [warn] wallpapers directory not found, skipping"
 fi
-
-# ── 5. shell — .bashrc and .zshrc → ~ ─────────────────────────────────────────
-
-echo ""
-echo "[5/5] Linking shell files ..."
 
 for rc in .bashrc .zshrc; do
     src="$DOTFILES_DIR/shell/$rc"
@@ -110,10 +192,10 @@ for rc in .bashrc .zshrc; do
     fi
 done
 
-# ── chmod any scripts ──────────────────────────────────────────────────────────
+# ── 7. chmod scripts ───────────────────────────────────────────────────────────
 
 echo ""
-echo "[+] Making scripts executable ..."
+echo "[7/7] Making scripts executable ..."
 
 find "$DOTFILES_DIR" -type f -name "*.sh" | while read -r script; do
     chmod +x "$script"
@@ -132,6 +214,9 @@ done
 # ── Done ───────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "Done! You may need to restart your shell for changes to take effect."
-echo "  source ~/.bashrc   # if using bash"
-echo "  source ~/.zshrc    # if using zsh"
+echo "================================================"
+echo "  All done!"
+echo "  Set zsh as your default shell with:"
+echo "    chsh -s \$(which zsh)"
+echo "  Then log out and back in."
+echo "================================================"

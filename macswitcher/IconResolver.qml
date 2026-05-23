@@ -136,7 +136,13 @@ QtObject {
             }
             if (exec) {
                 const base = exec.split(" ")[0].split("/").pop().toLowerCase()
-                if (base && base.length >= 3) byWm[base] = resolved
+                // Skip browser binaries — they're the Exec for many webapps and
+                // would map e.g. "chromium" → Coursera icon
+                const browserBins = new Set(["chromium","chromium-browser","chrome",
+                    "google-chrome","google-chrome-stable","brave","brave-browser",
+                    "firefox","librewolf","msedge"])
+                if (base && base.length >= 3 && !browserBins.has(base))
+                    byWm[base] = resolved
             }
             if (name) byName[name.toLowerCase()] = resolved
         })
