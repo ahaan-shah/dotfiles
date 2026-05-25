@@ -102,12 +102,14 @@ QtObject {
                 const filtered = arr.filter(w => !skipClasses.has((w.class ?? "").toLowerCase()))
 
                 root.windowList = filtered.map(w => ({
-                    class:        (w.class        ?? "").toLowerCase(),
-                    initialClass: (w.initialClass ?? w.class ?? "").toLowerCase(),
-                    address:      w.address       ?? "",
-                    title:        w.title         ?? "",
-                    initialTitle: w.initialTitle  ?? w.title ?? "",
-                    pid:          w.pid           ?? 0
+                    class:         (w.class        ?? "").toLowerCase(),
+                    initialClass:  (w.initialClass ?? w.class ?? "").toLowerCase(),
+                    address:       w.address       ?? "",
+                    title:         w.title         ?? "",
+                    initialTitle:  w.initialTitle  ?? w.title ?? "",
+                    pid:           w.pid           ?? 0,
+                    workspaceId:   w.workspace?.id   ?? 0,
+                    workspaceName: (w.workspace?.name ?? "").toLowerCase()
                 }))
                 const cls = {}
                 filtered.forEach(w => { if (w.class) cls[w.class.toLowerCase()] = true })

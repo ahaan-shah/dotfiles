@@ -177,11 +177,17 @@ Item {
                     launchProc.running = true
                 }
             } else if (wins.length === 1) {
-                focusAddr.addr = wins[0].address
-                focusAddr.running = true
+                const w = wins[0]
+                focusAddr.addr        = w.address
+                focusAddr.isSpecial   = (w.workspaceName ?? "").startsWith("special:")
+                focusAddr.workspaceId = w.workspaceId ?? 0
+                focusAddr.running     = true
             } else {
-                // Cycle: focus the next window of this class
-                cycleClass.running = true
+                // Cycle: use first window's workspace info
+                const w = wins[0]
+                cycleClass.isSpecial   = (w.workspaceName ?? "").startsWith("special:")
+                cycleClass.workspaceId = w.workspaceId ?? 0
+                cycleClass.running     = true
             }
         }
     }
@@ -200,20 +206,32 @@ Item {
 
     Process {
         id: focusAddr
-        property string addr: ""
+        property string addr:        ""
+        property bool   isSpecial:   false
+        property int    workspaceId: 0
         command: ["bash", "-c",
-            "hyprctl dispatch movetoworkspace e+0,address:" + addr +
-            " && hyprctl dispatch focuswindow address:" + addr +
-            " && hyprctl dispatch bringactivetotop"]
+            isSpecial
+                ? "hyprctl dispatch movetoworkspace e+0,address:" + addr
+                  + " && hyprctl dispatch focuswindow address:" + addr
+                  + " && hyprctl dispatch bringactivetotop"
+                : "hyprctl dispatch workspace " + workspaceId
+                  + " && hyprctl dispatch focuswindow address:" + addr
+                  + " && hyprctl dispatch bringactivetotop"]
         running: false
     }
 
     Process {
         id: cycleClass
+        property bool   isSpecial:   false
+        property int    workspaceId: 0
         command: ["bash", "-c",
-            "hyprctl dispatch movetoworkspace e+0,class:" + root.windowClass +
-            " && hyprctl dispatch focuswindow class:" + root.windowClass +
-            " && hyprctl dispatch bringactivetotop"]
+            isSpecial
+                ? "hyprctl dispatch movetoworkspace e+0,class:" + root.windowClass
+                  + " && hyprctl dispatch focuswindow class:" + root.windowClass
+                  + " && hyprctl dispatch bringactivetotop"
+                : "hyprctl dispatch workspace " + workspaceId
+                  + " && hyprctl dispatch focuswindow class:" + root.windowClass
+                  + " && hyprctl dispatch bringactivetotop"]
         running: false
     }
 }
