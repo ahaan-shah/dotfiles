@@ -202,7 +202,7 @@ Item {
                 const b = parseInt(c.slice(5,7),16)/255
                 return Qt.rgba(r, g, b, 0.55)  // ← change last value for border opacity
             }
-            border.width: 1
+            border.width: 2
             Behavior on color        { ColorAnimation { duration: 400 } }
             Behavior on border.color { ColorAnimation { duration: 400 } }
 
@@ -240,7 +240,7 @@ Item {
                         radius: 14
                         color:        card.sel ? Qt.rgba(1,1,1,0.15) : "transparent"
                         border.color: card.sel ? Qt.rgba(1,1,1,0.35) : "transparent"
-                        border.width: 1
+                        border.width: 2
                         Behavior on color        { ColorAnimation { duration: 100 } }
                         Behavior on border.color { ColorAnimation { duration: 100 } }
                     }
