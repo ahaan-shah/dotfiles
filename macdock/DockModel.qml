@@ -73,10 +73,10 @@ ListModel {
         separator: false
     }
      ListElement {
-        name: "Evince"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/mupdf.svg"
-        command: "evince"
-        windowClass: "org.gnome.Evince"
+        name: "Papers"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/org.gnome.Papers.svg"
+        command: "papers"
+        windowClass: "org.gnome.Papers"
         separator: false
     }
     ListElement {

@@ -109,7 +109,11 @@ QtObject {
                     initialTitle:  w.initialTitle  ?? w.title ?? "",
                     pid:           w.pid           ?? 0,
                     workspaceId:   w.workspace?.id   ?? 0,
-                    workspaceName: (w.workspace?.name ?? "").toLowerCase()
+                    workspaceName: (w.workspace?.name ?? "").toLowerCase(),
+                    x:             w.at?.[0]   ?? 0,
+                    y:             w.at?.[1]   ?? 0,
+                    ww:            w.size?.[0] ?? 0,
+                    wh:            w.size?.[1] ?? 0
                 }))
                 const cls = {}
                 filtered.forEach(w => { if (w.class) cls[w.class.toLowerCase()] = true })

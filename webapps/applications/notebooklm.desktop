@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=NotebookLM
+Exec=chromium --app=https://notebooklm.google.com/
+Icon=/home/ahaan/.local/share/icons/webapps/notebooklm.svg
+StartupWMClass=chrome-notebooklm.google.com__-Default
+Type=Application
+Categories=Utility;
+Keywords=nlm;lm;ai;
+
