@@ -69,24 +69,65 @@ ShellRoot {
                     }
                 }
 
-                // ── Overlap detection ─────────────────────────────
+                // ── Active workspace tracking ─────────────────────
+                property int    activeWorkspaceId:   -1
+                property string _wsBuf: ""
+                property var _wsProc: Process {
+                    id: wsProc
+                    command: ["hyprctl", "activeworkspace", "-j"]
+                    running: true
+                    stdout: SplitParser {
+                        splitMarker: ""
+                        onRead: data => dockController._wsBuf += data
+                    }
+                }
+                property var _wsConn: Connections {
+                    target: wsProc
+                    function onRunningChanged() {
+                        if (wsProc.running) return
+                        try {
+                            const ws = JSON.parse(dockController._wsBuf)
+                            dockController.activeWorkspaceId = ws.id ?? -1
+                        } catch(e) {}
+                        dockController._wsBuf = ""
+                    }
+                }
+                property var _wsTimer: Timer {
+                    interval: 200
+                    running:  true
+                    repeat:   true
+                    onTriggered: {
+                        dockController._wsBuf = ""
+                        wsProc.running = true
+                    }
+                }
+
+                // ── Overlap detection — only current workspace ────
                 property var _overlapConn: Connections {
                     target: WindowTracker
                     function onWindowListChanged() {
-                        const sh      = dockWindow.screen.height
-                        const sw      = dockWindow.screen.width
-                        const dockTop = sh - 60
-                        let overlaps  = false
-                        WindowTracker.windowList.forEach(w => {
-                            if (w.workspaceName.startsWith("special:")) return
-                            if (w.workspaceId <= 0) return
-                            if (w.ww <= 0 || w.wh <= 0) return
-                            if ((w.y + w.wh) > dockTop && w.y < sh &&
-                                 w.x < sw && (w.x + w.ww) > 0)
-                                overlaps = true
-                        })
-                        dockController.windowOverlaps = overlaps
+                        dockController._checkOverlap()
                     }
+                }
+                // Also recheck when active workspace changes
+                onActiveWorkspaceIdChanged: _checkOverlap()
+
+                function _checkOverlap() {
+                    const sh      = dockWindow.screen.height
+                    const sw      = dockWindow.screen.width
+                    const dockTop = sh - 60
+                    let overlaps  = false
+                    WindowTracker.windowList.forEach(w => {
+                        if (w.workspaceName.startsWith("special:")) return
+                        if (w.workspaceId <= 0) return
+                        if (w.ww <= 0 || w.wh <= 0) return
+                        // Only check windows on the currently active workspace
+                        if (w.workspaceId !== dockController.activeWorkspaceId) return
+                        if ((w.y + w.wh) > dockTop && w.y < sh &&
+                             w.x < sw && (w.x + w.ww) > 0)
+                            overlaps = true
+                    })
+                    dockController.windowOverlaps = overlaps
                 }
             }
 
