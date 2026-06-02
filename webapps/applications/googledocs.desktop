@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Docs
+Exec=chromium --app=https://docs.google.com/document/u/0/
+StartupWMClass=chrome-docs.google.com__document_u_0_-Default
+Icon=/home/ahaan/.local/share/icons/webapps/docs.png
+Type=Application
+Categories=Utility;
+Keywords=docs;

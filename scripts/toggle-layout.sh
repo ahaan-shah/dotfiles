@@ -42,7 +42,7 @@ else
     sed -i '/name = global-float/,/}/ s/float = off/float = on/' "$CONFIG"
 
     # Turn OFF follow_mouse
-    sed -i 's/follow_mouse = 1/follow_mouse = 0/' "$CONFIG"
+    sed -i 's/follow_mouse = 1/follow_mouse = 1/' "$CONFIG"
 
     # Reload Hyprland
     hyprctl reload
