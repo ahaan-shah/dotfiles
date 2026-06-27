@@ -1,0 +1,1 @@
+/home/ahaan/.cache/wal/colors-hyprland.lua

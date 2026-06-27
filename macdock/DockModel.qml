@@ -39,14 +39,14 @@ ListModel {
     }
     ListElement {
         name: "Claude"
-        icon: "file:///home/ahaan/.local/share/icons/webapps/claude.png"
+        icon: "/home/ahaan/.local/share/icons/webapps/claude.png"
         command: "chromium --app=https://claude.ai/new"
         windowClass: "claude.ai"
         separator: false
     }
     ListElement {
         name: "ChatGPT"
-        icon: "file:///home/ahaan/.local/share/icons/webapps/openai.svg"
+        icon: "/home/ahaan/.local/share/icons/webapps/openai.svg"
         command: "chromium --app=https://chat.openai.com"
         windowClass: "chat.openai"
         separator: false

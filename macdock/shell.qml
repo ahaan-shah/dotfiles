@@ -54,7 +54,7 @@ ShellRoot {
                             const pos = JSON.parse(dockController._cursorBuf)
                             const sh  = dockWindow.screen.height
                             // Show dock when cursor is within 2px of screen bottom
-                            dockController.mouseNearBottom = pos.y >= (sh - 45)
+                            dockController.mouseNearBottom = pos.y >= (sh - 40)
                         } catch(e) {}
                         dockController._cursorBuf = ""
                     }
