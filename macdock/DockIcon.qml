@@ -42,7 +42,7 @@ Item {
 
     property real currentSize: baseSize
     Behavior on currentSize {
-        NumberAnimation { duration: 80; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: 40; easing.type: Easing.OutCubic }
     }
     onTargetSizeChanged: currentSize = targetSize
 

@@ -17,7 +17,6 @@ sync() {
 
 # ---------------- CONFIG FOLDERS ----------------
 sync "$HOME/.config/hypr"        "$DOTDIR/hypr"
-sync "$HOME/.config/waybar"      "$DOTDIR/waybar"
 sync "$HOME/.config/rofi"        "$DOTDIR/rofi"
 sync "$HOME/.config/walker"      "$DOTDIR/walker"
 sync "$HOME/.config/elephant"    "$DOTDIR/elephant"
@@ -26,11 +25,10 @@ sync "$HOME/.config/cava"        "$DOTDIR/cava"
 sync "$HOME/.config/fastfetch"   "$DOTDIR/fastfetch"
 sync "$HOME/.config/neofetch"    "$DOTDIR/neofetch"
 sync "$HOME/.config/fum"         "$DOTDIR/fum"
-sync "$HOME/.config/swaync"      "$DOTDIR/swaync"
-sync "$HOME/.config/swayosd"     "$DOTDIR/swayosd"
 sync "$HOME/.config/scripts"     "$DOTDIR/scripts"
 sync "$HOME/.config/macdock"	 "$DOTDIR/macdock"
 sync "$HOME/.config/macswitcher" "$DOTDIR/macswitcher"
+sync "$HOME/.config/taskbar"     "$DOTDIR/taskbar"
 sync "$HOME/Pictures/wallpapers" "$DOTDIR/wallpapers"
 
 # ---------------- SINGLE FILES ----------------

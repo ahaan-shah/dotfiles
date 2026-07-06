@@ -58,10 +58,10 @@ sed -i "s/^gradient_color_2 = .*/gradient_color_2 = '$COLOR2'/" "$CAVA_CONFIG"
 sed -i "s/^gradient_color_3 = .*/gradient_color_3 = '$COLOR3'/" "$CAVA_CONFIG"
 
 # Restart Waybar to apply pywal colors
-pkill waybar && waybar & disown
+#pkill waybar && waybar & disown
 
 # Restart SwayNC (notification center)
-pkill swaync && swaync & disown
+#pkill swaync && swaync & disown
 
 # Restart SwayOSD
 pkill swayosd-server
