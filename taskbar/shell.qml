@@ -394,6 +394,83 @@ Scope {
         MouseArea { anchors.fill: parent; anchors.margins: -6; onClicked: parent.clicked() }
     }
 
+    // Circular album cover that spins while `spinning` is true (freezes when paused).
+    component Vinyl: Item {
+        id: v
+        property string art: ""
+        property bool spinning: false
+
+        Item {
+            id: disc
+            anchors.fill: parent
+
+            // circular album art (masked into a circle)
+            Image {
+                id: vLabel
+                anchors.fill: parent
+                source: v.art
+                visible: false
+                fillMode: Image.PreserveAspectCrop
+                sourceSize.width: 300; sourceSize.height: 300
+            }
+            MultiEffect {
+                anchors.fill: parent
+                source: vLabel
+                maskEnabled: true
+                maskSource: vMask
+                visible: v.art !== ""
+            }
+            Item {
+                id: vMask
+                anchors.fill: parent
+                layer.enabled: true
+                visible: false
+                Rectangle { anchors.fill: parent; radius: width / 2; color: "black" }
+            }
+
+            // fallback when there's no cover art
+            Rectangle {
+                anchors.fill: parent
+                radius: width / 2
+                visible: v.art === ""
+                color: "#3a3a3a"
+                Text {
+                    anchors.centerIn: parent
+                    text: "\uf001"
+                    color: Qt.rgba(1, 1, 1, 0.5)
+                    font.family: root.ncFont
+                    font.pixelSize: parent.width * 0.3
+                }
+            }
+
+            // Keep the animation always running and pause it instead of stopping,
+            // so resuming continues from the current angle (not back to 0).
+            NumberAnimation on rotation {
+                from: 0; to: 360
+                duration: 6000
+                loops: Animation.Infinite
+                running: true
+                paused: !v.spinning
+            }
+        }
+
+        // static rim
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: "transparent"
+            border.color: "white"
+            border.width: 1.5 
+        }
+    }
+
+    // format seconds -> M:SS
+    function fmtTime(s) {
+        if (!s || s < 0) return "0:00";
+        var m = Math.floor(s / 60); var sec = Math.floor(s % 60);
+        return m + ":" + (sec < 10 ? "0" : "") + sec;
+    }
+
     // Slider styled like your swaync trough/highlight (accent = @color9).
     // Custom slider (handles its own mouse events so nothing can swallow the drag).
     // Styled like your swaync trough/highlight (accent = @color9).
@@ -876,14 +953,37 @@ Scope {
                 anchors.margins: 14
                 spacing: 12
 
-                // ---------- MPRIS widget ----------
+                // ---------- MPRIS widget (cover on top, info/controls below) ----------
+                // ===== To restyle the whole media box: border/color/radius are on
+                // ===== THIS Rectangle (id: mpBox). Fonts use root.ncFont; text sizes
+                // ===== are the font.pixelSize values on each Text below.
                 Rectangle {
+                    id: mpBox
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 175
+                    Layout.preferredHeight: 300
                     visible: root.mprisPlayer !== null && root.mprisPlayer !== undefined
                     radius: 12
                     clip: true
                     color: "#20000000"
+                    // border: uncomment / edit these two lines to frame the box
+                    border.width: 2
+                    border.color: "white"
+
+                    property real trackLen: root.mprisPlayer ? (root.mprisPlayer.length || 0) : 0
+                    // live position: bound to the player; the timer below keeps it ticking
+                    property real curPos: root.mprisPlayer ? root.mprisPlayer.position : 0
+                    property bool seeking: false
+                    property real seekPos: 0
+                    readonly property real shownPos: seeking ? seekPos : curPos
+
+                    // Quickshell doesn't emit positionChanged every frame (to save CPU);
+                    // pulse it once a second while playing so curPos re-reads the position.
+                    Timer {
+                        interval: 1000; repeat: true
+                        running: root.ccVisible && root.mprisPlayer !== null && root.mprisPlayer !== undefined
+                                 && root.mprisPlayer.isPlaying && !mpBox.seeking
+                        onTriggered: if (root.mprisPlayer) root.mprisPlayer.positionChanged()
+                    }
 
                     // blurred album-art background
                     Image {
@@ -894,64 +994,79 @@ Scope {
                         layer.enabled: true
                         layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 48 }
                     }
-                    Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.55) }
+                    Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.6) }
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 8
+                        anchors.margins: 16
+                        spacing: 6
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 12
-                            Image {
-                                source: root.mprisPlayer ? (root.mprisPlayer.trackArtUrl || "") : ""
-                                Layout.preferredWidth: 100; Layout.preferredHeight: 100   // image-size 100
-                                fillMode: Image.PreserveAspectCrop
-                                sourceSize.width: 100; sourceSize.height: 100
-                            }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 4
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: root.mprisPlayer ? (root.mprisPlayer.trackTitle || "") : ""
-                                    color: "white"; font.family: root.ncFont
-                                    font.pixelSize: 20; font.bold: true; elide: Text.ElideRight
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: root.mprisPlayer ? (root.mprisPlayer.trackArtist || "") : ""
-                                    color: "white"; font.family: root.ncFont
-                                    font.pixelSize: 16; elide: Text.ElideRight
-                                }
-                            }
+                        // spinning circular cover on top
+                        Vinyl {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.topMargin: 4
+                            Layout.preferredWidth: 118
+                            Layout.preferredHeight: 118
+                            art: root.mprisPlayer ? (root.mprisPlayer.trackArtUrl || "") : ""
+                            spinning: root.mprisPlayer ? root.mprisPlayer.isPlaying : false
                         }
 
-                        // transport controls
+                        Text {                                            // title
+                            Layout.fillWidth: true; Layout.topMargin: 6
+                            horizontalAlignment: Text.AlignHCenter
+                            text: root.mprisPlayer ? (root.mprisPlayer.trackTitle || "") : ""
+                            color: "white"; font.family: root.ncFont
+                            font.pixelSize: 18; font.bold: true; elide: Text.ElideRight
+                        }
+                        Text {                                            // album
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            visible: text !== ""
+                            text: root.mprisPlayer ? (root.mprisPlayer.trackAlbum || "") : ""
+                            color: Qt.rgba(1, 1, 1, 0.6); font.family: root.ncFont
+                            font.pixelSize: 13; elide: Text.ElideRight
+                        }
+                        Text {                                            // artist
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            text: root.mprisPlayer ? (root.mprisPlayer.trackArtist || "") : ""
+                            color: Qt.rgba(1, 1, 1, 0.75); font.family: root.ncFont
+                            font.pixelSize: 14; elide: Text.ElideRight
+                        }
+
+                        Item { Layout.fillHeight: true }   // push controls + progress toward the bottom
+
+                        // controls (play/pause pill in the middle)
                         RowLayout {
                             Layout.alignment: Qt.AlignHCenter
-                            spacing: 24
-                            MediaBtn {                                   // shuffle
-                                glyph: "\uf074"
+                            spacing: 18
+                            MediaBtn {                                    // shuffle
+                                glyph: "\uf074"; font.pixelSize: 16
                                 color: (root.mprisPlayer && root.mprisPlayer.shuffle) ? root.ncAccent : "white"
                                 onClicked: if (root.mprisPlayer) root.mprisPlayer.shuffle = !root.mprisPlayer.shuffle
                             }
-                            MediaBtn {                                   // previous
-                                glyph: "\uf048"
+                            MediaBtn {                                    // previous
+                                glyph: "\uf048"; font.pixelSize: 16
                                 onClicked: if (root.mprisPlayer && root.mprisPlayer.canGoPrevious) root.mprisPlayer.previous()
                             }
-                            MediaBtn {                                   // play / pause
-                                glyph: (root.mprisPlayer && root.mprisPlayer.isPlaying) ? "\uf04c" : "\uf04b"
-                                font.pixelSize: 24
-                                onClicked: if (root.mprisPlayer) root.mprisPlayer.isPlaying = !root.mprisPlayer.isPlaying
+                            Rectangle {                                   // play / pause pill
+                                Layout.preferredWidth: 48; Layout.preferredHeight: 32
+                                radius: height / 2
+                                color: Qt.rgba(1, 1, 1, 0.92)
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: (root.mprisPlayer && root.mprisPlayer.isPlaying) ? "\uf04c" : "\uf04b"
+                                    color: "#1a1a1a"; font.family: root.ncFont; font.pixelSize: 16
+                                }
+                                MouseArea { anchors.fill: parent
+                                    onClicked: if (root.mprisPlayer) root.mprisPlayer.isPlaying = !root.mprisPlayer.isPlaying }
                             }
-                            MediaBtn {                                   // next
-                                glyph: "\uf051"
+                            MediaBtn {                                    // next
+                                glyph: "\uf051"; font.pixelSize: 16
                                 onClicked: if (root.mprisPlayer && root.mprisPlayer.canGoNext) root.mprisPlayer.next()
                             }
-                            MediaBtn {                                   // repeat / loop
-                                glyph: "\uf01e"
+                            MediaBtn {                                    // repeat / loop
+                                glyph: "\uf01e"; font.pixelSize: 16
                                 color: (root.mprisPlayer && root.mprisPlayer.loopState !== MprisLoopState.None) ? root.ncAccent : "white"
                                 onClicked: {
                                     if (!root.mprisPlayer) return;
@@ -961,6 +1076,53 @@ Scope {
                                                                : MprisLoopState.None;
                                 }
                             }
+                        }
+
+                        // draggable seek bar
+                        Rectangle {
+                            id: seekTrack
+                            Layout.fillWidth: true
+                            Layout.topMargin: 10
+                            implicitHeight: 5
+                            radius: 3
+                            visible: mpBox.trackLen > 0
+                            color: Qt.rgba(1, 1, 1, 0.2)
+
+                            Rectangle {                                   // filled portion
+                                height: parent.height; radius: 3
+                                width: parent.width * Math.max(0, Math.min(1, mpBox.shownPos / mpBox.trackLen))
+                                color: "white"
+                            }
+                            Rectangle {                                   // drag handle
+                                width: 12; height: 12; radius: 6; color: "white"
+                                y: parent.height / 2 - height / 2
+                                x: Math.max(0, Math.min(parent.width - width,
+                                       parent.width * (mpBox.shownPos / mpBox.trackLen) - width / 2))
+                                visible: mpBox.seeking || handleHover.hovered
+                                HoverHandler { id: handleHover }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -8          // easier to grab
+                                preventStealing: true
+                                enabled: mpBox.trackLen > 0
+                                function frac(mx) { return Math.max(0, Math.min(1, mx / seekTrack.width)); }
+                                onPressed: (e) => { mpBox.seeking = true; mpBox.seekPos = frac(e.x) * mpBox.trackLen; }
+                                onPositionChanged: (e) => { if (pressed) mpBox.seekPos = frac(e.x) * mpBox.trackLen; }
+                                onReleased: (e) => {
+                                    if (root.mprisPlayer && root.mprisPlayer.canSeek && root.mprisPlayer.positionSupported)
+                                        root.mprisPlayer.position = mpBox.seekPos;
+                                    mpBox.seeking = false;
+                                }
+                            }
+                        }
+                        Text {                                            // time
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.topMargin: 3
+                            visible: mpBox.trackLen > 0
+                            text: root.fmtTime(mpBox.shownPos) + " / " + root.fmtTime(mpBox.trackLen)
+                            color: Qt.rgba(1, 1, 1, 0.7); font.family: root.ncFont; font.pixelSize: 12
                         }
                     }
                 }
