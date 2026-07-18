@@ -447,7 +447,7 @@ Scope {
             // so resuming continues from the current angle (not back to 0).
             NumberAnimation on rotation {
                 from: 0; to: 360
-                duration: 6000
+                duration: 10000
                 loops: Animation.Infinite
                 running: true
                 paused: !v.spinning
@@ -582,7 +582,12 @@ Scope {
 
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: Hyprland.dispatch("workspace " + parent.modelData)
+                                // Hyprland.dispatch() sends a raw "workspace N" style string over
+                                // the IPC socket, which used the same positional dispatcher syntax
+                                // hyprctl dispatch used pre-0.55. That protocol now expects a Lua
+                                // expression (hl.dsp...), so route this through hyprctl instead of
+                                // relying on Quickshell's own (unverified against 0.55) dispatch call.
+                                onClicked: root.run("hyprctl dispatch \"hl.dsp.focus({ workspace = " + parent.modelData + " })\"")
                             }
                         }
                     }

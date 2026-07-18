@@ -17,9 +17,8 @@ sync() {
 
 # ---------------- CONFIG FOLDERS ----------------
 sync "$HOME/.config/hypr"        "$DOTDIR/hypr"
-sync "$HOME/.config/rofi"        "$DOTDIR/rofi"
-sync "$HOME/.config/walker"      "$DOTDIR/walker"
-sync "$HOME/.config/elephant"    "$DOTDIR/elephant"
+sync "$HOME/.config/finder"      "$DOTDIR/finder"
+sync "$HOME/.config/lockscreen"  "$DOTDIR/lockscreen"
 sync "$HOME/.config/kitty"       "$DOTDIR/kitty"
 sync "$HOME/.config/cava"        "$DOTDIR/cava"
 sync "$HOME/.config/fastfetch"   "$DOTDIR/fastfetch"
@@ -41,6 +40,9 @@ rsync -a "$HOME/.config/spicetify/Themes/pywaldynamic" "$DOTDIR/spicetify/Themes
 
 mkdir -p "$DOTDIR"
 rsync -a "$HOME/.config/starship.toml" "$DOTDIR/starship/starship.toml"
+
+mkdir -p "$DOTDIR"
+rsync -a "$HOME/.config/mimeapps.list" "$DOTDIR/mimeapps.list"
 
 # ---------------- DESKTOP FILES ----------------
 sync "$HOME/.local/share/applications" "$DOTDIR/webapps/applications"

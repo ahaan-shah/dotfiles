@@ -33,7 +33,29 @@ ShellRoot {
                 property bool mouseOnDock:     false
                 property bool windowOverlaps:  false
 
-                readonly property bool dockVisible: mouseNearBottom || mouseOnDock || !windowOverlaps
+                // Raw "mouse wants the dock revealed" condition.
+                readonly property bool hovering: mouseNearBottom || mouseOnDock
+
+                // Grace period: after the mouse leaves the reveal region, keep the
+                // dock up for a moment so a brief/accidental exit doesn't instantly
+                // re-hide it. Re-entering cancels the pending hide.
+                property bool _grace: false
+                onHoveringChanged: {
+                    if (hovering) {
+                        hideDelay.stop()
+                        _grace = false
+                    } else {
+                        _grace = true          // stay visible during the buffer
+                        hideDelay.restart()
+                    }
+                }
+                property var _hideDelay: Timer {
+                    id: hideDelay
+                    interval: 1000             // ← buffer before the dock hides (ms)
+                    onTriggered: dockController._grace = false
+                }
+
+                readonly property bool dockVisible: hovering || _grace || !windowOverlaps
 
                 // ── Poll cursor position ──────────────────────────
                 property string _cursorBuf: ""

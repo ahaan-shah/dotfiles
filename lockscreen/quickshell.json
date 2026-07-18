@@ -1,0 +1,4 @@
+{
+    "name": "lockscreen",
+    "main": "shell.qml"
+}

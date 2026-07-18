@@ -204,6 +204,10 @@ Item {
         running: false
     }
 
+    // hyprctl dispatch is shorthand for `eval 'hl.dispatch(...)'` since 0.55 —
+    // it takes a single Lua expression string, not the old positional
+    // "dispatchname arg1,arg2" form. Each dispatch below is quoted as its own
+    // hl.dsp.* call rather than the old bare dispatcher-name + comma-args.
     Process {
         id: focusAddr
         property string addr:        ""
@@ -211,12 +215,12 @@ Item {
         property int    workspaceId: 0
         command: ["bash", "-c",
             isSpecial
-                ? "hyprctl dispatch movetoworkspace e+0,address:" + addr
-                  + " && hyprctl dispatch focuswindow address:" + addr
-                  + " && hyprctl dispatch bringactivetotop"
-                : "hyprctl dispatch workspace " + workspaceId
-                  + " && hyprctl dispatch focuswindow address:" + addr
-                  + " && hyprctl dispatch bringactivetotop"]
+                ? "hyprctl dispatch \"hl.dsp.window.move({ workspace = 'e+0', window = 'address:" + addr + "' })\""
+                  + " && hyprctl dispatch \"hl.dsp.focus({ window = 'address:" + addr + "' })\""
+                  + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""
+                : "hyprctl dispatch \"hl.dsp.focus({ workspace = " + workspaceId + " })\""
+                  + " && hyprctl dispatch \"hl.dsp.focus({ window = 'address:" + addr + "' })\""
+                  + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""]
         running: false
     }
 
@@ -226,12 +230,12 @@ Item {
         property int    workspaceId: 0
         command: ["bash", "-c",
             isSpecial
-                ? "hyprctl dispatch movetoworkspace e+0,class:" + root.windowClass
-                  + " && hyprctl dispatch focuswindow class:" + root.windowClass
-                  + " && hyprctl dispatch bringactivetotop"
-                : "hyprctl dispatch workspace " + workspaceId
-                  + " && hyprctl dispatch focuswindow class:" + root.windowClass
-                  + " && hyprctl dispatch bringactivetotop"]
+                ? "hyprctl dispatch \"hl.dsp.window.move({ workspace = 'e+0', window = 'class:" + root.windowClass + "' })\""
+                  + " && hyprctl dispatch \"hl.dsp.focus({ window = 'class:" + root.windowClass + "' })\""
+                  + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""
+                : "hyprctl dispatch \"hl.dsp.focus({ workspace = " + workspaceId + " })\""
+                  + " && hyprctl dispatch \"hl.dsp.focus({ window = 'class:" + root.windowClass + "' })\""
+                  + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""]
         running: false
     }
 }

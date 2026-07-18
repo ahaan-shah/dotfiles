@@ -73,3 +73,5 @@ export EDITOR="vim"
 export VISUAL="vim"
 
 export PATH=$PATH:~/.spicetify
+export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/go/bin:$PATH"

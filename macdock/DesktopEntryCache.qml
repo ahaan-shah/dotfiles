@@ -46,6 +46,14 @@ QtObject {
     property var _proc: Process {
         id: findProc
         command: ["bash", "-c",
+            // First: an index of Papirus app icons (name -> path). Papirus-Dark is
+            // listed first and by size so the earliest match is a sensible one.
+            "echo '---PAPIRUS_INDEX_START---'; " +
+            "for sz in 64x64 48x48 128x128 32x32 24x24; do " +
+            "  find /usr/share/icons/Papirus-Dark/$sz/apps /usr/share/icons/Papirus/$sz/apps " +
+            "       -name '*.svg' 2>/dev/null; done; " +
+            // Then: the desktop files, as before.
+            "echo '---DESKTOP_FILES_START---'; " +
             "find /usr/share/applications ~/.local/share/applications " +
             "-name '*.desktop' 2>/dev/null | while read f; do " +
             "echo '---DESKTOP_FILE_START---'; cat \"$f\"; done"]
@@ -65,12 +73,29 @@ QtObject {
     }
 
     function _parse(raw) {
+        // Split the Papirus-index section from the desktop-file section.
+        const _parts     = raw.split("---DESKTOP_FILES_START---")
+        const papirusRaw = (_parts[0] || "").replace("---PAPIRUS_INDEX_START---", "")
+        const desktopRaw = _parts[1] || ""
+
+        // name -> "file://…" Papirus path. First match wins (Papirus-Dark, larger
+        // sizes first, per the find order). Both exact-case and lowercase keys.
+        const pidx = {}
+        papirusRaw.split("\n").forEach(p => {
+            p = p.trim(); if (!p) return
+            const base = p.split("/").pop().replace(/\.(svg|png)$/i, "")
+            if (!(base in pidx))            pidx[base]            = "file://" + p
+            const lc = base.toLowerCase()
+            if (!(lc in pidx))              pidx[lc]              = "file://" + p
+        })
+        root._papirusIndex = pidx
+
         const byWm   = {}
         const byName = {}
         const genericSegments = new Set(["app", "www", "web", "mail", "m", "go", "get"])
         const browserPrefixes = ["brave-", "chrome-", "chromium-", "msedge-", "firefox-"]
 
-        const files = raw.split("---DESKTOP_FILE_START---")
+        const files = desktopRaw.split("---DESKTOP_FILE_START---")
         files.forEach(block => {
             if (!block.trim()) return
 
@@ -133,9 +158,17 @@ QtObject {
         root._byName    = byName
     }
 
+    // Papirus name -> file path index, built in _parse()
+    property var _papirusIndex: ({})
+
     function _resolveIconPath(icon) {
         if (icon.startsWith("/"))       return "file://" + icon
         if (icon.startsWith("file://")) return icon
+        // Force Papirus: map the icon name to a Papirus file so we don't depend
+        // on Quickshell's Qt icon theme. Fall back to the theme provider only if
+        // Papirus doesn't have this icon.
+        if (root._papirusIndex[icon])               return root._papirusIndex[icon]
+        if (root._papirusIndex[icon.toLowerCase()]) return root._papirusIndex[icon.toLowerCase()]
         return "image://icon/" + icon
     }
 

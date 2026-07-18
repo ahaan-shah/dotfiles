@@ -38,10 +38,10 @@ ListModel {
         separator: false
     }
     ListElement {
-        name: "Claude"
-        icon: "/home/ahaan/.local/share/icons/webapps/claude.png"
-        command: "chromium --app=https://claude.ai/new"
-        windowClass: "claude.ai"
+        name: "Zen"
+        icon: "/home/ahaan/.local/share/icons/webapps/zen-browser.svg"
+        command: "zen-browser"
+        windowClass: "zen"
         separator: false
     }
     ListElement {
@@ -49,6 +49,13 @@ ListModel {
         icon: "/home/ahaan/.local/share/icons/webapps/openai.svg"
         command: "chromium --app=https://chat.openai.com"
         windowClass: "chat.openai"
+        separator: false
+    }
+    ListElement {
+        name: "Claude"
+        icon: "/home/ahaan/.local/share/icons/webapps/claude.png"
+        command: "chromium --app=https://claude.ai/new"
+        windowClass: "claude.ai"
         separator: false
     }
     ListElement {

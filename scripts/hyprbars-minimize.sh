@@ -14,16 +14,18 @@ if [[ "$IS_SPECIAL" == "special:magic" ]]; then
     # Restore
     OLD_WS=$(grep "$ADDR" "$STATE_FILE" | awk '{print $2}')
 
+    # hyprctl dispatch now takes a Lua dispatcher expression (shorthand for
+    # `eval 'hl.dispatch(...)'`), not the old `dispatchname arg1,arg2` string.
     if [[ -n "$OLD_WS" ]]; then
-        hyprctl dispatch movetoworkspace "$OLD_WS,address:$ADDR"
+        hyprctl dispatch "hl.dsp.window.move({ workspace = $OLD_WS, window = 'address:$ADDR' })"
         sed -i "/$ADDR/d" "$STATE_FILE"
     else
-        hyprctl dispatch movetoworkspace "1,address:$ADDR"
+        hyprctl dispatch "hl.dsp.window.move({ workspace = 1, window = 'address:$ADDR' })"
     fi
 else
     # Save state
     echo "$ADDR $WS" >> "$STATE_FILE"
 
-    # Move to special workspace
-    hyprctl dispatch movetoworkspacesilent "special:magic,address:$ADDR"
+    # Move to special workspace (silent = don't follow/switch to it)
+    hyprctl dispatch "hl.dsp.window.move({ workspace = 'special:magic', follow = false, window = 'address:$ADDR' })"
 fi

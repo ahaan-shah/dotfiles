@@ -63,10 +63,14 @@ Item {
     function confirm() {
         if (!shown || appList.length === 0) return
         const w = appList[selectedIndex]
+        // Focus the window where it already is — focuswindow switches to the
+        // workspace the window lives on, so we follow it there instead of
+        // pulling the window onto the current workspace.
+        // hyprctl dispatch takes a Lua expression since 0.55 (shorthand for
+        // eval 'hl.dispatch(...)'), not the old bare dispatcher-name form.
         focusProc.command = ["bash", "-c",
-            "hyprctl dispatch movetoworkspace e+0,address:" + w.address +
-            " && hyprctl dispatch focuswindow address:" + w.address +
-            " && hyprctl dispatch bringactivetotop"]
+            "hyprctl dispatch \"hl.dsp.focus({ window = 'address:" + w.address + "' })\"" +
+            " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""]
         focusProc.running = true
         _close()
     }
