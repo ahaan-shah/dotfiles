@@ -132,6 +132,8 @@ Item {
     // Total height this item occupies (pill + float gap)
     width:  pillWidth
     height: pillHeight + floatMargin + 10   // extra 10 for shadow room
+    Behavior on width  { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+    Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
     // ── Frosted glass background ──────────────────────────────────
     Rectangle {
@@ -160,6 +162,8 @@ Item {
 
         Behavior on color        { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
         Behavior on border.color { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
+        Behavior on width        { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        Behavior on height       { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
         layer.enabled: true
         layer.effect: MultiEffect {

@@ -119,7 +119,7 @@ Item {
 
     // ── Running indicator dot(s) ──────────────────────────────────
     Row {
-        visible: root.isRunning && !root.separator
+        visible: root.isRunning && !root.separator && root.matchedWindows.length <= 3
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom:           parent.bottom
         anchors.bottomMargin:     3
@@ -149,6 +149,22 @@ Item {
             color:  Qt.rgba(1, 1, 1, 0.55)
             anchors.verticalCenter: parent.verticalCenter
         }
+    }
+
+    // 4 or more instances: collapse the dots into a single thin rounded
+    // line, the same width the 3-dot row above occupies (3×4 + 2×2 = 16px),
+    // so there's no layout jump switching between the two representations.
+    Rectangle {
+        visible: root.isRunning && !root.separator && root.matchedWindows.length >= 4
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom:           parent.bottom
+        anchors.bottomMargin:     3
+        width:  16
+        height: 4
+        radius: 2
+        color:  root.isActive ? "white" : Qt.rgba(1, 1, 1, 0.50)
+
+        Behavior on color { ColorAnimation { duration: 150 } }
     }
 
     // ── Mouse ─────────────────────────────────────────────────────

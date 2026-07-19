@@ -16,7 +16,14 @@ ShellRoot {
 
             anchors { bottom: true; left: true; right: true }
 
-            exclusiveZone: dockController.dockVisible ? 56 : 0
+            // Never reserve layout space. Reserving any non-zero zone makes
+            // Hyprland's own tiling engine shrink windows to avoid it *before*
+            // they can ever reach the dock's strip — so windowOverlaps would
+            // almost never observe a real overlap, the zone would stay
+            // reserved forever, and tiled windows would never get the full
+            // screen. A pure overlay (always 0) is the only way an auto-hide
+            // dock and full-height tiling can coexist.
+            exclusiveZone: 0
             WlrLayershell.layer:     WlrLayer.Top
             WlrLayershell.namespace: "macdock"
             color:         "transparent"
@@ -159,18 +166,14 @@ ShellRoot {
                 anchors.bottom:           parent.bottom
                 anchors.horizontalCenter: parent.horizontalCenter
 
-                // Hide speed: second number (currently 150ms)
-                // Show speed: first number  (currently 220ms)
+                // Matches Finder's box animation: uniform ~150ms OutCubic both ways.
                 anchors.bottomMargin: dockController.dockVisible ? 0 : -(height + 16)
                 Behavior on anchors.bottomMargin {
-                    NumberAnimation {
-                        duration:    dockController.dockVisible ? 300 : 200
-                        easing.type: dockController.dockVisible ? Easing.OutCubic : Easing.InCubic
-                    }
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
                 }
                 opacity: dockController.dockVisible ? 1 : 0
                 Behavior on opacity {
-                    NumberAnimation { duration: dockController.dockVisible ? 300 : 200 }
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
                 }
 
                 MouseArea {

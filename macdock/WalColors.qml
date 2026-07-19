@@ -28,10 +28,6 @@ QtObject {
     property string color14: "#f0f0f0"
     property string color15: "#ffffff"
 
-    readonly property string _colorsPath: "/home/" + _username + "/.cache/wal/colors.json"
-    readonly property string _username: Qt.application.name === "" ? "ahaan" :
-        _usernameProc.stdout || "ahaan"
-
     // ── Read the file ─────────────────────────────────────────────
     property string _buf: ""
 
