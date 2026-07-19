@@ -13,8 +13,8 @@
 //  >>> TO VERIFY ON YOUR MACHINE (search VERIFY)             //
 //      1. homeDir (below) if your user isn't "ahaan"         //
 //      2. Bluetooth property names (BluetoothDevice.*)       //
-//      wifi essid/signal tooltip uses `iwgetid` — install    //
-//      wireless_tools if you want it (icon works regardless).//
+//      wifi essid/signal tooltip reads it via `nmcli` — needs //
+//      NetworkManager running (icon works regardless).       //
 //============================================================//
 
 import Quickshell
@@ -65,6 +65,42 @@ Scope {
     // control center open/closed (toggled by the arch button in the bar)
     property bool ccVisible: false
 
+    // calendar dropdown open/closed (toggled by the clock in the bar), and
+    // which month it's currently showing (independent of "today")
+    property bool calVisible: false
+    property int calYear: new Date().getFullYear()
+    property int calMonth: new Date().getMonth()          // 0 = January
+    readonly property var monthNames: ["January", "February", "March", "April",
+        "May", "June", "July", "August", "September", "October", "November", "December"]
+
+    function calDaysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+    function calFirstWeekday(y, m) { return new Date(y, m, 1).getDay(); }   // 0 = Sunday
+    function calPrevMonth() { if (calMonth === 0) { calMonth = 11; calYear--; } else calMonth--; }
+    function calNextMonth() { if (calMonth === 11) { calMonth = 0; calYear++; } else calMonth++; }
+    // pick black/white text for a filled circle so "today" stays legible
+    // regardless of how light/dark the current wallpaper's accent color is
+    function contrastText(c) { return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? "black" : "white"; }
+
+    // 6 weeks x 7 days, including muted leading/trailing days from adjacent
+    // months so the grid is always a full rectangle. Recomputes whenever
+    // calYear/calMonth change since it reads them directly.
+    readonly property var calCells: {
+        var first = calFirstWeekday(calYear, calMonth);
+        var days = calDaysInMonth(calYear, calMonth);
+        var prevDays = calDaysInMonth(calMonth === 0 ? calYear - 1 : calYear, calMonth === 0 ? 11 : calMonth - 1);
+        var today = new Date();
+        var cells = [];
+        for (var i = 0; i < 42; i++) {
+            var dayNum = i - first + 1;
+            var inMonth = dayNum >= 1 && dayNum <= days;
+            var num = dayNum < 1 ? prevDays + dayNum : (dayNum > days ? dayNum - days : dayNum);
+            var isToday = inMonth && num === today.getDate()
+                          && calMonth === today.getMonth() && calYear === today.getFullYear();
+            cells.push({ num: num, inMonth: inMonth, weekday: i % 7, isToday: isToday });
+        }
+        return cells;
+    }
+
     // battery hard-coded colours (these were literal hex in style.css)
     readonly property color colCharging: "#26A65B"
     readonly property color colWarning:  "#ffbe61"
@@ -72,6 +108,19 @@ Scope {
 
     function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a); }
     function run(cmd) { Quickshell.execDetached(["sh", "-c", cmd]); }
+
+    // Launches `cmd` pinned to whichever workspace is focused right now, via
+    // Hyprland's exec_cmd window-rule (PID-tracked at spawn time) rather than
+    // relying on it landing on "whatever's active when the window maps" —
+    // that's what let wiremix/bluetui/impala sometimes pop up on a different
+    // workspace than the one the user was actually on when they clicked.
+    // Confirmed live: forcing { workspace = N } via hl.dsp.exec_cmd placed a
+    // freshly spawned kitty window on workspace N even while a different
+    // workspace was active at spawn time.
+    function runOnCurrentWorkspace(cmd) {
+        var ws = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : 1;
+        root.run("hyprctl dispatch \"hl.dsp.exec_cmd('" + cmd + "', { workspace = " + ws + " })\"");
+    }
 
     FileView {
         id: walColors
@@ -516,6 +565,26 @@ Scope {
         }
     }
 
+    // Small round nav button for the calendar header (prev/next month/year).
+    component CalNavBtn: Rectangle {
+        id: navBtn
+        signal clicked()
+        property string glyph: ""
+        Layout.preferredWidth: 28
+        Layout.preferredHeight: 28
+        radius: 10
+        color: navHover.hovered ? root.alpha(root.ncAccent, 0.2) : "transparent"
+        HoverHandler { id: navHover }
+        Text {
+            anchors.centerIn: parent
+            text: navBtn.glyph
+            color: root.ncText
+            font.family: root.ncFont
+            font.pixelSize: 13
+        }
+        MouseArea { anchors.fill: parent; onClicked: navBtn.clicked() }
+    }
+
     //========================================================================//
     //  THE BAR (one per monitor)                                             //
     //========================================================================//
@@ -542,7 +611,7 @@ Scope {
                 // custom/notification  →  "󰣇"  →  toggles the Quickshell control center
                 BarLabel {
                     text: "󰣇"
-                    onLeftClicked: root.ccVisible = !root.ccVisible
+                    onLeftClicked: { root.calVisible = false; root.ccVisible = !root.ccVisible; }
                 }
 
                 // hyprland/workspaces  (persistent 1..4, click to activate)
@@ -626,11 +695,21 @@ Scope {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
 
-                // clock  →  {:%a %d %B | %I:%M %p}  →  click: gnome-calendar
+                // clock  →  {:%a %d %B | %I:%M %p}  →  click: dropdown calendar
                 BarLabel {
                     // %a=ddd  %d=dd  %B=MMMM  %I=hh(12h w/ AP)  %M=mm  %p=AP
                     text: Qt.formatDateTime(clock.date, "ddd dd MMMM | hh:mm AP")
-                    onLeftClicked: root.run("gnome-calendar")
+                    onLeftClicked: {
+                        root.ccVisible = false;
+                        if (!root.calVisible) {
+                            // always reopen on the current month, not wherever
+                            // a previous session left month-nav pointed
+                            var d = new Date();
+                            root.calYear = d.getFullYear();
+                            root.calMonth = d.getMonth();
+                        }
+                        root.calVisible = !root.calVisible;
+                    }
                     SystemClock { id: clock; precision: SystemClock.Seconds }
                 }
 
@@ -707,7 +786,7 @@ Scope {
                                     tip: volTip
                                     property string volTip: ""
                                     // click -> wiremix ; right-click -> mute ; scroll -> volume
-                                    onLeftClicked:   root.run("kitty --title wiremix zsh -i -c wiremix")
+                                    onLeftClicked:   root.runOnCurrentWorkspace("kitty --title wiremix zsh -i -c wiremix")
                                     onRightClicked:  root.run("pactl set-sink-mute @DEFAULT_SINK@ toggle")
                                     onScrolledUp:    root.run("pactl set-sink-volume @DEFAULT_SINK@ +5%")
                                     onScrolledDown:  root.run("pactl set-sink-volume @DEFAULT_SINK@ -5%")
@@ -796,7 +875,7 @@ Scope {
                     text: !btOn ? " 󰂲"
                           : connDev ? (connDev.name + " 󰂯")
                           : "󰂯"
-                    onLeftClicked: root.run("kitty --title bluetui zsh -i -c bluetui")
+                    onLeftClicked: root.runOnCurrentWorkspace("kitty --title bluetui zsh -i -c bluetui")
                 }
 
                 //=== network ==================================================
@@ -819,7 +898,7 @@ Scope {
                          : netState === "ethernet" ? (essid + " 🖧")
                          : "Error"
 
-                    onLeftClicked: root.run("kitty --title impala zsh -i -c impala")
+                    onLeftClicked: root.runOnCurrentWorkspace("kitty --title impala zsh -i -c impala")
 
                     Process {
                         id: netProc
@@ -827,7 +906,7 @@ Scope {
                             "for i in /sys/class/net/*; do ifc=${i##*/}; [ \"$ifc\" = lo ] && continue; " +
                             "[ \"$(cat \"$i/operstate\" 2>/dev/null)\" = up ] || continue; " +
                             "if [ -d \"$i/wireless\" ] || [ -e \"$i/phy80211\" ]; then " +
-                            "  e=$(iwgetid -r 2>/dev/null); " +
+                            "  e=$(nmcli -t -f active,ssid dev wifi 2>/dev/null | awk -F: '$1==\"yes\"{print $2; exit}'); " +
                             "  q=$(awk -v d=\"$ifc:\" '$1==d{s=$3;sub(/\\./,\"\",s);print int(s*100/70)}' /proc/net/wireless 2>/dev/null); " +
                             "  echo \"wifi|$e|$q\"; exit 0; " +
                             "fi; echo \"ethernet|$ifc|\"; exit 0; done; echo 'disconnected||'"]
@@ -869,7 +948,13 @@ Scope {
                         NumberAnimation { from: 1.0; to: 0.3; duration: 500 }
                         NumberAnimation { from: 0.3; to: 1.0; duration: 500 }
                     }
-                    onOpacityChanged: if (!critical) opacity = 1
+                    // Reset on the critical->false transition itself, not on
+                    // opacity changes — the animation's `running: critical`
+                    // binding just freezes opacity wherever it was mid-fade
+                    // when critical flips false, and that freeze doesn't
+                    // necessarily fire another opacityChanged for this handler
+                    // to catch, so plugging in mid-dim left it stuck dim.
+                    onCriticalChanged: if (!critical) opacity = 1
                 }
             }
         }
@@ -1241,6 +1326,120 @@ Scope {
                             function onBrightPercentChanged() { if (!brightSlider.pressed) brightSlider.value = root.brightPercent; }
                         }
                         onMoved: root.run("brightnessctl set " + Math.round(value) + "%")
+                    }
+                }
+            }
+        }
+    }
+
+    //========================================================================//
+    //  CALENDAR  (dropdown from the clock — same chrome as the control       //
+    //  center: rounded ncBgStrong card, ncBorder outline, ncFont/ncText)     //
+    //========================================================================//
+    PanelWindow {
+        id: calWin
+        visible: root.calVisible
+        color: "transparent"
+        anchors { top: true; left: true; right: true; bottom: true }   // full-screen catcher
+        exclusiveZone: 0
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "quickshell-calendar"
+        WlrLayershell.keyboardFocus: root.calVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+
+        // click anywhere outside the panel -> close
+        MouseArea { anchors.fill: parent; onClicked: root.calVisible = false }
+
+        Rectangle {
+            id: calPanel
+            width: 300
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.topMargin: 10                   // matches control-center-margin-top
+            implicitHeight: calCol.implicitHeight + 28
+            radius: 14
+            // deliberately more opaque than ncBgStrong (control center's bg) —
+            // requested less see-through specifically for the calendar
+            color: root.alpha(root.colBg, 0.98)
+            border.width: 2
+            border.color: root.ncBorder
+
+            MouseArea { anchors.fill: parent }      // swallow clicks (don't close)
+
+            ColumnLayout {
+                id: calCol
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 10
+
+                // ---------- month/year nav ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    CalNavBtn { glyph: ""; onClicked: root.calYear--       }  // «  prev year
+                    CalNavBtn { glyph: ""; onClicked: root.calPrevMonth()  }  // ‹  prev month
+                    Text {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        text: root.monthNames[root.calMonth] + " " + root.calYear
+                        color: root.ncText
+                        font.family: root.ncFont
+                        font.pixelSize: 16
+                        font.weight: Font.Medium
+                    }
+                    CalNavBtn { glyph: ""; onClicked: root.calNextMonth()  }  // ›  next month
+                    CalNavBtn { glyph: ""; onClicked: root.calYear++       }  // »  next year
+                }
+
+                // ---------- weekday header ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Repeater {
+                        model: ["S", "M", "T", "W", "T", "F", "S"]
+                        delegate: Text {
+                            required property string modelData
+                            Layout.preferredWidth: 32
+                            horizontalAlignment: Text.AlignHCenter
+                            text: modelData
+                            color: root.alpha(root.ncText, 0.5)
+                            font.family: root.ncFont
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                        }
+                    }
+                }
+
+                // ---------- day grid ----------
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 7
+                    rowSpacing: 4
+                    columnSpacing: 4
+
+                    Repeater {
+                        model: root.calCells
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.preferredWidth: 32
+                            Layout.preferredHeight: 32
+                            radius: 16
+                            // weekends get a faint accent tint, today is a solid
+                            // accent fill, everything else a subtle neutral tint —
+                            // all derived from the live wal palette, not hardcoded
+                            color: !modelData.inMonth ? "transparent"
+                                   : modelData.isToday ? root.ncAccent
+                                   : (modelData.weekday === 0 || modelData.weekday === 6) ? root.alpha(root.ncAccent, 0.15)
+                                   : root.alpha(root.col7, 0.08)
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData.num
+                                font.family: root.ncFont
+                                font.pixelSize: 13
+                                color: !modelData.inMonth ? root.alpha(root.ncText, 0.3)
+                                       : modelData.isToday ? root.contrastText(root.ncAccent)
+                                       : root.ncText
+                            }
+                        }
                     }
                 }
             }
