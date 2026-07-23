@@ -13,9 +13,9 @@ QtObject {
     id: root
 
     readonly property var items: [
-        { label: "Power Saver", value: "power-saver" },
-        { label: "Balanced", value: "balanced" },
-        { label: "Performance", value: "performance" }
+        { icon: "󰌪", label: "Power Saver", value: "power-saver" },
+        { icon: "󰾅", label: "Balanced", value: "balanced" },
+        { icon: "󰓅", label: "Performance", value: "performance" }
     ]
 
     property string current: ""   // "power-saver" | "balanced" | "performance"

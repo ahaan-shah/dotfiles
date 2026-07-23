@@ -4,16 +4,20 @@ import QtQuick
 import Quickshell.Io
 
 // 1:1 port of scripts/powermenu.sh's option list + case dispatch — same
-// four actions, same nerd-font glyphs baked into the label (rendered as-is
-// by Finder's row Text, same as the original rofi listing did).
+// four actions. Icon glyphs are a separate field (not baked into the label
+// string like the original rofi listing did) so Finder's icon tile can
+// render them properly — these MDI codepoints are outside the BMP (need a
+// UTF-16 surrogate pair), and Finder previously derived tile icons via
+// title.charAt(0), which only grabs the lead surrogate and renders as a
+// broken glyph ("?"). Rendering the full glyph string fixes that.
 QtObject {
     id: root
 
     readonly property var items: [
-        { label: "󰤄 Sleep",    key: "sleep" },
-        { label: "󰐥 Shutdown", key: "shutdown" },
-        { label: "󰜉 Reboot",   key: "reboot" },
-        { label: "󰍃 Logout",   key: "logout" }
+        { icon: "󰤄", label: "Sleep",    key: "sleep" },
+        { icon: "󰐥", label: "Shutdown", key: "shutdown" },
+        { icon: "󰜉", label: "Reboot",   key: "reboot" },
+        { icon: "󰍃", label: "Logout",   key: "logout" }
     ]
 
     function run(key) {

@@ -305,6 +305,9 @@ hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 -- finder/ replaces walker (native Quickshell reimplementation); toggled via
 -- its persistent IPC socket, same convention as macswitcher's socat bind below.
 hl.bind("ALT + S", hl.dsp.exec_cmd("echo \"open:default\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
+-- File Search (finder/, filesearch mode — restricted to non-hidden files
+-- under $HOME via fd's own defaults, see FileSearch.qml)
+hl.bind("ALT + F", hl.dsp.exec_cmd("echo \"open:filesearch\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + W", hl.dsp.window.float({ action = "toggle" }))
 -- Native dispatch calls instead of shelling out to `hyprctl dispatch` with

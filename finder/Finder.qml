@@ -33,7 +33,8 @@ Item {
         "clipboard":     "Search clipboard history...",
         "powerprofiles": "Select power profile...",
         "powermenu":     "Power menu...",
-        "wallpaper":     "Search wallpapers..."
+        "wallpaper":     "Search wallpapers...",
+        "filesearch":    "Search files..."
     })
 
     // ── Open / close ─────────────────────────────────────────────────
@@ -103,7 +104,7 @@ Item {
             root.displayResults = PowerProfiles.items
                 .filter(p => !q || p.label.toLowerCase().includes(q))
                 .map(p => ({
-                    kind: "powerprofile", emojiGlyph: "", title: p.label,
+                    kind: "powerprofile", emojiGlyph: p.icon, title: p.label,
                     subtitle: p.value === PowerProfiles.current ? "current" : "",
                     data: p
                 }))
@@ -113,7 +114,7 @@ Item {
             const q = root.query.toLowerCase()
             root.displayResults = PowerMenu.items
                 .filter(p => !q || p.label.toLowerCase().includes(q))
-                .map(p => ({ kind: "powermenuitem", emojiGlyph: "", title: p.label, subtitle: "", data: p }))
+                .map(p => ({ kind: "powermenuitem", emojiGlyph: p.icon, title: p.label, subtitle: "", data: p }))
             return
         }
         if (root.mode === "wallpaper") {
@@ -123,37 +124,41 @@ Item {
             }))
             return
         }
-        // default mode
-        if (!root.query) { root.displayResults = []; return }
-
-        if (root._isFileQuery(root.query)) {
-            // "/"-prefixed: file search only. Backspacing the "/" away drops
-            // straight back into normal app search via the branch below, no
-            // extra state to unwind — _combineDefault() re-derives everything
-            // from root.query on every rebuild.
-            const fq = root.query.slice(1)
-            if (fq.length >= 2) FileSearch.search(fq, 10)
-            else FileSearch.results = []
-            root._combineDefault()
+        if (root.mode === "filesearch") {
+            // Dedicated mode (ALT+F), not the old "/"-prefix — FileSearch
+            // itself is already restricted to non-hidden files under $HOME
+            // (fd's own defaults, see FileSearch.qml).
+            if (root.query.length >= 2) {
+                FileSearch.search(root.query, 15)
+            } else if (FileSearch.results.length > 0) {
+                // Guarded: unconditionally reassigning `[]` here would refire
+                // onResultsChanged below on every call (a new array is never
+                // considered equal to the old one), which calls _rebuild()
+                // again, which clears it again — infinite synchronous
+                // recursion (RangeError: Maximum call stack size exceeded),
+                // confirmed live. Only clear when there's actually something
+                // to clear, and route rendering through the non-recursive
+                // _renderFileSearch() below rather than back through here.
+                FileSearch.results = []
+            }
+            root._renderFileSearch()
             return
         }
+        // default mode: app search + calculator, no file search here anymore
+        // (moved to its own "filesearch" mode/keybind above).
+        if (!root.query) { root.displayResults = []; return }
 
         Calc.evaluate(root.query)
-        if (root._looksLikeCalc(root.query)) {
-            // Query reads as an in-progress arithmetic expression (e.g. "12*",
-            // "5+3") — don't bother launching a file search for it, and clear
-            // any stale results from before the user started typing math.
-            FileSearch.results = []
-        } else {
-            FileSearch.results = []   // file search only runs under the "/" prefix now
-        }
         root._combineDefault()
     }
 
-    // A "/"-prefixed query is file-search mode; everything else is app
-    // search (plus calc/websearch). Matches the footer hint shown to the user.
-    function _isFileQuery(q) {
-        return q.startsWith("/")
+    // Render-only step for filesearch results — deliberately does not touch
+    // FileSearch.results or call FileSearch.search(), so it's safe to call
+    // from the onResultsChanged handler below without looping back into it.
+    function _renderFileSearch() {
+        root.displayResults = FileSearch.results.map(f => ({
+            kind: "file", icon: "", title: f.name, subtitle: f.subtext, data: f
+        }))
     }
 
     // A query counts as "doing math" once it has both a digit and an
@@ -172,7 +177,7 @@ Item {
     }
     Connections {
         target: FileSearch
-        function onResultsChanged() { if (root.mode === "default" && root.query) root._combineDefault() }
+        function onResultsChanged() { if (root.mode === "filesearch") root._renderFileSearch() }
     }
     // AppIndex's .desktop scan is also async (Process spawn latency), so the
     // very first query typed before it finishes would otherwise permanently
@@ -212,16 +217,6 @@ Item {
 
         const rows = []
 
-        if (root._isFileQuery(q)) {
-            for (const f of FileSearch.results) {
-                rows.push({ kind: "file", icon: "", title: f.name, subtitle: f.subtext, data: f })
-            }
-            const prevSel = root.selectedIndex
-            root.displayResults = rows
-            root.selectedIndex = Math.min(prevSel, Math.max(rows.length - 1, 0))
-            return
-        }
-
         if (Calc.result && Calc.expression === q) {
             rows.push({ kind: "calc", emojiGlyph: "", title: Calc.result, subtitle: Calc.expression, data: null })
         }
@@ -248,7 +243,7 @@ Item {
         root.clipboardPreview = null
         root.wallpaperPreview = null
         const r = root.displayResults[root.selectedIndex]
-        if (root.mode === "default") {
+        if (root.mode === "filesearch") {
             if (r && r.kind === "file" && !r.data.isDir) FileSearch.previewFor(r.data.path)
         } else if (root.mode === "clipboard") {
             if (r && r.kind === "clipboard" && r.data.kind === "image") {
@@ -272,7 +267,7 @@ Item {
                 AppIndex.launch(r.data)
                 break
             case "file":
-                FileSearch.open(r.data.path)
+                FileSearch.open(r.data.path, r.data.isDir)
                 break
             case "calc":
                 copyToClipboard(r.title)
@@ -453,12 +448,17 @@ Item {
                                     readonly property string kind: rowDelegate.modelData.kind
                                     readonly property bool _hasThumb: kind === "app" || kind === "wallpaper"
                                     readonly property bool hasAppImage: iconSlot._hasThumb && appIcon.status === Image.Ready
+                                    // Power profile/menu icons are Nerd Font glyphs too (see
+                                    // PowerProfiles.qml/PowerMenu.qml), same rendering path as emoji.
+                                    readonly property bool _hasGlyph: kind === "emoji" || kind === "powerprofile" || kind === "powermenuitem"
 
                                     Text {
                                         anchors.centerIn: parent
-                                        visible: iconSlot.kind === "emoji"
+                                        visible: iconSlot._hasGlyph
                                         text: rowDelegate.modelData.emojiGlyph || ""
+                                        color: root.fgColor
                                         font.pixelSize: 24
+                                        font.family: "Hack Nerd Font Propo"
                                     }
                                     Image {
                                         id: appIcon
@@ -472,7 +472,7 @@ Item {
                                     Rectangle {
                                         anchors.fill: parent
                                         radius: 6
-                                        visible: iconSlot.kind !== "emoji" && !iconSlot.hasAppImage
+                                        visible: !iconSlot._hasGlyph && !iconSlot.hasAppImage
                                         color: root._alpha(root.accentColor, 0.3)
                                         Text {
                                             anchors.centerIn: parent
@@ -483,9 +483,7 @@ Item {
                                                 if (k === "calc")         return ""
                                                 if (k === "websearch")    return ""
                                                 if (k === "clipboard")    return ""
-                                                if (k === "powerprofile")  return rowDelegate.modelData.title.charAt(0).toUpperCase()
-                                                if (k === "powermenuitem") return rowDelegate.modelData.title.charAt(0)
-                                                if (k === "wallpaper")     return rowDelegate.modelData.title.charAt(0).toUpperCase()
+                                                if (k === "wallpaper")    return rowDelegate.modelData.title.charAt(0).toUpperCase()
                                                 return "?"
                                             }
                                             color: root.fgColor
@@ -576,11 +574,6 @@ Item {
 
                 Text { text: "↑↓ navigate"; color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "Hack Nerd Font Propo" }
                 Text { text: "↵ select";     color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "Hack Nerd Font Propo" }
-                Text {
-                    text: "/ files"
-                    visible: root.mode === "default"
-                    color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "Hack Nerd Font Propo"
-                }
                 Text { text: "esc close";    color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "Hack Nerd Font Propo" }
             }
         }

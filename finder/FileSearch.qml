@@ -160,8 +160,13 @@ QtObject {
         }
     }
 
-    function open(path) {
-        openProc.command = ["xdg-open", path]
+    function open(path, isDir) {
+        // inode/directory's xdg default handler is codium.desktop on this
+        // system (confirmed via `xdg-mime query default inode/directory`),
+        // so a bare xdg-open on a folder opens it in VSCodium instead of a
+        // file manager. Route directories to nautilus directly; files still
+        // go through xdg-open so each file type's real default app is used.
+        openProc.command = isDir ? ["nautilus", path] : ["xdg-open", path]
         openProc.running = true
     }
     property var openProc: Process { id: openProc; running: false }
