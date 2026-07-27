@@ -81,14 +81,24 @@ Scope {
     // regardless of how light/dark the current wallpaper's accent color is
     function contrastText(c) { return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? "black" : "white"; }
 
+    // Drives calCells' re-evaluation across midnight. `new Date()` inside a
+    // QML property binding is NOT a dependency the binding engine can see, so
+    // without reading an actual QML property here, calCells only ever
+    // recomputed when calYear/calMonth changed (i.e. month nav) — the "today"
+    // dot would silently go stale for the rest of the day the machine stayed
+    // up. Minutes precision is cheap and gets the day rollover within a
+    // minute of midnight instead of requiring a month-nav round trip.
+    SystemClock { id: dayClock; precision: SystemClock.Minutes }
+
     // 6 weeks x 7 days, including muted leading/trailing days from adjacent
     // months so the grid is always a full rectangle. Recomputes whenever
-    // calYear/calMonth change since it reads them directly.
+    // calYear/calMonth change since it reads them directly, and whenever
+    // dayClock ticks so the "today" highlight follows a real day rollover.
     readonly property var calCells: {
         var first = calFirstWeekday(calYear, calMonth);
         var days = calDaysInMonth(calYear, calMonth);
         var prevDays = calDaysInMonth(calMonth === 0 ? calYear - 1 : calYear, calMonth === 0 ? 11 : calMonth - 1);
-        var today = new Date();
+        var today = dayClock.date;
         var cells = [];
         for (var i = 0; i < 42; i++) {
             var dayNum = i - first + 1;

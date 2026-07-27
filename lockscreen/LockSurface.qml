@@ -49,24 +49,9 @@ Item {
         cursorShape: Qt.BlankCursor
     }
 
-    // Always-opaque base painted synchronously on the very first frame —
-    // WlSessionLockSurface has nothing to show until Quickshell submits its
-    // first real frame, and the wallpaper Image loads asynchronously, so
-    // without this there's a brief gap showing the compositor's own default
-    // (previously a bright white flash). A plain black Rectangle needs no
-    // image decode and paints immediately.
-    //
-    // A prior version tried to fix the resulting "flash of solid black" by
-    // fading the ENTIRE scene in from opacity:0 on top of this — but that
-    // just relocated the problem: the deliberate opacity-0 hold at the
-    // start of that fade still reads as "the screen abruptly blacks, then
-    // renders" for whatever few hundred ms the fade takes to become
-    // visible. Per explicit request, the fix now is to never hide the
-    // wallpaper at all: the Image below shows immediately, undimmed and
-    // unblurred, the instant it decodes — the only thing that's still
-    // gradual is the dim overlay and blur amount ramping up to their final
-    // values afterward, so locking reads as "the same photo gently comes
-    // into focus/dims" rather than any kind of fade-from-black.
+    // Fallback base in case the Image below ever fails to load (bad path,
+    // corrupt file) — normally invisible, since bg now decodes synchronously
+    // (see below) and covers it on the very first frame.
     Rectangle {
         anchors.fill: parent
         color: "black"
@@ -86,26 +71,54 @@ Item {
     // ── wallpaper path — read live from hyprpaper.conf, the same file
     // set_wallpaper.sh rewrites on every wallpaper change, so this and the
     // desktop wallpaper never drift out of sync with each other. ─────────
-    property string wallpaperPath: "/home/ahaan/Pictures/wallpapers/dune.jpg"
-    Process {
-        id: wallpaperProc
-        running: true
-        command: ["bash", "-c",
-            "grep -m1 '^path' ~/.config/hypr/hyprpaper.conf | sed 's/^path *= *//'"]
-        stdout: StdioCollector {
-            onStreamFinished: if (text.trim() !== "") root.wallpaperPath = text.trim()
-        }
+    // The previous approach (a Process spawning bash -> grep -> sed) and
+    // even a first attempt at FileView using its reactive onLoaded signal
+    // both left a real, measurable gap (confirmed live via a timestamped
+    // console.log: ~108ms between the two) where wallpaperPath still held
+    // its hardcoded literal default — a real, different image. Since bg's
+    // Image is synchronous (see below, fixed for the black-flash issue
+    // separately), that first frame fully committed the WRONG photo before
+    // the real path ever arrived and swapped it — that gap was "wrong
+    // wallpaper". onLoaded fires as a queued signal even when the
+    // underlying read itself is blocking, so it still lands a tick late.
+    // Calling hyprpaperFile.text() directly inside the property binding
+    // below instead forces the read (and QML's dependency tracking follows
+    // property reads through the function call, so this still re-evaluates
+    // on future reloads) synchronously as part of evaluating wallpaperPath
+    // itself — confirmed live: the second console.log line disappeared
+    // entirely, only the correct path is ever set.
+    property string wallpaperPath: {
+        const m = /^path\s*=\s*(.+)$/m.exec(hyprpaperFile.text())
+        return m ? m[1].trim() : "/home/ahaan/Pictures/wallpapers/dune.jpg"
+    }
+    FileView {
+        id: hyprpaperFile
+        path: "/home/ahaan/.config/hypr/hyprpaper.conf"
+        blockLoading: true
+        blockAllReads: true
+        watchChanges: true
+        onFileChanged: reload()
     }
 
     // ── background { path, blur_size=7, blur_passes=2, brightness=.4 } ──
     // No opacity fade on the Image itself — it shows at full opacity the
     // instant it's decoded, exactly like the desktop wallpaper it mirrors.
+    //
+    // asynchronous: false (not true) is deliberate: a fresh quickshell
+    // process spawns per-lock (shell.qml is not a persistent daemon — see
+    // its own comment), so WlSessionLockSurface's very first committed
+    // frame previously landed *before* an async decode finished, showing
+    // the black fallback Rectangle above for a beat before the wallpaper
+    // popped in — a black flash. Decoding synchronously means the first
+    // frame Quickshell ever submits already has the image in it, so there's
+    // nothing to flash to; the only remaining visible transition is the
+    // blur/dim ramp below.
     Image {
         id: bg
         anchors.fill: parent
         source: "file://" + root.wallpaperPath
         fillMode: Image.PreserveAspectCrop
-        asynchronous: true
+        asynchronous: false
         cache: false
     }
     MultiEffect {
@@ -125,7 +138,7 @@ Item {
             to: 0.5          // "blur to 50%" — MultiEffect's `blur` is
                               // already a 0-1 normalized amount, so 0.5 is
                               // literally that.
-            duration: 750
+            duration: 1000
             easing.type: Easing.OutQuad
         }
     }
@@ -135,14 +148,14 @@ Item {
     // light overlay for *some* dimming (matches general dim-for-legibility
     // intent) but calibrated the opacity down to match the photo rather
     // than the literal multiply-by-0.4 math. Ramps in the same way as the
-    // blur above, both settling together ~750ms after lock.
+    // blur above, both settling together ~1s after lock.
     Rectangle {
         anchors.fill: parent
         color: "black"
         opacity: 0
         NumberAnimation on opacity {
             to: 0.15
-            duration: 750
+            duration: 1000
             easing.type: Easing.OutQuad
         }
     }
