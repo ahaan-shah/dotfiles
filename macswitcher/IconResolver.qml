@@ -25,7 +25,7 @@ QtObject {
         if (!wmClass || wmClass === "") return ""
         const lc = wmClass.toLowerCase()
 
-        if (root._aliases[lc]) return "image://icon/" + root._aliases[lc]
+        if (root._aliases[lc]) return root._resolveIconPath(root._aliases[lc])
         if (root._byWmClass[lc]) return root._byWmClass[lc]
 
         const dots = lc.split(".")
@@ -63,16 +63,16 @@ QtObject {
                 s = s.replace(/__.*$/, "").replace(/[-_]+default$/i, "").toLowerCase()
                 for (const part of s.split(".")) {
                     if (part && part.length >= 3 && !genericSegments.has(part))
-                        return "image://icon/" + part
+                        return root._resolveIconPath(part)
                 }
             }
         }
 
         // 3. Reverse-domain last segment
         const segs = cls.split(".")
-        if (segs.length > 1) return "image://icon/" + segs[segs.length - 1].toLowerCase()
+        if (segs.length > 1) return root._resolveIconPath(segs[segs.length - 1].toLowerCase())
 
-        return cls ? "image://icon/" + cls : ""
+        return cls ? root._resolveIconPath(cls) : ""
     }
 
     property string _buf: ""
@@ -80,6 +80,14 @@ QtObject {
     property var _proc: Process {
         id: findProc
         command: ["bash", "-c",
+            // Same Papirus-Dark-first index as the dock's DesktopEntryCache,
+            // so icons match macdock instead of falling through to whatever
+            // Qt's default icon theme provider resolves.
+            "echo '---PAPIRUS_INDEX_START---'; " +
+            "for sz in 64x64 48x48 128x128 32x32 24x24; do " +
+            "  find /usr/share/icons/Papirus-Dark/$sz/apps /usr/share/icons/Papirus/$sz/apps " +
+            "       -name '*.svg' 2>/dev/null; done; " +
+            "echo '---DESKTOP_FILES_START---'; " +
             "find /usr/share/applications ~/.local/share/applications " +
             "-name '*.desktop' 2>/dev/null | while read f; do " +
             "echo '---DESKTOP_FILE_START---'; cat \"$f\"; done"]
@@ -99,13 +107,40 @@ QtObject {
         }
     }
 
+    // Papirus name -> file path index, built in _parse()
+    property var _papirusIndex: ({})
+
+    function _resolveIconPath(icon) {
+        if (icon.startsWith("/"))       return "file://" + icon
+        if (icon.startsWith("file://")) return icon
+        // Force Papirus (Papirus-Dark first), same as macdock's
+        // DesktopEntryCache, so icons match across the launcher/dock/switcher.
+        if (root._papirusIndex[icon])               return root._papirusIndex[icon]
+        if (root._papirusIndex[icon.toLowerCase()]) return root._papirusIndex[icon.toLowerCase()]
+        return "image://icon/" + icon
+    }
+
     function _parse(raw) {
+        const _parts     = raw.split("---DESKTOP_FILES_START---")
+        const papirusRaw = (_parts[0] || "").replace("---PAPIRUS_INDEX_START---", "")
+        const desktopRaw = _parts[1] || ""
+
+        const pidx = {}
+        papirusRaw.split("\n").forEach(p => {
+            p = p.trim(); if (!p) return
+            const base = p.split("/").pop().replace(/\.(svg|png)$/i, "")
+            if (!(base in pidx))            pidx[base]            = "file://" + p
+            const lc = base.toLowerCase()
+            if (!(lc in pidx))              pidx[lc]              = "file://" + p
+        })
+        root._papirusIndex = pidx
+
         const byWm = {}
         const byName = {}
         const genericSegments = new Set(["app", "www", "web", "mail", "m", "go", "get"])
         const browserPrefixes = ["brave-", "chrome-", "chromium-", "msedge-", "firefox-"]
 
-        raw.split("---DESKTOP_FILE_START---").forEach(block => {
+        desktopRaw.split("---DESKTOP_FILE_START---").forEach(block => {
             if (!block.trim()) return
             let icon = "", wmClass = "", name = "", exec = ""
             block.split("\n").forEach(line => {
@@ -116,7 +151,7 @@ QtObject {
                 if (l.startsWith("Exec=")           && !exec)    exec    = l.slice(5).trim()
             })
             if (!icon) return
-            const resolved = icon.startsWith("/") ? "file://" + icon : "image://icon/" + icon
+            const resolved = root._resolveIconPath(icon)
             if (wmClass) byWm[wmClass.toLowerCase()] = resolved
             byWm[icon.toLowerCase()] = resolved
             const iconDots = icon.split(".")

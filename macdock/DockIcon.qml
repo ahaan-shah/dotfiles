@@ -34,9 +34,19 @@ Item {
                                   ? magnRadius + 1
                                   : Math.abs(iconCenterX - dockHoverX)
 
-    readonly property real _magnFactor: _dist >= magnRadius
+    // Clamp the falloff radius to half of this icon's own (fixed) cell width.
+    // Cells sit edge-to-edge with no spacing, so width/2 is exactly the
+    // distance to the boundary with the next cell over — capping the radius
+    // there guarantees magnFactor hits 0 at that boundary and never bleeds
+    // into a neighboring icon, regardless of where within this icon's own
+    // cell the mouse is. Previously magnRadius (45) exceeded the cell pitch
+    // (42), so a mouse near either edge of one icon was still close enough
+    // to partially magnify the icon next to it.
+    readonly property real _effRadius: Math.min(magnRadius, width / 2)
+
+    readonly property real _magnFactor: _dist >= _effRadius
                                         ? 0
-                                        : Math.cos((_dist / magnRadius) * (Math.PI / 2))
+                                        : Math.cos((_dist / _effRadius) * (Math.PI / 2))
 
     readonly property real targetSize: baseSize + (maxSize - baseSize) * _magnFactor
 
@@ -46,8 +56,13 @@ Item {
     }
     onTargetSizeChanged: currentSize = targetSize
 
-    // Width tracks animated size; height is fixed so the pill doesn't resize
-    width:  separator ? 18 : Math.round(currentSize) + 8
+    // Cell width is fixed (based on baseSize, not the animated currentSize) so
+    // hovering never reflows the parent Row. Magnification is applied purely
+    // as a visual scale transform below — if width tracked currentSize here,
+    // every hovered-icon growth tick shifted every later icon's Row-assigned
+    // x, which fed back into their own iconCenterX-based magnFactor calc and
+    // produced a per-frame wobble in icons that weren't even being hovered.
+    width:  separator ? 18 : baseSize + 8
     height: maxSize + 24     // constant: icon bottom + dot clearance
 
     // Smooth fade in/out when dynamic icons appear or disappear
@@ -71,17 +86,20 @@ Item {
         id: iconItem
         visible: !root.separator
 
-        width:  root.currentSize
-        height: root.currentSize
+        width:  root.baseSize
+        height: root.baseSize
 
         // Sits on the bottom of the cell; leaves room for the running dot
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom:           parent.bottom
         anchors.bottomMargin:     11
 
-
-        // Press scale
-        scale: mouseArea.pressed ? 0.88 : 1.0
+        // Magnification is a pure visual transform (not a layout resize),
+        // scaled from the bottom so it grows upward in place and can overlap
+        // neighboring cells the way real dock magnification does, without
+        // ever changing this item's actual width/height/x.
+        transformOrigin: Item.Bottom
+        scale: (root.currentSize / root.baseSize) * (mouseArea.pressed ? 0.88 : 1.0)
         Behavior on scale { NumberAnimation { duration: 70 } }
 
         // ── App icon image ────────────────────────────────────────

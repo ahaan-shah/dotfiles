@@ -17,6 +17,14 @@ QtObject {
     property var _proc: Process {
         id: findProc
         command: ["bash", "-c",
+            // Same Papirus-Dark-first index as the dock's DesktopEntryCache,
+            // so app icons match macdock instead of falling through to
+            // whatever Qt's default icon theme provider resolves.
+            "echo '---PAPIRUS_INDEX_START---'; " +
+            "for sz in 64x64 48x48 128x128 32x32 24x24; do " +
+            "  find /usr/share/icons/Papirus-Dark/$sz/apps /usr/share/icons/Papirus/$sz/apps " +
+            "       -name '*.svg' 2>/dev/null; done; " +
+            "echo '---DESKTOP_FILES_START---'; " +
             "find /usr/share/applications ~/.local/share/applications " +
             "-name '*.desktop' 2>/dev/null | while read f; do " +
             "echo '---DESKTOP_FILE_START---'; echo \"PATH=$f\"; cat \"$f\"; done"]
@@ -36,8 +44,35 @@ QtObject {
         }
     }
 
+    // Papirus name -> file path index, built in _parse()
+    property var _papirusIndex: ({})
+
+    function _resolveIconPath(icon) {
+        if (icon.startsWith("/"))       return "file://" + icon
+        if (icon.startsWith("file://")) return icon
+        // Force Papirus (Papirus-Dark first), same as macdock's
+        // DesktopEntryCache, so icons match across the launcher/dock/switcher.
+        if (root._papirusIndex[icon])               return root._papirusIndex[icon]
+        if (root._papirusIndex[icon.toLowerCase()]) return root._papirusIndex[icon.toLowerCase()]
+        return "image://icon/" + icon
+    }
+
     function _parse(raw) {
-        const files = raw.split("---DESKTOP_FILE_START---")
+        const _parts     = raw.split("---DESKTOP_FILES_START---")
+        const papirusRaw = (_parts[0] || "").replace("---PAPIRUS_INDEX_START---", "")
+        const desktopRaw = _parts[1] || ""
+
+        const pidx = {}
+        papirusRaw.split("\n").forEach(p => {
+            p = p.trim(); if (!p) return
+            const base = p.split("/").pop().replace(/\.(svg|png)$/i, "")
+            if (!(base in pidx))            pidx[base]            = "file://" + p
+            const lc = base.toLowerCase()
+            if (!(lc in pidx))              pidx[lc]              = "file://" + p
+        })
+        root._papirusIndex = pidx
+
+        const files = desktopRaw.split("---DESKTOP_FILE_START---")
         const list = []
         files.forEach(block => {
             if (!block.trim()) return
@@ -62,9 +97,7 @@ QtObject {
             if (/avahi/i.test(name) || /avahi/i.test(path)) return
             if (/lstopo/i.test(name) || /lstopo/i.test(path)) return
 
-            let iconPath = ""
-            if (icon.startsWith("/"))            iconPath = "file://" + icon
-            else if (icon)                        iconPath = "image://icon/" + icon
+            let iconPath = icon ? root._resolveIconPath(icon) : ""
 
             list.push({ name, comment, icon, iconPath, path })
         })

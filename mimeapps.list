@@ -32,6 +32,8 @@ x-scheme-handler/about=chromium.desktop
 x-scheme-handler/unknown=chromium.desktop
 text/x-shellscript=org.gnome.TextEditor.desktop
 x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+application/epub+zip=calibre-ebook-viewer.desktop
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=libreoffice-writer.desktop
 
 [Added Associations]
 x-scheme-handler/http=zen.desktop;firefox.desktop;
@@ -45,3 +47,5 @@ application/xhtml+xml=firefox.desktop;zen.desktop;
 application/x-extension-xhtml=firefox.desktop;zen.desktop;
 application/x-extension-xht=firefox.desktop;zen.desktop;
 text/x-shellscript=org.gnome.TextEditor.desktop;
+application/epub+zip=calibre-ebook-viewer.desktop;
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=libreoffice-writer.desktop;
