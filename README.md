@@ -14,11 +14,14 @@
 git clone https://github.com/ahaan-shah/dotfiles.git ~/.config/dotfiles
 ```
 
-It uses Hyprland 0.55+, Quickshell, and a decent pile of CLI tools.
+It uses:  
+- Hyprland 0.55+  
+- Quickshell  
+- and a decent pile of CLI tools  
 
 Each Quickshell app (`taskbar`, `macdock`, `macswitcher`, `finder`, `lockscreen`) is standalone and autostarts from `hypr/hyprland.lua`. 
 
-Wallpapers live in `Pictures/wallpapers/`, and selected via `finder`'s built-in wallpaper picker.
+Wallpapers live in `Pictures/wallpapers/`, and selected via `finder` with its built-in wallpaper picker.
 
 ---
 
