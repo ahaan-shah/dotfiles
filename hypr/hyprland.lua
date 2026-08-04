@@ -116,11 +116,6 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("~/.config/macswitcher/macswitcher-launch.sh")
     hl.exec_cmd("~/.config/taskbar/taskbar-launch.sh")
     hl.exec_cmd("~/.config/finder/finder-launch.sh")
-    -- lockscreen/ is now a persistent process like the others above, warmed
-    -- up here (unlocked) so an actual lock is just an instant IPC flip
-    -- instead of a multi-second cold Quickshell start — see
-    -- lockscreen-launch.sh / lockscreen/shell.qml.
-    hl.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh")
 
     -- hl.exec_cmd("localsearch daemon -s")
 end)
@@ -444,15 +439,11 @@ hl.bind("F6", hl.dsp.exec_cmd("~/.config/scripts/toggle-touchpad.sh"))
 -- LockScreen — replaced by the Quickshell lockscreen/ app (1:1 visual port
 -- of the old hyprlock.conf, see that project directory). Old bind:
 -- hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("hyprlock"))
--- lockscreen/ is now a PERSISTENT process (autostarted below), so this
--- needs the "lock" argument to actually trigger the lock over IPC — the
--- bare no-arg form (the previous version of this bind) only ensures the
--- process is running, it doesn't lock anything by itself anymore now that
--- starting the process and locking the session are separate steps. See
--- lockscreen-launch.sh's comment for why it's still never pkilled/restarted
--- outright (killing a live WlSessionLock process leaves the compositor
--- permanently locked with nothing listening).
-hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh lock"))
+-- Goes through lockscreen-launch.sh, not a bare `quickshell -c ...`, since
+-- it must guard against double-launch without ever pkill-ing an existing
+-- instance (killing a live WlSessionLock process leaves the compositor
+-- permanently locked with nothing listening) — see that script's comment.
+hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh"))
 
 -- Wallpaper Picker (finder/, wallpaper mode)
 hl.bind("ALT + W", hl.dsp.exec_cmd("echo \"open:wallpaper\" | socat - UNIX-CONNECT:/tmp/finder.sock"))

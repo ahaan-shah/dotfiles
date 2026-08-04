@@ -44,23 +44,6 @@ Scope {
 
     signal unlocked()
 
-    // Driven from shell.qml (bound to WlSessionLock.locked) now that this
-    // runs as a persistent process — fingerprint scanning and password
-    // state must only be live while actually locked, not for the whole
-    // session. Toggling this restarts fpProc fresh (and clears any leftover
-    // typed text / stale match flag) on every new lock.
-    property bool active: false
-    onActiveChanged: {
-        if (active) {
-            root.currentText = ""
-            root._fpUnlocked = false
-            fpProc.running = true
-        } else {
-            fpProc.running = false
-            fpRetryTimer.stop()
-        }
-    }
-
     property string currentText: ""
 
     property bool _fpUnlocked: false
@@ -159,6 +142,8 @@ Scope {
         id: fpRetryTimer
         interval: 250
         repeat: false
-        onTriggered: if (root.active && !root._fpUnlocked) fpProc.running = true
+        onTriggered: if (!root._fpUnlocked) fpProc.running = true
     }
+
+    Component.onCompleted: fpProc.running = true
 }
