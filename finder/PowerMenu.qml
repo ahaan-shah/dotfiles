@@ -23,10 +23,24 @@ QtObject {
     function run(key) {
         switch (key) {
         case "sleep":
-            // Matches powermenu.sh's Sleep case exactly, minus `pkill rofi`
-            // (no equivalent needed — Finder just closes itself on activate).
+            // Was a straight port of powermenu.sh's Sleep case, but that
+            // script's manual "spawn hypridle, sleep 0.1, loginctl
+            // lock-session, sleep 0.2, suspend" dance is exactly the bug
+            // reported as "sometimes sleeping from here doesn't lock the
+            // screen": hypridle is already autostarted by hyprland.lua, so
+            // spawning a second one every time just piles up duplicate
+            // processes, and hypridle.conf's own before_sleep_cmd already
+            // runs `loginctl lock-session` itself (systemd holds a sleep
+            // inhibitor until that finishes) — the extra manual
+            // loginctl+sleep(0.2) here was redundant AND racy, since 200ms
+            // isn't guaranteed long enough for the lock surface to actually
+            // come up before suspend wins the race. Now: only respawn
+            // hypridle if it's not already running (e.g. killed via
+            // idle-inhibitor.sh's "Always Awake" toggle), then just suspend
+            // and let the already-configured before_sleep_cmd handle the
+            // lock reliably.
             sleepProc.command = ["bash", "-c",
-                "sleep 0.2; hypridle & disown; sleep 0.1; loginctl lock-session; sleep 0.2; systemctl suspend"]
+                "pgrep -x hypridle >/dev/null || { hypridle & disown; sleep 0.5; }; systemctl suspend"]
             sleepProc.running = true
             break
         case "shutdown":

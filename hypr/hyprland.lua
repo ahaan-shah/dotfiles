@@ -109,10 +109,18 @@ hl.on("hyprland.start", function()
     -- hl.exec_cmd("walker --gapplication-service")
     hl.exec_cmd("/usr/bin/lxqt-policykit-agent")
     hl.exec_cmd("~/.config/scripts/battery_notify.sh")
+    -- sync the mic LED to actual mute state right away, don't wait for the
+    -- first F9 press (see scripts/micmute-led.sh)
+    hl.exec_cmd("~/.config/scripts/micmute-led.sh sync")
     hl.exec_cmd("~/.config/macdock/macdock-launch.sh")
     hl.exec_cmd("~/.config/macswitcher/macswitcher-launch.sh")
     hl.exec_cmd("~/.config/taskbar/taskbar-launch.sh")
     hl.exec_cmd("~/.config/finder/finder-launch.sh")
+    -- lockscreen/ is now a persistent process like the others above, warmed
+    -- up here (unlocked) so an actual lock is just an instant IPC flip
+    -- instead of a multi-second cold Quickshell start — see
+    -- lockscreen-launch.sh / lockscreen/shell.qml.
+    hl.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh")
 
     -- hl.exec_cmd("localsearch daemon -s")
 end)
@@ -394,8 +402,12 @@ hl.bind("F5", hl.dsp.exec_cmd("brightnessctl set +10% && qs -p ~/.config/taskbar
 -- Keyboard backlight (unchanged)
 hl.bind("F7", hl.dsp.exec_cmd("/home/ahaan/.config/scripts/kbdbacklight_toggle.sh"))
 
--- Mic mute (with OSD). bindel = repeating + locked.
-hl.bind("F9", hl.dsp.exec_cmd("pactl set-source-mute @DEFAULT_SOURCE@ toggle && qs -p ~/.config/taskbar ipc call osd mic"), { repeating = true, locked = true })
+-- Mic mute (with OSD + keyboard LED sync). bindel = repeating + locked.
+-- Routed through micmute-led.sh instead of a bare `pactl ... toggle` because
+-- the kernel's own audio-micmute LED trigger drives the keyboard's mic LED
+-- with the opposite polarity (lit = muted) from what's wanted (lit = on) —
+-- see scripts/micmute-led.sh for the full story.
+hl.bind("F9", hl.dsp.exec_cmd("~/.config/scripts/micmute-led.sh toggle"), { repeating = true, locked = true })
 
 ------------------------------------------------------------------
 -- Random Tools
@@ -432,11 +444,15 @@ hl.bind("F6", hl.dsp.exec_cmd("~/.config/scripts/toggle-touchpad.sh"))
 -- LockScreen — replaced by the Quickshell lockscreen/ app (1:1 visual port
 -- of the old hyprlock.conf, see that project directory). Old bind:
 -- hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("hyprlock"))
--- Goes through lockscreen-launch.sh, not a bare `quickshell -c ...`, since
--- it must guard against double-launch without ever pkill-ing an existing
--- instance (killing a live WlSessionLock process leaves the compositor
--- permanently locked with nothing listening) — see that script's comment.
-hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh"))
+-- lockscreen/ is now a PERSISTENT process (autostarted below), so this
+-- needs the "lock" argument to actually trigger the lock over IPC — the
+-- bare no-arg form (the previous version of this bind) only ensures the
+-- process is running, it doesn't lock anything by itself anymore now that
+-- starting the process and locking the session are separate steps. See
+-- lockscreen-launch.sh's comment for why it's still never pkilled/restarted
+-- outright (killing a live WlSessionLock process leaves the compositor
+-- permanently locked with nothing listening).
+hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh lock"))
 
 -- Wallpaper Picker (finder/, wallpaper mode)
 hl.bind("ALT + W", hl.dsp.exec_cmd("echo \"open:wallpaper\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
