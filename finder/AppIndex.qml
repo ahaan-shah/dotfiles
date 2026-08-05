@@ -98,6 +98,9 @@ QtObject {
             if (/lstopo/i.test(name) || /lstopo/i.test(path)) return
 
             let iconPath = icon ? root._resolveIconPath(icon) : ""
+            // Prefer the Dolphin icon over Nautilus's own for the Files app —
+            // matches macdock/DockModel.qml's "Files" entry.
+            if (icon === "org.gnome.Nautilus") iconPath = root._resolveIconPath("org.kde.dolphin")
 
             list.push({ name, comment, icon, iconPath, path })
         })

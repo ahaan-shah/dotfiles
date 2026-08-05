@@ -37,7 +37,10 @@ ShellRoot {
                 id: dockController
 
                 property bool mouseNearBottom: false
-                property bool mouseOnDock:     false
+                // Bound (not set imperatively via a second MouseArea) — see the
+                // note on Dock.qml's `hovered` property for why a separate
+                // overlapping MouseArea here never actually received hover events.
+                readonly property bool mouseOnDock: dockPanel.hovered
                 property bool windowOverlaps:  false
 
                 // Raw "mouse wants the dock revealed" condition.
@@ -82,8 +85,16 @@ ShellRoot {
                         try {
                             const pos = JSON.parse(dockController._cursorBuf)
                             const sh  = dockWindow.screen.height
-                            // Show dock when cursor is within 2px of screen bottom
-                            dockController.mouseNearBottom = pos.y >= (sh - 40)
+                            // hyprctl cursorpos is in global (multi-monitor) coordinates;
+                            // translate the dock's horizontal span into that space.
+                            const sx       = dockWindow.screen.x
+                            const sw       = dockWindow.screen.width
+                            const halfDock = dockPanel.width / 2
+                            const centerX  = sx + sw / 2
+                            const nearBottom = pos.y >= (sh - 10)
+                            const withinDockSpan =
+                                pos.x >= (centerX - halfDock) && pos.x <= (centerX + halfDock)
+                            dockController.mouseNearBottom = nearBottom && withinDockSpan
                         } catch(e) {}
                         dockController._cursorBuf = ""
                     }
@@ -174,16 +185,6 @@ ShellRoot {
                 opacity: dockController.dockVisible ? 1 : 0
                 Behavior on opacity {
                     NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.NoButton
-                    propagateComposedEvents: true
-                    z: -1
-                    onEntered: dockController.mouseOnDock = true
-                    onExited:  dockController.mouseOnDock = false
                 }
             }
         }

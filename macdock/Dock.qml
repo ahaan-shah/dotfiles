@@ -20,6 +20,14 @@ Item {
     // ── Mouse X in row coordinates (–1 = outside) ─────────────────
     property real hoverX: -1
 
+    // Whether the pointer is anywhere over the dock's own footprint.
+    // Read by shell.qml — must be set from dockMouseArea below, not a second
+    // overlapping MouseArea, since QtQuick only delivers hover (entered/
+    // exited) to the topmost hoverEnabled MouseArea at a given point; an
+    // externally-added MouseArea sitting behind this one in z-order never
+    // sees these events at all.
+    property bool hovered: false
+
     // ── Stable state ──────────────────────────────────────────────
     property var _unpinnedOrder: []
     property var dynamicApps:    []  // written atomically by _rebuild(), never a binding
@@ -222,7 +230,7 @@ Item {
         onPositionChanged: mouse => {
             root.hoverX = iconRow.mapFromItem(dockMouseArea, mouse.x, 0).x
         }
-        onExited:  { root.hoverX = -1 }
-        onEntered: { root.hoverX = iconRow.mapFromItem(dockMouseArea, mouseX, 0).x }
+        onExited:  { root.hoverX = -1; root.hovered = false }
+        onEntered: { root.hoverX = iconRow.mapFromItem(dockMouseArea, mouseX, 0).x; root.hovered = true }
     }
 }

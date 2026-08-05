@@ -4,14 +4,14 @@ ListModel {
 
     ListElement {
         name: "Terminal"
-        icon: "/usr/share/icons/Papirus/128x128/apps/kitty.svg"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/kitty.svg"
         command: "kitty"
         windowClass: "kitty"
         separator: false
     }
      ListElement {
         name: "Spotify"
-        icon: "/usr/share/icons/Papirus/128x128/apps/spotify.svg"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/spotify.svg"
         command: "spotify"
         windowClass: "Spotify"
         separator: false
@@ -74,7 +74,7 @@ ListModel {
     }
      ListElement {
         name: "Text-Editor"
-        icon: "/usr/share/icons/Papirus/128x128/apps/text-editor.svg"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/text-editor.svg"
         command: "gnome-text-editor"
         windowClass: "org.gnome.TextEditor"
         separator: false
@@ -88,7 +88,7 @@ ListModel {
     }
     ListElement {
         name: "Files"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/nautilus-alt.svg"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/org.kde.dolphin.svg"
         command: "nautilus"
         windowClass: "org.gnome.Nautilus"
         separator: false

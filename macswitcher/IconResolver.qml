@@ -12,7 +12,9 @@ QtObject {
 
     readonly property var _aliases: ({
         "org.gnome.diskutility": "gnome-disks",
-        "org.gnome.nautilus":    "org.gnome.Nautilus",
+        // Dolphin's icon over Nautilus's own for the Files app — matches
+        // macdock/DockModel.qml's "Files" entry.
+        "org.gnome.nautilus":    "org.kde.dolphin",
         "org.gnome.calendar":    "org.gnome.Calendar",
         "org.gnome.calculator":  "org.gnome.Calculator",
         "org.gnome.clocks":      "org.gnome.Clocks",
