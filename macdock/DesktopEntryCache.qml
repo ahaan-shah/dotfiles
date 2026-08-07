@@ -8,6 +8,13 @@ QtObject {
 
     property var _byWmClass: ({})
     property var _byName:    ({})
+    // Flips once _parse() has actually run — the async find/cat Process can
+    // still be in flight when a window (e.g. one already open at macdock's
+    // own startup) first asks for its icon, same race documented for
+    // finder's AppIndex/EmojiIndex/ClipboardHistory singletons. Consumers
+    // should listen for this and re-resolve rather than caching a premature
+    // empty-cache fallback guess.
+    property bool ready: false
 
     // ── Public API ────────────────────────────────────────────────
     function iconForClass(wmClass) {
@@ -52,9 +59,17 @@ QtObject {
             "for sz in 64x64 48x48 128x128 32x32 24x24; do " +
             "  find /usr/share/icons/Papirus-Dark/$sz/apps /usr/share/icons/Papirus/$sz/apps " +
             "       -name '*.svg' 2>/dev/null; done; " +
+            // Flatpak apps' own icons (hicolor theme, not Papirus) live under
+            // its export dirs — same reasoning as finder/AppIndex.qml's fix.
+            "for sz in 64x64 48x48 128x128 32x32 24x24 scalable; do " +
+            "  find /var/lib/flatpak/exports/share/icons/hicolor/$sz/apps " +
+            "       ~/.local/share/flatpak/exports/share/icons/hicolor/$sz/apps " +
+            "       -name '*.svg' -o -name '*.png' 2>/dev/null; done; " +
             // Then: the desktop files, as before.
             "echo '---DESKTOP_FILES_START---'; " +
             "find /usr/share/applications ~/.local/share/applications " +
+            "     /var/lib/flatpak/exports/share/applications " +
+            "     ~/.local/share/flatpak/exports/share/applications " +
             "-name '*.desktop' 2>/dev/null | while read f; do " +
             "echo '---DESKTOP_FILE_START---'; cat \"$f\"; done"]
         running: false
@@ -156,6 +171,7 @@ QtObject {
 
         root._byWmClass = byWm
         root._byName    = byName
+        root.ready = true
     }
 
     // Papirus name -> file path index, built in _parse()

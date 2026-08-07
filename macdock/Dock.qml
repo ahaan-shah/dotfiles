@@ -98,6 +98,14 @@ Item {
         function onWindowListChanged() { root._rebuild() }
     }
 
+    // Re-resolve icons once DesktopEntryCache's async index actually lands —
+    // a window already open when macdock starts can race the singleton's
+    // own first-load Process, see DesktopEntryCache.qml's `ready` comment.
+    property var _cacheConn: Connections {
+        target: DesktopEntryCache
+        function onReadyChanged() { root._rebuild() }
+    }
+
     // ── Icon resolution for dynamic (unpinned) windows ───────────
     function resolveIcon(w) {
         const cls  = w.class        ?? ""

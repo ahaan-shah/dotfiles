@@ -10,7 +10,7 @@ import Quickshell.Io
 QtObject {
     id: root
 
-    property var apps: []   // [{name, comment, icon, iconPath, path}]
+    property var apps: []   // [{name, comment, icon, iconPath, path, flatpakId}]
 
     property string _buf: ""
 
@@ -86,7 +86,7 @@ QtObject {
         files.forEach(block => {
             if (!block.trim()) return
 
-            let path = "", name = "", comment = "", icon = "", noDisplay = false, inDesktopEntry = false
+            let path = "", name = "", comment = "", icon = "", noDisplay = false, inDesktopEntry = false, flatpakId = ""
 
             block.split("\n").forEach(line => {
                 const l = line.trim()
@@ -98,6 +98,14 @@ QtObject {
                 if (l.startsWith("Comment=") && !comment)    comment = l.slice(8).trim()
                 if (l.startsWith("Icon=") && !icon)          icon = l.slice(5).trim()
                 if (l.startsWith("NoDisplay=true"))          noDisplay = true
+                // Flatpak-exported .desktop files carry this; launching via
+                // `flatpak run <id>` directly (bypassing the Exec= line's
+                // --branch/--arch/--command/--file-forwarding flags added by
+                // the export) is what's confirmed stable — going through
+                // `gio launch` on the .desktop file's Exec= line was crashing
+                // JASP as soon as it did any real work, `flatpak run
+                // org.jaspstats.JASP` plain was not.
+                if (l.startsWith("X-Flatpak=") && !flatpakId) flatpakId = l.slice(10).trim()
             })
 
             if (!name || noDisplay || !path) return
@@ -111,7 +119,7 @@ QtObject {
             // matches macdock/DockModel.qml's "Files" entry.
             if (icon === "org.gnome.Nautilus") iconPath = root._resolveIconPath("org.kde.dolphin")
 
-            list.push({ name, comment, icon, iconPath, path })
+            list.push({ name, comment, icon, iconPath, path, flatpakId })
         })
 
         // De-dupe by name, keep first occurrence (local overrides system since
@@ -163,7 +171,9 @@ QtObject {
     }
 
     function launch(app) {
-        launchProc.command = ["gio", "launch", app.path]
+        launchProc.command = app.flatpakId
+            ? ["flatpak", "run", app.flatpakId]
+            : ["gio", "launch", app.path]
         launchProc.running = true
     }
 
