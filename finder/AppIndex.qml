@@ -24,8 +24,17 @@ QtObject {
             "for sz in 64x64 48x48 128x128 32x32 24x24; do " +
             "  find /usr/share/icons/Papirus-Dark/$sz/apps /usr/share/icons/Papirus/$sz/apps " +
             "       -name '*.svg' 2>/dev/null; done; " +
+            // Flatpak apps' own icons (hicolor theme, not Papirus) live under
+            // its export dirs — indexed the same way so _resolveIconPath can
+            // find them before falling through to the image://icon/ provider.
+            "for sz in 64x64 48x48 128x128 32x32 24x24 scalable; do " +
+            "  find /var/lib/flatpak/exports/share/icons/hicolor/$sz/apps " +
+            "       ~/.local/share/flatpak/exports/share/icons/hicolor/$sz/apps " +
+            "       -name '*.svg' -o -name '*.png' 2>/dev/null; done; " +
             "echo '---DESKTOP_FILES_START---'; " +
             "find /usr/share/applications ~/.local/share/applications " +
+            "     /var/lib/flatpak/exports/share/applications " +
+            "     ~/.local/share/flatpak/exports/share/applications " +
             "-name '*.desktop' 2>/dev/null | while read f; do " +
             "echo '---DESKTOP_FILE_START---'; echo \"PATH=$f\"; cat \"$f\"; done"]
         running: false

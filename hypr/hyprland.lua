@@ -60,7 +60,11 @@ hl.config({
     },
 })
 
-hl.env("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
+-- includes flatpak's exported .desktop/icon dirs so flatpak apps (e.g. JASP)
+-- show up in menus/launchers session-wide, not just in a shell where the
+-- user manually exported it (a per-shell `export` never reaches Quickshell/
+-- other GUI children, since they're spawned by Hyprland, not a login shell)
+hl.env("XDG_DATA_DIRS", "/var/lib/flatpak/exports/share:" .. os.getenv("HOME") .. "/.local/share/flatpak/exports/share:/usr/local/share:/usr/share")
 hl.env("TERMINAL", "kitty")
 hl.env("EDITOR", "vim")
 
