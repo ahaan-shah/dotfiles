@@ -171,8 +171,18 @@ QtObject {
     }
 
     function launch(app) {
+        // `gio launch` forks and returns immediately (fire-and-forget), but
+        // `flatpak run` blocks in the foreground for the launched app's
+        // entire lifetime — since launchProc is reused for every launch and
+        // Process.running = true is a no-op while already running (same
+        // class of stale-Process bug documented for FileSearch.qml), that
+        // left launchProc permanently "running" for as long as the flatpak
+        // app stayed open, silently swallowing every subsequent launch()
+        // call for any other app. `setsid … &` under a wrapping shell
+        // detaches flatpak run the same way gio launch already detaches,
+        // so launchProc goes back to not-running almost immediately.
         launchProc.command = app.flatpakId
-            ? ["flatpak", "run", app.flatpakId]
+            ? ["bash", "-c", "setsid flatpak run '" + app.flatpakId + "' </dev/null >/dev/null 2>&1 &"]
             : ["gio", "launch", app.path]
         launchProc.running = true
     }
