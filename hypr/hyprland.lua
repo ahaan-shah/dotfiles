@@ -434,6 +434,11 @@ hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("echo \"open:powermenu\" | socat
 -- Idle Inhibitor
 hl.bind(mainMod .. " + I", hl.dsp.exec_cmd("~/.config/scripts/idle-inhibitor.sh"))
 
+-- Toggle all Quickshell shells (macdock/macswitcher/taskbar/finder): kills
+-- them if any are alive, relaunches them if all are dead. Deliberately
+-- excludes lockscreen/ — see toggle-shells.sh for why.
+hl.bind(mainMod .. " + K", hl.dsp.exec_cmd("~/.config/scripts/toggle-shells.sh"))
+
 -- Power Profiles (finder/, powerprofiles mode)
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("echo \"open:powerprofiles\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
@@ -518,9 +523,9 @@ hl.window_rule({
 -- Kitty-based tools
 hl.window_rule({
     name   = "kitty-tools-float",
-    match  = { class = "^(kitty)$", title = "^(bluetui|nmtui|pulsemixer|wiremix|calcurse)$" },
+    match  = { class = "^(kitty)$", title = "^(bluetui|impala|pulsemixer|wiremix|calcurse)$" },
     center = true,
-    size   = {810, 450},
+    size   = {870, 500},
 })
 
 -- Btop

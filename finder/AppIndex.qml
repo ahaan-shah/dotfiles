@@ -118,6 +118,10 @@ QtObject {
             // Prefer the Dolphin icon over Nautilus's own for the Files app —
             // matches macdock/DockModel.qml's "Files" entry.
             if (icon === "org.gnome.Nautilus") iconPath = root._resolveIconPath("org.kde.dolphin")
+            // Zen has no Papirus icon at all (falls through to the generic
+            // image://icon/ provider) — use the same custom svg as
+            // macdock/DockModel.qml instead.
+            if (icon === "zen-browser") iconPath = root._resolveIconPath("/home/ahaan/.local/share/icons/webapps/zen-browser.svg")
 
             list.push({ name, comment, icon, iconPath, path, flatpakId })
         })
