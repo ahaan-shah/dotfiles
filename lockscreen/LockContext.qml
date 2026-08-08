@@ -113,7 +113,17 @@ Scope {
     property var _fpProc: Process {
         id: fpProc
         running: false
-        command: ["fprintd-verify"]
+        // Bare `fprintd-verify` (no -f) is NOT "try any enrolled finger" —
+        // confirmed live (ran it 3x back to back after enrolling a 2nd
+        // finger) that it deterministically locks onto whichever finger
+        // was enrolled first ("Verifying: right-index-finger" every time,
+        // never left-index-finger). That was the real bug behind "old
+        // finger still works, newly-enrolled finger never unlocks" — the
+        // new finger was never being compared against at all, no restart
+        // of anything required. `-f any` is fprintd's actual wildcard
+        // (confirmed live: prints "Verifying: any" and accepts whichever
+        // enrolled finger is presented), so use that instead.
+        command: ["fprintd-verify", "-f", "any"]
         stdout: SplitParser {
             onRead: line => root._onFpLine(line)
         }
