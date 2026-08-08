@@ -39,7 +39,7 @@ ListModel {
     }
     ListElement {
         name: "Zen"
-        icon: "/home/ahaan/.local/share/icons/webapps/zen-browser.svg"
+        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/zen-browser.svg"
         command: "zen-browser"
         windowClass: "zen"
         separator: false

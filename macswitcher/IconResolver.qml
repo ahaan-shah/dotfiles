@@ -27,10 +27,9 @@ QtObject {
         if (!wmClass || wmClass === "") return ""
         const lc = wmClass.toLowerCase()
 
-        // Zen has no Papirus icon at all (falls through to the generic
-        // image://icon/ provider) — use the same custom svg as
-        // macdock/DockModel.qml instead.
-        if (lc === "zen") return root._resolveIconPath("/home/ahaan/.local/share/icons/webapps/zen-browser.svg")
+        // Papirus-Dark ships a real "zen-browser" icon now (as of the theme
+        // update that added it) — matches macdock/DockModel.qml.
+        if (lc === "zen") return root._resolveIconPath("zen-browser")
 
         if (root._aliases[lc]) return root._resolveIconPath(root._aliases[lc])
         if (root._byWmClass[lc]) return root._byWmClass[lc]
