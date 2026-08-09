@@ -174,6 +174,7 @@ ShellRoot {
             // ── Dock panel ────────────────────────────────────────
             Dock {
                 id: dockPanel
+                screen: modelData
                 anchors.bottom:           parent.bottom
                 anchors.horizontalCenter: parent.horizontalCenter
 
@@ -186,6 +187,63 @@ ShellRoot {
                 Behavior on opacity {
                     NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
                 }
+            }
+        }
+    }
+
+    // ── Multi-instance hover preview ───────────────────────────────
+    // A separate PanelWindow (own Variants block, one per screen) rather
+    // than a child of dockWindow above — dockWindow's implicitHeight (130)
+    // is exactly the dock's own footprint, and content positioned above y=0
+    // there would just be clipped by that surface's own bounds. Sized to
+    // its own content (like the OSD pill below, not the calendar dropdown's
+    // full-screen catcher — see DockPreview.qml/WindowPreviewPopup.qml for
+    // why full-screen was wrong here), so it only ever intercepts input
+    // over the area it's actually visibly occupying.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            id: previewWindow
+            required property ShellScreen modelData
+            screen: modelData
+
+            visible: DockPreview.visible && DockPreview.activeScreen === modelData
+
+            color: "transparent"
+            exclusiveZone: 0
+            WlrLayershell.layer:     WlrLayer.Top
+            WlrLayershell.namespace: "macdock-preview"
+
+            anchors { bottom: true; left: true }
+
+            implicitWidth:  previewPopup.implicitWidth
+            implicitHeight: previewPopup.implicitHeight
+
+            // Center the popup over the hovered icon's global x, clamped so
+            // it can't slide off either edge of this screen. globalX is in
+            // Quickshell's global (multi-monitor) coordinate space, same as
+            // dockController's cursor-tracking above — subtract this
+            // screen's own x offset to land in this window's local space.
+            // PanelWindow.anchors is a plain 4-bool struct (edges only) —
+            // offsets from those edges are a separate `margins` property.
+            margins.left: {
+                const half = previewPopup.implicitWidth / 2
+                const raw  = (DockPreview.globalX - modelData.x) - half
+                return Math.max(0, Math.min(raw, modelData.width - previewPopup.implicitWidth))
+            }
+            // Sit just above the dock pill. Subtract the popup's own
+            // shadowMargin padding (see WindowPreviewPopup.qml) so the
+            // *visible* card sits this close, not the padded window edge.
+            margins.bottom: DockPreview.dockHeight + 2 - previewPopup.shadowMargin
+
+            WindowPreviewPopup {
+                id: previewPopup
+                windows:       DockPreview.windows
+                iconPath:      DockPreview.iconPath
+                cancelClose:   DockPreview.cancelClose
+                scheduleClose: DockPreview.scheduleClose
+                closeNow:      DockPreview.hideNow
             }
         }
     }

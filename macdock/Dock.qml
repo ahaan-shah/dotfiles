@@ -28,6 +28,74 @@ Item {
     // sees these events at all.
     property bool hovered: false
 
+    // ── Multi-instance hover preview ────────────────────────────────
+    // Detection is driven centrally off dockMouseArea/hoverX below (NOT off
+    // DockIcon's own nested MouseArea — per the note on `hovered` above, a
+    // topmost MouseArea like dockMouseArea is the only one that reliably
+    // receives hover in this layout; DockIcon's own MouseArea only gets
+    // clicks, via NoButton + propagateComposedEvents fallthrough, which
+    // doesn't extend to raw hover/entered/exited).
+    //
+    // Actual show/hide state lives in the DockPreview singleton, not here —
+    // shell.qml's preview popup is a separate per-screen PanelWindow in its
+    // own Variants block, and ids declared in this Dock instance aren't
+    // visible there. See DockPreview.qml for why.
+    property var screen: null   // set by shell.qml to this Dock's ShellScreen
+
+    // Which icon (by windowClass) is the current hover-intent candidate —
+    // "" means none. Used purely to detect "did the hovered icon change".
+    property string _hoverCandidateClass: ""
+
+    function _updateHoverCandidate() {
+        if (root.hoverX < 0) {
+            _setHoverCandidate("", null)
+            return
+        }
+        const item = iconRow.childAt(root.hoverX, iconRow.height / 2)
+        if (!item || item.separator || !item.windowClass || item.windowClass === "") {
+            _setHoverCandidate("", null)
+            return
+        }
+        _setHoverCandidate(item.windowClass, item)
+    }
+
+    function _setHoverCandidate(cls, item) {
+        if (cls === root._hoverCandidateClass) return
+        root._hoverCandidateClass = cls
+        _previewIntentTimer.stop()
+
+        const isActiveScreen = DockPreview.activeScreen === root.screen
+        if (cls === "") {
+            if (DockPreview.visible && isActiveScreen) DockPreview.scheduleClose()
+            return
+        }
+
+        if (WindowTracker.windowsFor(cls, "").length >= 2) {
+            _previewIntentTimer.item = item
+            _previewIntentTimer.restart()
+        } else if (DockPreview.visible && isActiveScreen) {
+            DockPreview.scheduleClose()
+        }
+    }
+
+    // Sustained-hover gate — only shows the popup after 500ms of continuous
+    // hover over the same multi-instance icon.
+    property var _previewIntentTimer: Timer {
+        property var item: null
+        interval: 500
+        repeat:   false
+        onTriggered: {
+            if (!item) return
+            const p = item.mapToGlobal(item.width / 2, 0)
+            DockPreview.show(
+                WindowTracker.windowsFor(item.windowClass, ""),
+                item.iconPath,
+                p.x, p.y,
+                root.height,
+                root.screen)
+        }
+    }
+
     // ── Stable state ──────────────────────────────────────────────
     property var _unpinnedOrder: []
     property var dynamicApps:    []  // written atomically by _rebuild(), never a binding
@@ -237,8 +305,17 @@ Item {
 
         onPositionChanged: mouse => {
             root.hoverX = iconRow.mapFromItem(dockMouseArea, mouse.x, 0).x
+            root._updateHoverCandidate()
         }
-        onExited:  { root.hoverX = -1; root.hovered = false }
-        onEntered: { root.hoverX = iconRow.mapFromItem(dockMouseArea, mouseX, 0).x; root.hovered = true }
+        onExited: {
+            root.hoverX = -1
+            root.hovered = false
+            root._updateHoverCandidate()
+        }
+        onEntered: {
+            root.hoverX = iconRow.mapFromItem(dockMouseArea, mouseX, 0).x
+            root.hovered = true
+            root._updateHoverCandidate()
+        }
     }
 }

@@ -20,9 +20,6 @@ if [[ "$STATE" == "float" ]]; then
     # defined in hyprland.lua for exactly this runtime toggle.)
     hyprctl eval 'globalFloatRule:set_enabled(false)'
 
-    # Turn ON follow_mouse
-    hyprctl eval 'hl.config({ input = { follow_mouse = 1 } })'
-
     # Convert all current windows to tiled.
     # (was: `hyprctl dispatch settiled address:...` — pre-0.55 positional
     # syntax; hyprctl dispatch is now shorthand for `eval 'hl.dispatch(...)'`
@@ -42,9 +39,6 @@ else
 
     # Turn ON global float for future windows
     hyprctl eval 'globalFloatRule:set_enabled(true)'
-
-    # Turn OFF follow_mouse
-    hyprctl eval 'hl.config({ input = { follow_mouse = 0 } })'
 
     # Convert all current windows to floating
     hyprctl clients -j | jq -r '.[].address' | while read -r addr; do
