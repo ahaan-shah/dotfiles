@@ -1011,7 +1011,6 @@ Scope {
 
                     // format:"{capacity}% {icon}"  format-charging:"{capacity}% 󰂄"
                     text: charging ? (cap + "% 󰂄") : (cap + "% " + icon)
-                    hoverColor: baseColor        // battery colour is state-driven, keep it on hover
                     baseColor: charging ? root.colCharging
                                : cap <= 20 ? root.colCritical
                                : cap <= 30 ? root.colWarning
@@ -1363,7 +1362,9 @@ Scope {
                     ListView {
                         anchors.fill: parent
                         visible: count > 0
-                        model: notifServer.trackedNotifications
+                        // newest first: trackedNotifications appends new ones at the end,
+                        // so reverse it for display (history keeps ordering, this doesn't).
+                        model: notifServer.trackedNotifications.values.slice().reverse()
                         spacing: 8
                         clip: true
                         delegate: NotifCard {
