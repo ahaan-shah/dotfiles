@@ -116,6 +116,73 @@ Scope {
     readonly property color colWarning:  "#ffbe61"
     readonly property color colCritical: "#f53c3c"
 
+    // ---- battery threshold panel state -----------------------------------
+    property bool batVisible: false
+    readonly property var batDev: UPower.displayDevice
+    readonly property int batCap: batDev ? Math.round(batDev.percentage * 100) : 0
+    readonly property bool batCharging: batDev && batDev.state === UPowerDeviceState.Charging
+    // Quickshell's own UPowerDevice.healthSupported reports false on this
+    // hardware even though `upower -i` reports a real capacity figure — read
+    // charge_full/charge_full_design directly instead (same ratio upower
+    // itself uses under the hood).
+    property real batHealthPct: -1
+    Process {
+        id: batHealthRead
+        command: ["bash", "-c",
+            "cat /sys/class/power_supply/BAT0/charge_full 2>/dev/null; echo '|'; " +
+            "cat /sys/class/power_supply/BAT0/charge_full_design 2>/dev/null"]
+        stdout: StdioCollector { onStreamFinished: {
+            var p = (this.text || "").trim().split("|");
+            var full = parseFloat(p[0]); var design = parseFloat(p[1]);
+            root.batHealthPct = (!isNaN(full) && !isNaN(design) && design > 0) ? (full / design * 100) : -1;
+        } }
+    }
+    Timer { interval: 5000; running: root.batVisible; repeat: true; triggeredOnStart: true
+            onTriggered: batHealthRead.running = true }
+
+    readonly property real batSizeWh: batDev ? batDev.energyCapacity : 0
+    readonly property real batTimeSeconds: root.batCharging ? (batDev ? batDev.timeToFull : 0) : (batDev ? batDev.timeToEmpty : 0)
+    readonly property string batTimeLabel: root.batCharging ? "Time to Full Charge" : "Time Remaining"
+
+    // current charge_control_end_threshold, polled from sysfs while the panel is open
+    property int batThreshold: 100
+    Process {
+        id: batThresholdRead
+        command: ["cat", "/sys/class/power_supply/BAT0/charge_control_end_threshold"]
+        stdout: StdioCollector { onStreamFinished: {
+            var v = parseInt((this.text || "").trim()); if (!isNaN(v)) root.batThreshold = v; } }
+    }
+    Timer { interval: 2000; running: root.batVisible; repeat: true; triggeredOnStart: true
+            onTriggered: batThresholdRead.running = true }
+
+    // Writes the new cap directly (no sudo — see hypr/scripts udev rule that
+    // group-writes this sysfs attribute to the "power" group) and persists it
+    // to ~/.config/battery-threshold so scripts/apply-battery-threshold.sh can
+    // re-apply it on the next boot (the sysfs value itself resets to 100).
+    function setBatteryThreshold(v) {
+        // update the highlighted box immediately — don't wait on the shell
+        // round-trip (write + notify-send) before the UI reflects the click.
+        // The periodic batThresholdRead poll re-syncs from real sysfs state
+        // shortly after anyway, so this optimistic set self-corrects if the
+        // write actually failed (e.g. permission denied pre-relogin).
+        root.batThreshold = v;
+        root.run("echo " + v + " > /sys/class/power_supply/BAT0/charge_control_end_threshold 2>/tmp/batthr_err " +
+                  "&& mkdir -p ~/.config && echo " + v + " > ~/.config/battery-threshold " +
+                  "&& notify-send 'Battery' 'Charging capped at " + v + "%' " +
+                  "|| notify-send -u critical 'Battery' 'Failed to set charge threshold (check /tmp/batthr_err)'");
+        batThresholdReapply.restart();
+    }
+    // re-read shortly after a click to confirm/correct the optimistic update
+    // above against the real sysfs value
+    Timer { id: batThresholdReapply; interval: 400; onTriggered: batThresholdRead.running = true }
+
+    function fmtDuration(seconds) {
+        if (!seconds || seconds <= 0) return "—";
+        var h = Math.floor(seconds / 3600);
+        var m = Math.round((seconds % 3600) / 60);
+        return h > 0 ? (h + "h " + m + "m") : (m + "m");
+    }
+
     function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a); }
     function run(cmd) { Quickshell.execDetached(["sh", "-c", cmd]); }
 
@@ -621,7 +688,7 @@ Scope {
                 // custom/notification  →  "󰣇"  →  toggles the Quickshell control center
                 BarLabel {
                     text: "󰣇"
-                    onLeftClicked: { root.calVisible = false; root.ccVisible = !root.ccVisible; }
+                    onLeftClicked: { root.calVisible = false; root.batVisible = false; root.ccVisible = !root.ccVisible; }
                 }
 
                 // hyprland/workspaces  (persistent 1..4, click to activate)
@@ -711,6 +778,7 @@ Scope {
                     text: Qt.formatDateTime(clock.date, "ddd dd MMMM | hh:mm AP")
                     onLeftClicked: {
                         root.ccVisible = false;
+                        root.batVisible = false;
                         if (!root.calVisible) {
                             // always reopen on the current month, not wherever
                             // a previous session left month-nav pointed
@@ -936,9 +1004,8 @@ Scope {
                 //=== battery ==================================================
                 BarLabel {
                     id: battery
-                    property var dev: UPower.displayDevice
-                    property int cap: dev ? Math.round(dev.percentage * 100) : 0
-                    property bool charging: dev && dev.state === UPowerDeviceState.Charging
+                    property int cap: root.batCap
+                    property bool charging: root.batCharging
                     property var icons: ["󰁻", "󰁼", "󰁾", "󰂀", "󰂂", "󰁹"]
                     property string icon: icons[Math.min(icons.length - 1, Math.max(0, Math.floor(cap / (100 / icons.length))))]
 
@@ -949,6 +1016,8 @@ Scope {
                                : cap <= 20 ? root.colCritical
                                : cap <= 30 ? root.colWarning
                                : root.col7
+
+                    onLeftClicked: { root.ccVisible = false; root.calVisible = false; root.batVisible = !root.batVisible; }
 
                     // #battery.critical:not(.charging) blink (0.5s alternate)
                     property bool critical: cap <= 20 && !charging
@@ -1448,6 +1517,174 @@ Scope {
                                 color: !modelData.inMonth ? root.alpha(root.ncText, 0.3)
                                        : modelData.isToday ? root.contrastText(root.ncAccent)
                                        : root.ncText
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    //========================================================================//
+    //  BATTERY THRESHOLD PANEL  (dropdown from the battery icon — same       //
+    //  chrome as the calendar/control center: rounded ncBgStrong card,       //
+    //  ncBorder outline, ncFont/ncText)                                      //
+    //========================================================================//
+    PanelWindow {
+        id: batWin
+        visible: root.batVisible
+        color: "transparent"
+        anchors { top: true; left: true; right: true; bottom: true }   // full-screen catcher
+        exclusiveZone: 0
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "quickshell-battery"
+        WlrLayershell.keyboardFocus: root.batVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+
+        // click anywhere outside the panel -> close
+        MouseArea { anchors.fill: parent; onClicked: root.batVisible = false }
+
+        Rectangle {
+            id: batPanel
+            width: 300
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.topMargin: 10
+            anchors.rightMargin: 10
+            implicitHeight: batCol.implicitHeight + 28
+            radius: 14
+            color: root.ncBgStrong
+            border.width: 2
+            border.color: root.ncBorder
+
+            MouseArea { anchors.fill: parent }      // swallow clicks (don't close)
+
+            ColumnLayout {
+                id: batCol
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 14
+
+                // ---------- header: icon + title/subtitle, big percentage ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Text {
+                        text: "󰁹"
+                        color: root.ncText
+                        font.family: root.ncFont
+                        font.pixelSize: 26
+                    }
+                    ColumnLayout {
+                        spacing: 0
+                        Text {
+                            text: "Battery"
+                            color: root.ncText
+                            font.family: root.ncFont
+                            font.pixelSize: 16
+                            font.weight: Font.Medium
+                        }
+                        Text {
+                            text: "THRESHOLD"
+                            color: root.alpha(root.ncText, 0.5)
+                            font.family: root.ncFont
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: root.batCap + "%"
+                        color: root.ncText
+                        font.family: root.ncFont
+                        font.pixelSize: 26
+                        font.weight: Font.DemiBold
+                    }
+                }
+
+                // ---------- capacity bar ----------
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 10
+                    radius: 5
+                    color: root.alpha(root.col7, 0.15)
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(1, root.batCap / 100))
+                        height: parent.height
+                        radius: 5
+                        color: root.ncAccent
+                    }
+                }
+
+                // ---------- health / size ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text { text: "Battery Health"; color: root.alpha(root.ncText, 0.5)
+                               font.family: root.ncFont; font.pixelSize: 12 }
+                        Text { text: root.batHealthPct >= 0 ? Math.round(root.batHealthPct) + "%" : "—"
+                               color: root.ncText; font.family: root.ncFont; font.pixelSize: 15; font.weight: Font.Medium }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text { text: "Battery Size"; color: root.alpha(root.ncText, 0.5)
+                               font.family: root.ncFont; font.pixelSize: 12 }
+                        Text { text: root.batSizeWh > 0 ? root.batSizeWh.toFixed(0) + " Wh" : "—"
+                               color: root.ncText; font.family: root.ncFont; font.pixelSize: 15; font.weight: Font.Medium }
+                    }
+                }
+
+                // ---------- time to full discharge / charge ----------
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text { text: root.batTimeLabel; color: root.alpha(root.ncText, 0.5)
+                           font.family: root.ncFont; font.pixelSize: 12 }
+                    Text { text: root.fmtDuration(root.batTimeSeconds)
+                           color: root.ncText; font.family: root.ncFont; font.pixelSize: 15; font.weight: Font.Medium }
+                }
+
+                // ---------- charge-limit picker ----------
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text {
+                        text: "SET CHARGE LIMIT"
+                        color: root.alpha(root.ncText, 0.5)
+                        font.family: root.ncFont
+                        font.pixelSize: 10
+                        font.weight: Font.DemiBold
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Repeater {
+                            model: [70, 80, 90, 100]
+                            delegate: Rectangle {
+                                id: capBox
+                                required property int modelData
+                                property bool active: root.batThreshold === modelData
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 36
+                                radius: 10
+                                color: active ? root.ncAccent
+                                       : (capHover.hovered ? root.alpha(root.ncAccent, 0.18) : root.alpha(root.col7, 0.08))
+                                border.width: active ? 0 : 1
+                                border.color: root.alpha(root.col7, 0.15)
+                                HoverHandler { id: capHover }
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: capBox.modelData + "%"
+                                    color: capBox.active ? root.contrastText(root.ncAccent) : root.ncText
+                                    font.family: root.ncFont
+                                    font.pixelSize: 13
+                                    font.weight: capBox.active ? Font.DemiBold : Font.Normal
+                                }
+                                MouseArea { anchors.fill: parent; onClicked: root.setBatteryThreshold(capBox.modelData) }
                             }
                         }
                     }

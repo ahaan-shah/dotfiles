@@ -137,10 +137,11 @@ Item {
                             horizontalAlignment: Text.AlignHCenter
                             elide:            Text.ElideRight
                             maximumLineCount: 2
-                            wrapMode:         Text.WordWrap
+                            wrapMode:         Text.Wrap
                             text:  tile.modelData.title || tile.modelData.initialTitle
                                    || tile.modelData.class
                             color: "white"
+                            font.family:    "Hack Nerd Font Propo"
                             font.pixelSize: 12
                         }
                     }

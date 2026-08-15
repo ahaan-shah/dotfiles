@@ -48,7 +48,7 @@ alias connectiphone="ifuse ~/iphone && nautilus ~/iphone/DCIM"
 alias ninitimes="/home/ahaan/.config/scripts/sleep-timer.sh"
 
 # system update and install and remove packages
-alias update="yay -Syu"
+alias update="/home/ahaan/.config/scripts/system-update.sh"
 alias install="yay -S "
 alias remove="yay -Rns "
 alias search="yay -Ss"

@@ -113,6 +113,9 @@ hl.on("hyprland.start", function()
     -- hl.exec_cmd("walker --gapplication-service")
     hl.exec_cmd("/usr/bin/lxqt-policykit-agent")
     hl.exec_cmd("~/.config/scripts/battery_notify.sh")
+    -- re-applies the taskbar battery panel's saved charge cap (sysfs
+    -- resets to 100 on every boot) — see scripts/apply-battery-threshold.sh
+    hl.exec_cmd("~/.config/scripts/apply-battery-threshold.sh")
     -- sync the mic LED to actual mute state right away, don't wait for the
     -- first F9 press (see scripts/micmute-led.sh)
     hl.exec_cmd("~/.config/scripts/micmute-led.sh sync")
