@@ -13,7 +13,11 @@ ListModel {
         name: "Spotify"
         icon: "/usr/share/icons/Papirus-Dark/128x128/apps/spotify.svg"
         command: "spotify"
-        windowClass: "Spotify"
+        // lowercase native Wayland app-id, not the old XWayland WM_CLASS
+        // ("Spotify") — since ~/.config/spotify-flags.conf added
+        // --ozone-platform=wayland, and DockIcon.qml's cycleClass Process
+        // builds a case-sensitive "class:<windowClass>" hyprctl selector
+        windowClass: "spotify"
         separator: false
     }
      ListElement {

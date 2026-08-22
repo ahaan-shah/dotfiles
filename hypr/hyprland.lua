@@ -630,9 +630,12 @@ hl.window_rule({
 })
 
 -- Spotify
+-- class matches both "Spotify" (old XWayland WM_CLASS) and "spotify" (native
+-- Wayland app-id, used since ~/.config/spotify-flags.conf added
+-- --ozone-platform=wayland to fix a blurry cursor over the XWayland surface)
 hl.window_rule({
     name  = "spotify-float",
-    match = { class = "^(Spotify)$" },
+    match = { class = "^([Ss]potify)$" },
     size  = {1200, 670},
     move  = {10, 75},
     float = true,

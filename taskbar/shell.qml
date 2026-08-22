@@ -1585,13 +1585,6 @@ Scope {
                             font.pixelSize: 16
                             font.weight: Font.Medium
                         }
-                        Text {
-                            text: "THRESHOLD"
-                            color: root.alpha(root.ncText, 0.5)
-                            font.family: root.ncFont
-                            font.pixelSize: 10
-                            font.weight: Font.DemiBold
-                        }
                     }
                     Item { Layout.fillWidth: true }
                     Text {
@@ -1622,20 +1615,23 @@ Scope {
                     Layout.fillWidth: true
                     spacing: 10
                     ColumnLayout {
-                        Layout.fillWidth: true
                         spacing: 2
                         Text { text: "Battery Health"; color: root.alpha(root.ncText, 0.5)
+                               horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
                                font.family: root.ncFont; font.pixelSize: 12 }
                         Text { text: root.batHealthPct >= 0 ? Math.round(root.batHealthPct) + "%" : "—"
-                               color: root.ncText; font.family: root.ncFont; font.pixelSize: 15; font.weight: Font.Medium }
+                               color: root.ncText; horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
+                               font.family: root.ncFont; font.pixelSize: 17; font.weight: Font.Medium }
                     }
+                    Item { Layout.fillWidth: true }
                     ColumnLayout {
-                        Layout.fillWidth: true
                         spacing: 2
                         Text { text: "Battery Size"; color: root.alpha(root.ncText, 0.5)
+                               horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
                                font.family: root.ncFont; font.pixelSize: 12 }
                         Text { text: root.batSizeWh > 0 ? root.batSizeWh.toFixed(0) + " Wh" : "—"
-                               color: root.ncText; font.family: root.ncFont; font.pixelSize: 15; font.weight: Font.Medium }
+                               color: root.ncText; horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
+                               font.family: root.ncFont; font.pixelSize: 17; font.weight: Font.Medium }
                     }
                 }
 
@@ -1644,10 +1640,12 @@ Scope {
                     Layout.fillWidth: true
                     spacing: 2
                     Text { text: root.batTimeLabel; color: root.alpha(root.ncText, 0.5)
+                           horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true
                            font.family: root.ncFont; font.pixelSize: 12 }
                     Text { text: root.fmtDuration(root.batTimeSeconds)
-                           color: root.ncText; font.family: root.ncFont; font.pixelSize: 15; font.weight: Font.Medium }
-                }
+                           color: root.ncText; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true
+                           font.family: root.ncFont; font.pixelSize: 20; font.weight: Font.Bold }
+}
 
                 // ---------- charge-limit picker ----------
                 ColumnLayout {
@@ -1674,8 +1672,8 @@ Scope {
                                 radius: 10
                                 color: active ? root.ncAccent
                                        : (capHover.hovered ? root.alpha(root.ncAccent, 0.18) : root.alpha(root.col7, 0.08))
-                                border.width: active ? 0 : 1
-                                border.color: root.alpha(root.col7, 0.15)
+                                border.width: 1.5
+                                border.color: root.alpha(root.ncText, 0.9)
                                 HoverHandler { id: capHover }
                                 Text {
                                     anchors.centerIn: parent

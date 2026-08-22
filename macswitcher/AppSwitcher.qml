@@ -298,11 +298,13 @@ Item {
                             // kitty        → running command (title = "nvim ~/foo")
                             // nautilus     → open directory  (title = "Documents")
                             // evince       → file name       (title = "report.pdf - …")
+                            // papers       → file name       (title = "report.pdf", no suffix)
                             // text editor  → file name       (title = "main.py - …")
                             // everyone else → nothing
                             if (_cls.includes("kitty"))                return _title
                             if (_cls === "org.gnome.nautilus")         return _title
                             if (_cls === "org.gnome.evince")           return _title.split(" - ")[0]
+                            if (_cls === "org.gnome.papers")           return _title
                             if (_cls === "org.gnome.texteditor")       return _title.split(" - ")[0]
                             return ""
                         }

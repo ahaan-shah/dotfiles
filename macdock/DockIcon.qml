@@ -229,11 +229,17 @@ Item {
     // ── Processes ─────────────────────────────────────────────────
     Process {
         id: launchProc
-        // Use setsid + disown to fully detach the launched app from quickshell's
-        // process group. This means destroying this DockIcon delegate (e.g. when
-        // the Repeater rebuilds) will NOT kill the app that was launched.
+        // Fire-and-forget launch. Both halves of the wrapper are load-bearing:
+        //   setsid ... &disown      — own session/process group, so destroying
+        //                             this delegate doesn't group-kill the app.
+        //   </dev/null >/dev/null 2>&1 — the app must NOT inherit Quickshell's
+        //                             stdout/stderr pipe. Quickshell closes the
+        //                             read end when the launcher exits, and the
+        //                             app's next write then dies on SIGPIPE.
+        // The second one is why Spotify (chatty at startup) wouldn't launch
+        // while quiet apps did. See CLAUDE.md 2026-08-22 for the full history.
         command: root.command !== ""
-            ? ["bash", "-c", "setsid " + root.command + " &disown"]
+            ? ["bash", "-c", "setsid " + root.command + " </dev/null >/dev/null 2>&1 &disown"]
             : ["true"]
         running: false
     }

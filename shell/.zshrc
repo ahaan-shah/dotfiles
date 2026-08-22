@@ -49,9 +49,9 @@ alias ninitimes="/home/ahaan/.config/scripts/sleep-timer.sh"
 
 # system update and install and remove packages
 alias update="/home/ahaan/.config/scripts/system-update.sh"
-alias install="yay -S "
-alias remove="yay -Rns "
-alias search="yay -Ss"
+alias get="/home/ahaan/.config/scripts/pkg-install.sh"
+alias aurget="/home/ahaan/.config/scripts/pkg-aur-install.sh"
+alias remove="/home/ahaan/.config/scripts/pkg-remove.sh" 
 
 # encryption
 alias sycrypt="gpg -c"

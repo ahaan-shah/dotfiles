@@ -86,7 +86,7 @@ QtObject {
         files.forEach(block => {
             if (!block.trim()) return
 
-            let path = "", name = "", comment = "", icon = "", noDisplay = false, inDesktopEntry = false, flatpakId = ""
+            let path = "", name = "", comment = "", icon = "", noDisplay = false, inDesktopEntry = false, flatpakId = "", exec = "", terminal = false
 
             block.split("\n").forEach(line => {
                 const l = line.trim()
@@ -97,6 +97,8 @@ QtObject {
                 if (l.startsWith("Name=") && !name)          name = l.slice(5).trim()
                 if (l.startsWith("Comment=") && !comment)    comment = l.slice(8).trim()
                 if (l.startsWith("Icon=") && !icon)          icon = l.slice(5).trim()
+                if (l.startsWith("Exec=") && !exec)          exec = l.slice(5).trim()
+                if (l.startsWith("Terminal=true"))           terminal = true
                 if (l.startsWith("NoDisplay=true"))          noDisplay = true
                 // Flatpak-exported .desktop files carry this; launching via
                 // `flatpak run <id>` directly (bypassing the Exec= line's
@@ -121,8 +123,12 @@ QtObject {
             // Papirus-Dark ships a real "zen-browser" icon now (as of the theme
             // update that added it) — matches macdock/DockModel.qml.
             if (icon === "zen-browser") iconPath = root._resolveIconPath("zen-browser")
+            // wiremix.desktop ships no Icon= line at all (blank icon in the
+            // list), so map it explicitly to Papirus-Dark's "musique" (music
+            // note) icon, per explicit user request.
+            if (!icon && name === "Wiremix") iconPath = root._resolveIconPath("musique")
 
-            list.push({ name, comment, icon, iconPath, path, flatpakId })
+            list.push({ name, comment, icon, iconPath, path, flatpakId, exec, terminal })
         })
 
         // De-dupe by name, keep first occurrence (local overrides system since
@@ -174,19 +180,50 @@ QtObject {
     }
 
     function launch(app) {
-        // `gio launch` forks and returns immediately (fire-and-forget), but
-        // `flatpak run` blocks in the foreground for the launched app's
-        // entire lifetime — since launchProc is reused for every launch and
-        // Process.running = true is a no-op while already running (same
-        // class of stale-Process bug documented for FileSearch.qml), that
-        // left launchProc permanently "running" for as long as the flatpak
-        // app stayed open, silently swallowing every subsequent launch()
-        // call for any other app. `setsid … &` under a wrapping shell
-        // detaches flatpak run the same way gio launch already detaches,
-        // so launchProc goes back to not-running almost immediately.
-        launchProc.command = app.flatpakId
-            ? ["bash", "-c", "setsid flatpak run '" + app.flatpakId + "' </dev/null >/dev/null 2>&1 &"]
-            : ["gio", "launch", app.path]
+        // Every branch below launches via
+        //   bash -c "setsid <cmd> </dev/null >/dev/null 2>&1 &"
+        // Both halves are load-bearing:
+        //   setsid ... &   — own session/process group, and keeps launchProc
+        //                    from staying `running` for the app's whole life
+        //                    (Process.running = true is a no-op while already
+        //                    running, so a foreground launch silently swallows
+        //                    every later launch() call).
+        //   </dev/null >/dev/null 2>&1 — the app must NOT inherit Quickshell's
+        //                    stdout/stderr pipe. Quickshell closes the read end
+        //                    when the launcher (`gio`) exits, and the app's next
+        //                    write then dies on SIGPIPE.
+        // The second one is why Spotify (chatty at startup) wouldn't launch
+        // while quiet apps did. See CLAUDE.md 2026-08-22 for the full history.
+
+        // Terminal=true entries (btop, wiremix, ...) are TUI apps with no GUI
+        // window of their own — `gio launch` on them falls through to GLib's
+        // own Terminal=true handling, which tries `xterm` (not installed here)
+        // and silently does nothing. Route these through kitty explicitly
+        // instead, matching the exact "kitty --title <cmd> -e zsh -i -c <cmd>"
+        // convention hyprland.lua's own F12 btop bind already uses, so the
+        // title-matched kitty-tools-float window rule still floats them.
+        if (app.terminal && !app.flatpakId) {
+            const cmd = app.exec.split(/\s+/)[0]
+            launchProc.command = ["bash", "-c",
+                "setsid kitty --title \"$1\" -e zsh -i -c \"$1\" </dev/null >/dev/null 2>&1 &",
+                "_", cmd]
+            launchProc.running = true
+            return
+        }
+        // Flatpak-exported entries launch via `flatpak run <id>` directly
+        // rather than gio launch on the export's Exec= line — its
+        // --branch/--arch/--command/--file-forwarding flags were crashing JASP
+        // as soon as it did any real work, plain `flatpak run` was not.
+        if (app.flatpakId) {
+            launchProc.command = ["bash", "-c",
+                "setsid flatpak run \"$1\" </dev/null >/dev/null 2>&1 &",
+                "_", app.flatpakId]
+            launchProc.running = true
+            return
+        }
+        launchProc.command = ["bash", "-c",
+            "setsid gio launch \"$1\" </dev/null >/dev/null 2>&1 &",
+            "_", app.path]
         launchProc.running = true
     }
 
