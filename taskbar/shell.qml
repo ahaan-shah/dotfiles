@@ -281,6 +281,14 @@ Scope {
     property string wifiLoss: ""
     property var    wifiNets: []          // [{ssid, signal, secure, known, active}]
     property string wifiPromptSsid: ""    // "" = no password prompt showing
+    property string wifiPromptError: ""   // shown inside the prompt box until retyped
+    // The typed password lives on root, not in the TextInput. The network list
+    // refreshes on a timer, and reassigning that model rebuilds every Repeater
+    // delegate - including the prompt - which silently threw away whatever had
+    // been typed so far. Holding it here means a rebuild cannot lose it.
+    property string wifiPromptText: ""
+    property bool   wifiPromptReveal: false
+    property string _wifiActionSsid: ""   // ssid the in-flight action belongs to
     property string wifiBusySsid: ""      // SSID a connect/disconnect is in flight for
     property string wifiError: ""
     property bool   wifiScanning: false
@@ -483,9 +491,30 @@ Scope {
             var rollback = root._wifiNewProfile;
             root._wifiNewProfile = "";
 
-            if (code === 0) { root.wifiPromptSsid = ""; root.wifiError = ""; }
+            var actionSsid = root._wifiActionSsid; root._wifiActionSsid = "";
+
+            if (code === 0) {
+                root.wifiPromptSsid = ""; root.wifiError = ""; root.wifiPromptError = "";
+                root.wifiPromptText = ""; root.wifiPromptReveal = false;
+                wifiProfilesProc.running = true;   // the key may have just been saved
+            }
             else {
-                root.wifiError = root.wifiFriendlyError(wifiActionProc.errText) || "Connection failed";
+                var msg = root.wifiFriendlyError(wifiActionProc.errText) || "Connection failed";
+                // A saved network whose stored key is wrong or missing fails
+                // here with nothing offering a way to correct it - which is
+                // exactly the dead end this hit: the prompt only ever opened
+                // for networks that were NOT already saved, so a bad saved
+                // password could never be replaced from this panel. Reopen the
+                // prompt on the network that failed and report it there.
+                if (root.wifiAuthFailed(wifiActionProc.errText) && actionSsid !== "") {
+                    root.wifiPromptSsid = actionSsid;
+                    root.wifiPromptText = "";      // reset the box so it can just be retyped
+                    root.wifiPromptReveal = false;
+                    root.wifiPromptError = msg;
+                    root.wifiError = "";
+                } else {
+                    root.wifiError = msg;
+                }
                 // A failed `device wifi connect` still leaves behind the profile
                 // nmcli created for the attempt — so a network you mistyped the
                 // password for becomes "known", and the next click connects
@@ -494,7 +523,10 @@ Scope {
                 // asks for the password again. Only for a network that was not
                 // already saved, so a transient failure never destroys a real
                 // stored profile.
-                if (rollback !== "") {
+                // Belt and braces: only ever delete a profile that was absent
+                // from the saved set when the attempt started AND is not the
+                // network currently connected.
+                if (rollback !== "" && rollback !== root.wifiSsid) {
                     root.run("nmcli connection delete " + root.wifiProfileRef(rollback));
                     wifiRollbackRefresh.restart();
                 }
@@ -505,6 +537,12 @@ Scope {
     }
     // nmcli's own wording for a rejected key is "Secrets were required, but not
     // provided", which reads like a bug rather than "you typed it wrong".
+    // An auth failure means the stored key is wrong or absent - recoverable by
+    // retyping, unlike "out of range" which is not.
+    function wifiAuthFailed(raw) {
+        return /Secrets were required|no secrets|802-1X|Authentication/i.test(String(raw || ""))
+    }
+
     function wifiFriendlyError(raw) {
         if (!raw || raw === "") return "";
         var e = String(raw).replace(/^Error: */, "");
@@ -517,6 +555,7 @@ Scope {
 
     function wifiRun(cmd, busySsid) {
         root.wifiBusySsid = busySsid || "";
+        root._wifiActionSsid = busySsid || "";
         root.wifiError = "";
         wifiActionProc.errText = "";
         wifiActionProc.running = false;      // a re-assigned command is ignored while still running
@@ -526,17 +565,55 @@ Scope {
     // `nmcli device wifi connect` reuses an existing saved profile when one
     // matches the SSID, so this is the single entry point for both known and
     // brand-new networks. -w bounds the wait (default is ~90s of a frozen row).
+    // Whether NetworkManager already has a saved profile for this SSID.
+    //
+    // This MUST come from wifiProfiles (built from `nmcli connection show`) and
+    // not from the scan list's `known` flag. The scan list only contains
+    // networks currently being advertised, so a saved network that is out of
+    // range - or simply not in the latest scan, which is the case immediately
+    // after disconnecting from it - reads as "not known". The rollback below
+    // then treats a failed connect as "a profile I just created" and deletes
+    // it. That destroyed a real saved profile during testing; the authoritative
+    // list cannot produce that mistake.
     function wifiIsKnown(ssid) {
-        for (var i = 0; i < root.wifiNets.length; i++)
-            if (root.wifiNets[i].ssid === ssid) return root.wifiNets[i].known;
-        return false;
+        return root.wifiProfiles[ssid] !== undefined;
     }
     function wifiConnect(ssid, password) {
         // Remember whether this network was already saved, so a failure can tell
         // a profile nmcli just invented from one that was already there.
-        root._wifiNewProfile = root.wifiIsKnown(ssid) ? "" : ssid;
-        var c = "nmcli -w 25 device wifi connect " + root.shq(ssid);
-        if (password && password.length > 0) c += " password " + root.shq(password);
+        var uuid = root.wifiProfiles[ssid];
+        var hasPw = password && password.length > 0;
+        var c;
+
+        root._wifiNewProfile = "";   // armed only by the creating branch below
+
+        if (hasPw && uuid !== undefined) {
+            // Typed a password for a network that already has a saved profile.
+            // `device wifi connect ... password ...` would connect, but the key
+            // belongs *in the profile* or the next attempt is back to the same
+            // failure - and most of the saved profiles on this machine turned
+            // out to carry key-mgmt=wpa-psk with no psk at all (created via
+            // iwd, whose secrets live in its own store, not NetworkManager's).
+            // So write the key into the profile first, then bring that profile
+            // up: the correction is persisted for every future connect.
+            c = "nmcli connection modify uuid " + root.shq(uuid) +
+                " wifi-sec.key-mgmt wpa-psk wifi-sec.psk " + root.shq(password) +
+                " && nmcli -w 25 connection up uuid " + root.shq(uuid);
+        } else if (hasPw) {
+            // Brand-new network: nmcli creates the profile as it connects.
+            // This is the ONLY branch that can bring a profile into existence,
+            // so it is the only one that may roll one back. Deciding that from
+            // "was it in the saved set" instead was unsafe: the saved set is a
+            // cached snapshot, so a profile created moments earlier by anything
+            // else (impala, nmcli, another panel action) read as new and got
+            // deleted on a failed connect.
+            root._wifiNewProfile = ssid;
+            c = "nmcli -w 25 device wifi connect " + root.shq(ssid) +
+                " password " + root.shq(password);
+        } else {
+            // Known network, first attempt: let the saved profile supply the key.
+            c = "nmcli -w 25 device wifi connect " + root.shq(ssid);
+        }
         root.wifiRun(c, ssid);
     }
     function wifiDisconnect() {
@@ -604,14 +681,19 @@ Scope {
     // the connected row and the signal figures honest — but it only reads
     // NetworkManager's existing scan cache. An actual rescan happens solely
     // while scanning is switched on.
-    Timer { interval: 4000; running: root.netVisible; repeat: true; triggeredOnStart: true
+    // Paused while a password is being typed: a refresh reassigns wifiNets,
+    // which rebuilds the delegate the prompt lives in.
+    Timer { interval: 4000; running: root.netVisible && root.wifiPromptSsid === ""
+            repeat: true; triggeredOnStart: true
             onTriggered: wifiListProc.running = true }
     Timer { interval: 10000; running: root.netVisible && root.wifiScanning && root.wifiEnabled
             repeat: true; onTriggered: wifiScanProc.running = true }
 
     onNetVisibleChanged: {
         if (!netVisible) {
-            root.wifiPromptSsid = ""; root.wifiError = ""; root.wifiSetScanning(false);
+            root.wifiPromptSsid = ""; root.wifiError = ""; root.wifiPromptError = "";
+            root.wifiPromptText = ""; root.wifiPromptReveal = false;
+            root.wifiSetScanning(false);
             root.wifiMenuSsid = ""; root.wifiPwSsid = ""; root.wifiPwText = "";
         }
         else {
@@ -662,6 +744,8 @@ Scope {
         battery:  String.fromCodePoint(0xf0079),
         cog:      String.fromCodePoint(0xf0493),   // md-cog  (advanced settings)
         radar:    String.fromCodePoint(0xf0437),   // md-radar (scan for devices)
+        eye:      String.fromCodePoint(0xf06e),    // fa-eye
+        eyeOff:   String.fromCodePoint(0xf070),    // fa-eye_slash
         loading:  String.fromCodePoint(0xf0772)
     })
 
@@ -1608,20 +1692,26 @@ Scope {
         id: ptb
         property string label: ""
         property bool accent: false
+        // Overridable so a button nested in an accent-filled row can sit on a
+        // darker surface instead of vanishing into it.
+        property color surface:      root.alpha(root.col7, 0.08)
+        property color surfaceHover: root.alpha(root.col7, 0.18)
+        property color outline:      root.alpha(root.ncText, 0.6)
+        property color textColor:    root.ncText
         signal clicked()
 
         Layout.fillWidth: true
         Layout.preferredHeight: 30
         radius: 10
         color: ptb.accent ? root.ncAccent
-               : (ptbHover.hovered ? root.alpha(root.col7, 0.18) : root.alpha(root.col7, 0.08))
+               : (ptbHover.hovered ? ptb.surfaceHover : ptb.surface)
         border.width: 1.5
-        border.color: root.alpha(root.ncText, ptb.accent ? 0.9 : 0.6)
+        border.color: ptb.accent ? root.alpha(root.ncText, 0.9) : ptb.outline
         HoverHandler { id: ptbHover }
         Text {
             anchors.centerIn: parent
             text: ptb.label
-            color: ptb.accent ? root.contrastText(root.ncAccent) : root.ncText
+            color: ptb.accent ? root.contrastText(root.ncAccent) : ptb.textColor
             font.family: root.ncFont
             font.pixelSize: 12
             font.weight: ptb.accent ? Font.DemiBold : Font.Normal
@@ -1646,6 +1736,13 @@ Scope {
     // One selectable row in a list (a network, a bluetooth device, an audio
     // device). `active` is the selected/connected state, `busy` swaps the
     // trailing slot for a spinner while an action is in flight.
+    // One selectable row in a list (a network, a bluetooth device, an audio
+    // device). `active` is the selected/connected state, `busy` swaps the
+    // trailing slot for a spinner while an action is in flight.
+    //
+    // Anything declared inside a PanelRow becomes its expanded content: it is
+    // laid out *within the row's own box*, which grows to fit, rather than
+    // appearing as a separate card below the row.
     component PanelRow: Rectangle {
         id: prow
         property string glyph: ""
@@ -1655,143 +1752,201 @@ Scope {
         property string trailText: ""
         property bool active: false
         property bool busy: false
+        property bool expanded: false
         property bool hovered: rowHover.hovered
+        default property alias expandedData: extraCol.data
         signal clicked()
         signal rightClicked()
 
+        readonly property int headerHeight: prow.sub !== "" ? 52 : 38
+
         Layout.fillWidth: true
-        implicitHeight: prow.sub !== "" ? 52 : 38
+        // Driven through Layout.preferredHeight, not implicitHeight: inside a
+        // ColumnLayout the layout engine sets the item's height from the
+        // preferred value, so a Behavior on implicitHeight never gets to
+        // interpolate - the row simply snapped to its new size.
+        readonly property int targetHeight: prow.headerHeight
+                                            + (prow.expanded ? extraCol.implicitHeight + 10 : 0)
+        // The animation runs on this plain property, and the layout is bound to
+        // it. A Behavior cannot be attached to an attached property, so
+        // `Behavior on Layout.preferredHeight` silently does nothing - the row
+        // just snapped to its new size (confirmed by watching a deliberately
+        // 5s-long expansion complete instantly).
+        property real animHeight: prow.targetHeight
+        Behavior on animHeight { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        implicitHeight: prow.animHeight
+        Layout.preferredHeight: prow.animHeight
+        // Content is clipped to the box so it slides out from under the header
+        // as the row grows, instead of overflowing during the animation.
+        clip: true
+
         radius: 10
         // Solid accent fill when selected, matching the battery panel's active
         // charge-limit button — not a low-alpha wash over the background.
         color: prow.active ? root.ncAccent
                : (rowHover.hovered ? root.alpha(root.col7, 0.16) : root.alpha(root.col7, 0.05))
         readonly property color fg: prow.active ? root.contrastText(root.ncAccent) : root.ncText
+        // Surfaces for anything nested inside an expanded row. On a normal row
+        // that is a faint light wash over the panel; on the *connected* row the
+        // backdrop is the solid accent fill, where the same wash all but
+        // disappears - so there it darkens instead, keeping the nested controls
+        // reading as controls.
+        readonly property color innerBg:      prow.active ? root.alpha(root.colBg, 0.55) : root.alpha(root.col7, 0.08)
+        readonly property color innerBgHover: prow.active ? root.alpha(root.colBg, 0.72) : root.alpha(root.col7, 0.18)
+        readonly property color innerBorder:  prow.active ? root.alpha(prow.fg, 0.55)    : root.alpha(root.ncText, 0.5)
         border.width: 1.5
         border.color: root.alpha(root.ncText, prow.active ? 0.85 : 0.32)
         Behavior on color { ColorAnimation { duration: 140 } }
 
-        HoverHandler { id: rowHover }
+        // Hover and click belong to the header strip only — with expanded
+        // content living inside the same box, a fill-parent MouseArea would
+        // swallow clicks meant for the password field and the buttons.
+        Item {
+            id: headerArea
+            anchors { top: parent.top; left: parent.left; right: parent.right }
+            height: prow.headerHeight
 
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 10
-            anchors.rightMargin: 10
-            spacing: 9
+            HoverHandler { id: rowHover }
 
-            Text {
-                text: prow.glyph
-                color: prow.fg
-                font.family: root.ncFont
-                font.pixelSize: 15
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 4
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                spacing: 9
+
                 Text {
-                    Layout.fillWidth: true
-                    text: prow.label
+                    text: prow.glyph
                     color: prow.fg
                     font.family: root.ncFont
-                    font.pixelSize: 13
-                    font.weight: prow.active ? Font.DemiBold : Font.Normal
-                    elide: Text.ElideRight
+                    font.pixelSize: 15
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Text {
+                        Layout.fillWidth: true
+                        text: prow.label
+                        color: prow.fg
+                        font.family: root.ncFont
+                        font.pixelSize: 13
+                        font.weight: prow.active ? Font.DemiBold : Font.Normal
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        visible: prow.sub !== ""
+                        text: prow.sub
+                        color: prow.active ? root.alpha(prow.fg, 0.75) : root.alpha(root.ncText, 0.55)
+                        font.family: root.ncFont
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
                 }
                 Text {
-                    Layout.fillWidth: true
-                    visible: prow.sub !== ""
-                    text: prow.sub
-                    color: prow.active ? root.alpha(prow.fg, 0.75) : root.alpha(root.ncText, 0.55)
+                    visible: prow.trailText !== "" && !prow.busy
+                    text: prow.trailText
+                    color: prow.active ? root.alpha(prow.fg, 0.8) : root.alpha(root.ncText, 0.65)
                     font.family: root.ncFont
-                    font.pixelSize: 11
-                    elide: Text.ElideRight
+                    font.pixelSize: 13
+                }
+                Text {
+                    visible: prow.trailGlyph !== "" && !prow.busy
+                    text: prow.trailGlyph
+                    color: prow.active ? prow.fg : root.alpha(root.ncText, 0.6)
+                    font.family: root.ncFont
+                    font.pixelSize: 13
+                }
+                Text {                                   // in-flight spinner
+                    visible: prow.busy
+                    text: root.g.loading
+                    color: prow.fg
+                    font.family: root.ncFont
+                    font.pixelSize: 14
+                    RotationAnimation on rotation {
+                        running: prow.busy
+                        from: 0; to: 360
+                        duration: 900
+                        loops: Animation.Infinite
+                    }
                 }
             }
-            Text {
-                visible: prow.trailText !== "" && !prow.busy
-                text: prow.trailText
-                color: prow.active ? root.alpha(prow.fg, 0.8) : root.alpha(root.ncText, 0.65)
-                font.family: root.ncFont
-                font.pixelSize: 13
-            }
-            Text {
-                visible: prow.trailGlyph !== "" && !prow.busy
-                text: prow.trailGlyph
-                color: prow.active ? prow.fg : root.alpha(root.ncText, 0.6)
-                font.family: root.ncFont
-                font.pixelSize: 13
-            }
-            Text {                                   // in-flight spinner
-                visible: prow.busy
-                text: root.g.loading
-                color: prow.fg
-                font.family: root.ncFont
-                font.pixelSize: 14
-                RotationAnimation on rotation {
-                    running: prow.busy
-                    from: 0; to: 360
-                    duration: 900
-                    loops: Animation.Infinite
-                }
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: (e) => e.button === Qt.RightButton ? prow.rightClicked() : prow.clicked()
             }
         }
 
-        MouseArea {
-            anchors.fill: parent
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onClicked: (e) => e.button === Qt.RightButton ? prow.rightClicked() : prow.clicked()
+        ColumnLayout {
+            id: extraCol
+            anchors { top: headerArea.bottom; left: parent.left; right: parent.right }
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            spacing: 6
+            // Fades with the growth rather than appearing the instant the row
+            // starts expanding. Kept "visible" until the fade finishes so it
+            // does not vanish mid-collapse.
+            opacity: prow.expanded ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         }
     }
 
-    // One wi-fi network: the row, plus the password prompt that expands beneath
-    // it when a new secured network is tapped (same pattern as the bluetooth
-    // device menu — the whole connect flow stays inside the panel).
-    component WifiNetworkRow: ColumnLayout {
+    // One wi-fi network. The context menu and the password prompt both open
+    // inside this row's own box rather than as separate cards beneath it.
+    component WifiNetworkRow: PanelRow {
         id: wnr
         property var net: null
         readonly property string ssid: wnr.net ? wnr.net.ssid : ""
         readonly property bool prompting: wnr.ssid !== "" && root.wifiPromptSsid === wnr.ssid
         readonly property bool menuOpen: wnr.ssid !== "" && root.wifiMenuSsid === wnr.ssid
 
-        Layout.fillWidth: true
-        spacing: 6
+        glyph: root.wifiIcon(wnr.net ? wnr.net.signal : 0)
+        label: wnr.ssid
+        sub: (wnr.net && wnr.net.active) ? "Connected" : ""
+        active: wnr.net && wnr.net.active
+        busy: root.wifiBusySsid === wnr.ssid
+        trailText: (wnr.net ? wnr.net.signal : 0) + "%"
+        trailGlyph: (wnr.net && wnr.net.secure) ? root.g.lock : ""
+        expanded: wnr.menuOpen || wnr.prompting
 
-        PanelRow {
-            glyph: root.wifiIcon(wnr.net ? wnr.net.signal : 0)
-            label: wnr.ssid
-            sub: (wnr.net && wnr.net.active) ? "Connected" : ""
-            active: wnr.net && wnr.net.active
-            busy: root.wifiBusySsid === wnr.ssid
-            trailText: (wnr.net ? wnr.net.signal : 0) + "%"
-            trailGlyph: (wnr.net && wnr.net.secure) ? root.g.lock : ""
-            onClicked: {
-                if (!wnr.net) return;
-                root.wifiMenuSsid = ""; root.wifiPwSsid = ""; root.wifiPwText = "";
-                if (wnr.net.active) { root.wifiDisconnect(); return; }
-                // A saved profile already holds the PSK, so only a brand-new
-                // secured network needs to ask for one.
-                if (wnr.net.secure && !wnr.net.known) root.wifiPromptSsid = wnr.ssid;
-                else root.wifiConnect(wnr.ssid, "");
+        onClicked: {
+            if (!wnr.net) return;
+            root.wifiMenuSsid = ""; root.wifiPwSsid = ""; root.wifiPwText = "";
+            if (wnr.net.active) { root.wifiDisconnect(); return; }
+            // A saved profile already holds the PSK, so only a brand-new
+            // secured network needs to ask for one.
+            if (wnr.net.secure && !wnr.net.known) {
+                root.wifiPromptError = ""; root.wifiPromptText = "";
+                root.wifiPromptReveal = false; root.wifiPromptSsid = wnr.ssid;
             }
-            // Only saved networks have anything to offer here — there is no
-            // password to reveal and nothing to forget for an unknown one.
-            onRightClicked: {
-                if (!wnr.net || !wnr.net.known) return;
-                root.wifiPwSsid = ""; root.wifiPwText = "";
-                root.wifiMenuSsid = wnr.menuOpen ? "" : wnr.ssid;
-            }
+            else root.wifiConnect(wnr.ssid, "");
+        }
+        // Only saved networks have anything to offer here — there is no
+        // password to reveal and nothing to forget for an unknown one.
+        onRightClicked: {
+            if (!wnr.net || !wnr.net.known) return;
+            root.wifiPwSsid = ""; root.wifiPwText = "";
+            root.wifiMenuSsid = wnr.menuOpen ? "" : wnr.ssid;
         }
 
         // ---------- context menu ----------
         RowLayout {
             Layout.fillWidth: true
-            Layout.bottomMargin: 4
             spacing: 8
             visible: wnr.menuOpen
 
-            PanelTextBtn { label: "Forget"; onClicked: root.wifiForget(wnr.ssid) }
+            PanelTextBtn {
+                label: "Forget"
+                surface: wnr.innerBg; surfaceHover: wnr.innerBgHover
+                outline: wnr.innerBorder; textColor: wnr.fg
+                onClicked: root.wifiForget(wnr.ssid)
+            }
             PanelTextBtn {
                 label: root.wifiPwSsid === wnr.ssid ? "Hide Password" : "Show Password"
+                surface: wnr.innerBg; surfaceHover: wnr.innerBgHover
+                outline: wnr.innerBorder; textColor: wnr.fg
                 onClicked: root.wifiTogglePassword(wnr.ssid)
             }
         }
@@ -1799,12 +1954,11 @@ Scope {
         // ---------- revealed password (selectable, so it can be copied) ------
         Rectangle {
             Layout.fillWidth: true
-            Layout.bottomMargin: 4
-            implicitHeight: 34
+            Layout.preferredHeight: 34
             radius: 10
-            color: root.alpha(root.col7, 0.08)
+            color: wnr.innerBg
             border.width: 1.5
-            border.color: root.alpha(root.ncText, 0.5)
+            border.color: wnr.innerBorder
             visible: wnr.menuOpen && root.wifiPwSsid === wnr.ssid
 
             TextInput {
@@ -1815,7 +1969,7 @@ Scope {
                 text: root.wifiPwText
                 readOnly: true
                 selectByMouse: true
-                color: root.ncText
+                color: wnr.fg
                 selectionColor: root.alpha(root.ncAccent, 0.6)
                 font.family: root.ncFont
                 font.pixelSize: 13
@@ -1823,71 +1977,132 @@ Scope {
             }
         }
 
-        ColumnLayout {
+        // ---------- password prompt ----------
+        Rectangle {
             Layout.fillWidth: true
-            Layout.bottomMargin: 4
-            spacing: 6
+            Layout.preferredHeight: 38
             visible: wnr.prompting
+            radius: 10
+            color: wnr.innerBg
+            border.width: 1.5
+            // Themed from the palette rather than a hardcoded red. On the
+            // connected row the accent *is* the row fill, so an accent border
+            // would be invisible there - use the contrasting foreground instead.
+            border.color: root.wifiPromptError !== ""
+                          ? (wnr.active ? wnr.fg : root.ncAccent)
+                          : (pwField.activeFocus ? root.alpha(wnr.fg, 0.85) : wnr.innerBorder)
 
-            Rectangle {
-                Layout.fillWidth: true
-                implicitHeight: 34
-                radius: 10
-                color: root.alpha(root.col7, 0.08)
-                border.width: 1.5
-                border.color: root.alpha(root.ncText, pwField.activeFocus ? 0.85 : 0.5)
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 5
+                spacing: 6
 
                 TextInput {
                     id: pwField
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    verticalAlignment: TextInput.AlignVCenter
-                    echoMode: TextInput.Password
-                    passwordCharacter: "•"
-                    color: root.ncText
+                    Layout.fillWidth: true
+                    // Sized to its own text and centred, rather than filled to
+                    // the box: filling it puts the mask glyphs on the baseline
+                    // of the full-height line box, which left them sitting high.
+                    Layout.preferredHeight: pwField.implicitHeight
+                    Layout.alignment: Qt.AlignVCenter
+
+                    echoMode: root.wifiPromptReveal ? TextInput.Normal : TextInput.Password
+                    passwordCharacter: "●"          // filled circle
+                    color: wnr.fg
                     selectionColor: root.alpha(root.ncAccent, 0.6)
                     font.family: root.ncFont
-                    font.pixelSize: 13
+                    font.pixelSize: 14
                     clip: true
                     focus: true
+
+                    // Mirror into root so a list refresh rebuilding this
+                    // delegate cannot lose what has been typed.
+                    onTextChanged: root.wifiPromptText = pwField.text
+                    // Clear the standing error on a real keystroke, not on
+                    // textChanged - the error itself arrives together with a
+                    // programmatic reset of this field, and that reset would
+                    // otherwise wipe the message before it was ever seen.
+                    Keys.onPressed: if (root.wifiPromptError !== "") root.wifiPromptError = ""
                     onAccepted: root.wifiConnect(wnr.ssid, pwField.text)
                     Keys.onEscapePressed: root.wifiPromptSsid = ""
-                    // Created hidden and only shown on the tap, so the focus
-                    // grab belongs on that transition; the retry covers the
-                    // frame where the surface has not taken the keyboard yet.
-                    onVisibleChanged: if (visible) { pwField.text = ""; pwField.forceActiveFocus(); pwFocusRetry.restart(); }
+
+                    Component.onCompleted: pwField.text = root.wifiPromptText
+                    onVisibleChanged: if (visible) {
+                        pwField.text = root.wifiPromptText
+                        pwField.forceActiveFocus()
+                        pwFocusRetry.restart()
+                    }
+                    Connections {
+                        target: root
+                        // A programmatic reset (wrong password) has to reach the
+                        // field even though the field normally drives this.
+                        function onWifiPromptTextChanged() {
+                            if (root.wifiPromptText !== pwField.text) pwField.text = root.wifiPromptText
+                        }
+                    }
                     Timer {
                         id: pwFocusRetry
                         interval: 60
                         onTriggered: if (pwField.visible && !pwField.activeFocus) pwField.forceActiveFocus()
                     }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        width: parent.width
+                        visible: pwField.text === ""
+                        text: "Password for " + wnr.ssid
+                        color: root.alpha(wnr.fg, 0.4)
+                        font.family: root.ncFont
+                        font.pixelSize: 14
+                        elide: Text.ElideRight
+                    }
                 }
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: 10
-                    width: parent.width - 20
-                    visible: pwField.text === ""
-                    text: "Password for " + wnr.ssid
-                    color: root.alpha(root.ncText, 0.35)
-                    font.family: root.ncFont
-                    font.pixelSize: 13
-                    elide: Text.ElideRight
+
+                // Reveal toggle: shows the state the field is in — a struck-out
+                // eye while the password is hidden, a plain eye while visible.
+                PanelIconBtn {
+                    implicitWidth: 28
+                    implicitHeight: 26
+                    Layout.alignment: Qt.AlignVCenter
+                    glyph: root.wifiPromptReveal ? root.g.eye : root.g.eyeOff
+                    onClicked: {
+                        root.wifiPromptReveal = !root.wifiPromptReveal
+                        pwField.forceActiveFocus()
+                    }
                 }
             }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-                PanelTextBtn { label: "Cancel"; onClicked: root.wifiPromptSsid = "" }
-                PanelTextBtn { label: "Connect"; accent: true; onClicked: root.wifiConnect(wnr.ssid, pwField.text) }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: wnr.prompting && root.wifiPromptError !== ""
+            text: root.wifiPromptError
+            color: wnr.active ? wnr.fg : root.ncAccent
+            font.family: root.ncFont
+            font.pixelSize: 13
+            font.weight: Font.Medium
+            wrapMode: Text.WordWrap
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            visible: wnr.prompting
+            PanelTextBtn {
+                label: "Cancel"
+                surface: wnr.innerBg; surfaceHover: wnr.innerBgHover
+                outline: wnr.innerBorder; textColor: wnr.fg
+                onClicked: { root.wifiPromptSsid = ""; root.wifiPromptError = ""; root.wifiPromptText = ""; root.wifiPromptReveal = false; }
             }
+            PanelTextBtn { label: "Connect"; accent: true; onClicked: root.wifiConnect(wnr.ssid, pwField.text) }
         }
     }
 
-    // One bluetooth device: the row itself plus its right-click context menu and
-    // inline rename field, which expand underneath it (same pattern as the
-    // wifi password prompt) rather than opening a floating menu window.
-    component BtDeviceRow: ColumnLayout {
+    // One bluetooth device. Context menu and rename open inside the row's box,
+    // same as the wifi row above.
+    component BtDeviceRow: PanelRow {
         id: bdr
         property var dev: null
         readonly property string path: bdr.dev ? bdr.dev.dbusPath : ""
@@ -1895,35 +2110,33 @@ Scope {
         readonly property bool menuOpen: bdr.path !== "" && root.btMenuPath === bdr.path
         readonly property bool renaming: bdr.path !== "" && root.btRenamePath === bdr.path
 
-        Layout.fillWidth: true
-        spacing: 6
+        glyph: root.btIcon(bdr.dev)
+        label: root.btLabel(bdr.dev)
+        sub: root.btStateLabel(bdr.dev)
+        active: bdr.dev && bdr.dev.connected
+        busy: root.btIsBusy(bdr.dev)
+        // Peripherals that report battery over BlueZ (headphones, mice) show it
+        // right here, so checking never needs another app.
+        trailText: (bdr.dev && bdr.dev.batteryAvailable) ? Math.round(bdr.dev.battery * 100) + "%" : ""
+        trailGlyph: (bdr.dev && bdr.dev.batteryAvailable) ? root.g.battery : ""
+        expanded: bdr.menuOpen || bdr.renaming
 
-        PanelRow {
-            glyph: root.btIcon(bdr.dev)
-            label: root.btLabel(bdr.dev)
-            sub: root.btStateLabel(bdr.dev)
-            active: bdr.dev && bdr.dev.connected
-            busy: root.btIsBusy(bdr.dev)
-            // Peripherals that report battery over BlueZ (headphones, mice)
-            // show it right here, so checking never needs another app.
-            trailText: (bdr.dev && bdr.dev.batteryAvailable) ? Math.round(bdr.dev.battery * 100) + "%" : ""
-            trailGlyph: (bdr.dev && bdr.dev.batteryAvailable) ? root.g.battery : ""
-            onClicked: { root.btMenuPath = ""; root.btRenamePath = ""; root.btTap(bdr.dev); }
-            onRightClicked: {
-                root.btRenamePath = "";
-                root.btMenuPath = bdr.menuOpen ? "" : bdr.path;
-            }
+        onClicked: { root.btMenuPath = ""; root.btRenamePath = ""; root.btTap(bdr.dev); }
+        onRightClicked: {
+            root.btRenamePath = "";
+            root.btMenuPath = bdr.menuOpen ? "" : bdr.path;
         }
 
         // ---------- context menu ----------
         RowLayout {
             Layout.fillWidth: true
-            Layout.bottomMargin: 4
             spacing: 8
             visible: bdr.menuOpen && !bdr.renaming
 
             PanelTextBtn {
                 label: "Rename"
+                surface: bdr.innerBg; surfaceHover: bdr.innerBgHover
+                outline: bdr.innerBorder; textColor: bdr.fg
                 onClicked: root.btRenamePath = bdr.path
             }
             PanelTextBtn {
@@ -1932,61 +2145,60 @@ Scope {
                 // can block re-pairing. Left as a deliberate action rather than
                 // something pairing does silently.
                 label: bdr.isPaired ? "Unpair" : "Forget"
+                surface: bdr.innerBg; surfaceHover: bdr.innerBgHover
+                outline: bdr.innerBorder; textColor: bdr.fg
                 onClicked: root.btUnpair(bdr.dev)
             }
         }
 
         // ---------- inline rename ----------
-        ColumnLayout {
+        Rectangle {
             Layout.fillWidth: true
-            Layout.bottomMargin: 4
-            spacing: 6
+            Layout.preferredHeight: 34
             visible: bdr.renaming
+            radius: 10
+            color: bdr.innerBg
+            border.width: 1.5
+            border.color: nameField.activeFocus ? root.alpha(bdr.fg, 0.85) : bdr.innerBorder
 
-            Rectangle {
-                Layout.fillWidth: true
-                implicitHeight: 34
-                radius: 10
-                color: root.alpha(root.col7, 0.08)
-                border.width: 1.5
-                border.color: root.alpha(root.ncText, nameField.activeFocus ? 0.85 : 0.5)
-
-                TextInput {
-                    id: nameField
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    verticalAlignment: TextInput.AlignVCenter
-                    color: root.ncText
-                    selectionColor: root.alpha(root.ncAccent, 0.6)
-                    font.family: root.ncFont
-                    font.pixelSize: 13
-                    clip: true
-                    focus: true
-                    onAccepted: root.btRename(bdr.dev, nameField.text)
-                    Keys.onEscapePressed: root.btRenamePath = ""
-                    // Created hidden and only shown on the menu action, so the
-                    // focus grab belongs on that transition. The retry covers
-                    // the frame where the surface has not taken the keyboard yet.
-                    onVisibleChanged: if (visible) {
-                        nameField.text = root.btLabel(bdr.dev);
-                        nameField.selectAll();
-                        nameField.forceActiveFocus();
-                        nameFocusRetry.restart();
-                    }
-                    Timer {
-                        id: nameFocusRetry
-                        interval: 60
-                        onTriggered: if (nameField.visible && !nameField.activeFocus) nameField.forceActiveFocus()
-                    }
+            TextInput {
+                id: nameField
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                verticalAlignment: TextInput.AlignVCenter
+                color: bdr.fg
+                selectionColor: root.alpha(root.ncAccent, 0.6)
+                font.family: root.ncFont
+                font.pixelSize: 13
+                clip: true
+                focus: true
+                onAccepted: root.btRename(bdr.dev, nameField.text)
+                Keys.onEscapePressed: root.btRenamePath = ""
+                onVisibleChanged: if (visible) {
+                    nameField.text = root.btLabel(bdr.dev);
+                    nameField.selectAll();
+                    nameField.forceActiveFocus();
+                    nameFocusRetry.restart();
+                }
+                Timer {
+                    id: nameFocusRetry
+                    interval: 60
+                    onTriggered: if (nameField.visible && !nameField.activeFocus) nameField.forceActiveFocus()
                 }
             }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-                PanelTextBtn { label: "Cancel"; onClicked: root.btRenamePath = "" }
-                PanelTextBtn { label: "Save"; accent: true; onClicked: root.btRename(bdr.dev, nameField.text) }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            visible: bdr.renaming
+            PanelTextBtn {
+                label: "Cancel"
+                surface: bdr.innerBg; surfaceHover: bdr.innerBgHover
+                outline: bdr.innerBorder; textColor: bdr.fg
+                onClicked: root.btRenamePath = ""
             }
+            PanelTextBtn { label: "Save"; accent: true; onClicked: root.btRename(bdr.dev, nameField.text) }
         }
     }
 
@@ -3134,11 +3346,14 @@ Scope {
                 // ---------- error banner (nmcli's own message) ----------
                 Text {
                     Layout.fillWidth: true
-                    visible: root.wifiError !== ""
+                    // Auth failures are reported inside the password prompt
+                    // instead; this only carries what the prompt cannot fix.
+                    visible: root.wifiError !== "" && root.wifiPromptSsid === ""
                     text: root.wifiError
                     color: root.colCritical
                     font.family: root.ncFont
-                    font.pixelSize: 11
+                    font.pixelSize: 14
+                    font.weight: Font.Medium
                     wrapMode: Text.WordWrap
                 }
 
@@ -3298,7 +3513,8 @@ Scope {
                     text: root.btError
                     color: root.colCritical
                     font.family: root.ncFont
-                    font.pixelSize: 11
+                    font.pixelSize: 14
+                    font.weight: Font.Medium
                     wrapMode: Text.WordWrap
                 }
 
