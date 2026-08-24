@@ -119,8 +119,8 @@ hl.on("hyprland.start", function()
     -- sync the mic LED to actual mute state right away, don't wait for the
     -- first F9 press (see scripts/micmute-led.sh)
     hl.exec_cmd("~/.config/scripts/micmute-led.sh sync")
-    hl.exec_cmd("~/.config/macdock/macdock-launch.sh")
-    hl.exec_cmd("~/.config/macswitcher/macswitcher-launch.sh")
+    -- macdock + macswitcher merged into one Quickshell instance (macshell)
+    hl.exec_cmd("~/.config/macshell/macshell-launch.sh")
     hl.exec_cmd("~/.config/taskbar/taskbar-launch.sh")
     hl.exec_cmd("~/.config/finder/finder-launch.sh")
 
@@ -313,7 +313,7 @@ local mainMod = "SUPER"
 hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 -- finder/ replaces walker (native Quickshell reimplementation); toggled via
--- its persistent IPC socket, same convention as macswitcher's socat bind below.
+-- its persistent IPC socket, same convention as macshell's switcher socat bind below.
 hl.bind("ALT + S", hl.dsp.exec_cmd("echo \"open:default\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 -- File Search (finder/, filesearch mode — restricted to non-hidden files
 -- under $HOME via fd's own defaults, see FileSearch.qml)
@@ -437,7 +437,7 @@ hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("echo \"open:powermenu\" | socat
 -- Idle Inhibitor
 hl.bind(mainMod .. " + I", hl.dsp.exec_cmd("~/.config/scripts/idle-inhibitor.sh"))
 
--- Toggle all Quickshell shells (macdock/macswitcher/taskbar/finder): kills
+-- Toggle all Quickshell shells (macshell/taskbar/finder): kills
 -- them if any are alive, relaunches them if all are dead. Deliberately
 -- excludes lockscreen/ — see toggle-shells.sh for why.
 hl.bind(mainMod .. " + K", hl.dsp.exec_cmd("~/.config/scripts/toggle-shells.sh"))

@@ -3,6 +3,9 @@ pragma Singleton
 import QtQuick
 import Quickshell.Io
 
+// The single .desktop / icon-theme scanner for this shell. Both the dock
+// (DockIcon, Dock) and the switcher (via IconResolver) read from here; before
+// the merge each process ran its own near-identical copy of this walk.
 QtObject {
     id: root
 
@@ -129,7 +132,7 @@ QtObject {
 
             if (!icon) return
 
-            const resolved = _resolveIconPath(icon)
+            const resolved = root.resolveIconPath(icon)
 
             // Index by StartupWMClass (most reliable)
             if (wmClass) byWm[wmClass.toLowerCase()] = resolved
@@ -160,10 +163,18 @@ QtObject {
                 }
             }
 
-            // Index by Exec basename
+            // Index by Exec basename. Browser binaries are excluded: they are
+            // the Exec line of every chromium/firefox webapp .desktop, so
+            // indexing them would map "chromium" to whichever webapp happened
+            // to be parsed last (this exclusion came from the switcher's own
+            // copy of this parser, which had it and the dock's did not).
             if (exec) {
                 const base = exec.split(" ")[0].split("/").pop().toLowerCase()
-                if (base && base.length >= 3) byWm[base] = resolved
+                const browserBins = new Set(["chromium", "chromium-browser", "chrome",
+                    "google-chrome", "google-chrome-stable", "brave", "brave-browser",
+                    "firefox", "librewolf", "msedge"])
+                if (base && base.length >= 3 && !browserBins.has(base))
+                    byWm[base] = resolved
             }
 
             if (name) byName[name.toLowerCase()] = resolved
@@ -177,7 +188,7 @@ QtObject {
     // Papirus name -> file path index, built in _parse()
     property var _papirusIndex: ({})
 
-    function _resolveIconPath(icon) {
+    function resolveIconPath(icon) {
         if (icon.startsWith("/"))       return "file://" + icon
         if (icon.startsWith("file://")) return icon
         // Force Papirus: map the icon name to a Papirus file so we don't depend

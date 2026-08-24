@@ -7,7 +7,10 @@
 # lockscreen/ is deliberately NOT included here — per its own launch script's
 # warning, killing a live WlSessionLock process leaves the compositor
 # permanently locked with nothing listening to unlock it. Never pkill it.
-SHELLS=(macdock macswitcher taskbar finder)
+# macshell = the merged dock + Alt+Tab switcher (was two shells).
+# Its IPC socket is still /tmp/macswitcher.sock, so the Alt+Tab binds
+# in hyprland.lua did not have to change.
+SHELLS=(macshell taskbar finder)
 
 alive=false
 for s in "${SHELLS[@]}"; do
@@ -22,7 +25,7 @@ if $alive; then
         pkill -f "quickshell -c .*/${s}\$"
     done
     sleep 0.3
-    # finder (socat + wl-paste) and macswitcher (socat) each spawn a
+    # finder (socat + wl-paste) and macshell's switcher (socat) each spawn a
     # persistent child process for their IPC socket / clipboard watcher.
     # Killing the quickshell process above only kills quickshell itself —
     # these children get reparented to init and keep running (and, for

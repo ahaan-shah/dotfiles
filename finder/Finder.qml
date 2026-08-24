@@ -468,6 +468,10 @@ Item {
                                         fillMode: Image.PreserveAspectFit
                                         smooth: true
                                         asynchronous: true
+                                        // The slot is 32x32; without a cap Qt decodes and keeps
+                                        // each icon at its intrinsic size (2x for this display).
+                                        sourceSize.width: 64
+                                        sourceSize.height: 64
                                     }
                                     Rectangle {
                                         anchors.fill: parent
@@ -562,6 +566,12 @@ Item {
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                         asynchronous: true
+                        // Bounding box, not a resize: previewing a full-resolution
+                        // photo would otherwise decode every pixel of it into memory
+                        // (a 6000x4000 shot is ~96 MB as a pixmap) to draw it in a
+                        // pane a few hundred points wide.
+                        sourceSize.width: 1200
+                        sourceSize.height: 1200
                     }
                 }
             }

@@ -17,37 +17,16 @@ Item {
     property var  appList: []
     property bool _firstOpen: true
 
-    // ── Pywal colors ─────────────────────────────────────────────
-    // Edit these two property names to change what wal colors are used:
-    //   _walBg     → pill fill   (currently color0, the darkest bg tone)
-    //   _walAccent → pill border (currently color1, first accent)
-    property string _walBg:     "#141414"   // fallback until file is read
-    property string _walAccent: "#333333"
-    property string _walBuf:    ""
-
-    property var _walReader: Process {
-        id: walReader
-        command: ["bash", "-c", "cat ~/.cache/wal/colors.json"]
-        running: true
-        stdout: SplitParser {
-            splitMarker: ""
-            onRead: data => root._walBuf += data
-        }
-    }
-    property var _walConn: Connections {
-        target: walReader
-        function onRunningChanged() {
-            if (walReader.running) return
-            try {
-                const j = JSON.parse(root._walBuf)
-                // ← Change color0/color1 here to use a different wal color
-                root._walBg     = j.colors?.color0 || j.special?.background || "#141414"
-                root._walAccent = j.colors?.color7 || "#333333"
-            } catch(e) {}
-            root._walBuf = ""
-        }
-    }
-    function _reloadWal() { root._walBuf = ""; walReader.running = true }
+    // Pywal colors come from the shared WalColors singleton rather than a
+    // private reader. This file used to run its own `cat ~/.cache/wal/colors.json`
+    // Process on every open, duplicating what WalColors already does once for
+    // the whole shell - and unlike this, WalColors also watches the file with
+    // inotify, so the switcher now follows a theme change live instead of only
+    // picking it up the next time it is opened.
+    //   _walBg     -> pill fill   (color0, the darkest bg tone)
+    //   _walAccent -> pill border (color7)
+    readonly property string _walBg:     WalColors.color0
+    readonly property string _walAccent: WalColors.color7
 
     // ── Public API ────────────────────────────────────────────────
     function next() {
@@ -78,9 +57,9 @@ Item {
     function dismiss() { _close() }
 
     function _open() {
-        _reloadWal()
         root._firstOpen = true
-        WindowList.refresh()  // async — list rebuilt by onWindowsChanged on completion
+        root._listSig = ""
+        WindowTracker.refresh()  // async - list is rebuilt on completion
         shown = true
     }
 
@@ -89,10 +68,21 @@ Item {
         selectedIndex = 0
     }
 
+    property string _listSig: ""
+
     function _buildList() {
-        // WindowList already sorted MRU: index 0 = current, index 1 = previous
-        const sorted = WindowList.windows
+        // windowsMru is sorted MRU: index 0 = current, index 1 = previous
+        const sorted = WindowTracker.windowsMru
             .filter(w => !w.workspaceName.startsWith("special:"))
+        // The shared WindowTracker polls continuously (the dock needs that),
+        // where the switcher's old private WindowList only polled on open.
+        // Reassigning appList rebuilds every Repeater delegate, so doing it on
+        // every poll would restart the card animations several times a second
+        // while the switcher is on screen. Rebuild only when the set changes.
+        const sig = sorted.map(w => w.address).join(",")
+        if (sig === root._listSig && root.appList.length > 0) return
+        root._listSig = sig
+
         root.appList = sorted.map(w => ({
             class:   w.class,
             title:   w.title || w.initialTitle || w.class,
@@ -101,10 +91,10 @@ Item {
         }))
     }
 
-    // Rebuild list when WindowList finishes async refresh — always fresh data
+    // Rebuild when the shared WindowTracker reports new data
     property var _wlConn: Connections {
-        target: WindowList
-        function onWindowsChanged() {
+        target: WindowTracker
+        function onWindowListChanged() {
             if (!root.shown) return
             root._buildList()
             if (root._firstOpen) {
@@ -265,6 +255,11 @@ Item {
                             fillMode: Image.PreserveAspectFit
                             smooth:   true
                             visible:  status === Image.Ready
+                            // Without this Qt decodes each icon at its intrinsic
+                            // resolution and keeps that pixmap regardless of the
+                            // size actually drawn.
+                            sourceSize.width:  panel.iconSize
+                            sourceSize.height: panel.iconSize
                         }
                         Rectangle {
                             anchors.fill: parent

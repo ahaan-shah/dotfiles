@@ -3,10 +3,21 @@ pragma Singleton
 import QtQuick
 import Quickshell.Io
 
-// Polls hyprctl clients every 1.5 s and exposes:
-//   WindowTracker.runningClasses  – Set<string>  (all window classes currently open)
-//   WindowTracker.activeClass     – string        (class of the focused window)
-//   WindowTracker.windowsFor(cls) – [{address,title}]  (windows matching a class)
+// The single source of Hyprland window state for both the dock and the
+// switcher. Previously these were two separate singletons in two separate
+// processes (macdock's WindowTracker and macswitcher's WindowList), each
+// running its own `hyprctl clients -j` / `activewindow -j` poll loop against
+// the same compositor. This is that work done once.
+//
+// Exposes:
+//   WindowTracker.runningClasses  – Set<string> (all window classes open)
+//   WindowTracker.activeClass     – string      (class of the focused window)
+//   WindowTracker.activeAddress   – string
+//   WindowTracker.windowList      – raw order, as hyprctl returns it (the dock
+//                                   relies on this order for class cycling)
+//   WindowTracker.windowsMru      – same set, most-recently-focused first
+//                                   (what the switcher's Alt+Tab order needs)
+//   WindowTracker.windowsFor(cls) – windows matching a class
 QtObject {
     id: root
 
@@ -38,6 +49,27 @@ QtObject {
 
     function isRunning(cls, titleHint) {
         return windowsFor(cls, titleHint).length > 0
+    }
+
+    // Most-recently-focused first. Kept as a separate view rather than sorting
+    // windowList in place: the dock cycles through a class's windows in the
+    // order hyprctl reports them, and re-ordering that by focus history would
+    // silently change which window a repeated dock click lands on.
+    readonly property var windowsMru: {
+        const copy = root.windowList.slice()
+        copy.sort((a, b) => a.focusHistoryID - b.focusHistoryID)
+        return copy
+    }
+
+    // Force an immediate poll instead of waiting up to a full interval. The
+    // switcher calls this as it opens so its list is current at that moment.
+    function refresh() {
+        root._clientsBuf = ""
+        clientsProc.running = true
+    }
+    function refreshActive() {
+        root._activeBuf = ""
+        activeProc.running = true
     }
 
     // ── internal ──────────────────────────────────────────────────
@@ -113,7 +145,10 @@ QtObject {
                     x:             w.at?.[0]   ?? 0,
                     y:             w.at?.[1]   ?? 0,
                     ww:            w.size?.[0] ?? 0,
-                    wh:            w.size?.[1] ?? 0
+                    wh:            w.size?.[1] ?? 0,
+                    // switcher-only fields
+                    floating:       w.floating ?? false,
+                    focusHistoryID: w.focusHistoryID ?? 9999
                 }))
                 const cls = {}
                 filtered.forEach(w => { if (w.class) cls[w.class.toLowerCase()] = true })

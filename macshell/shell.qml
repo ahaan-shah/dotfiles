@@ -5,6 +5,17 @@ import Quickshell
 import Quickshell.Wayland
 import Quickshell.Io
 
+// macshell - the dock and the Alt+Tab switcher in one Quickshell instance.
+//
+// These were `macdock` and `macswitcher`, two processes. Each carried its own
+// QML engine, scenegraph and GPU context (~72 MB PSS of pure per-process
+// overhead, measured), and on top of that duplicated the two genuinely shared
+// things they both depend on: Hyprland's window list and the desktop-entry /
+// icon-theme cache. Merging removes one process and one copy of each.
+//
+// Windows remain fully independent surfaces - the dock is a masked Top-layer
+// strip that never takes keyboard focus, the switcher is a full-screen Overlay
+// that takes it exclusively while shown.
 ShellRoot {
     Variants {
         model: Quickshell.screens
@@ -244,6 +255,49 @@ ShellRoot {
                 cancelClose:   DockPreview.cancelClose
                 scheduleClose: DockPreview.scheduleClose
                 closeNow:      DockPreview.hideNow
+            }
+        }
+    }
+
+    // ── App switcher (Alt+Tab) ─────────────────────────────────────
+    // Merged in from what used to be a separate `macswitcher` Quickshell
+    // process. It lives here because it needs exactly the same Hyprland window
+    // list and icon cache the dock does: as two processes they each ran their
+    // own `hyprctl clients -j` / `activewindow -j` poll loop and their own full
+    // .desktop + icon-theme scan, against the same data. One process does that
+    // once (see WindowTracker and DesktopEntryCache).
+    //
+    // Its surface stays independent of the dock's: Overlay layer (above the
+    // dock's Top), full-screen, and it takes exclusive keyboard focus while
+    // shown, which the dock must never do.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            id: switcherWindow
+            required property ShellScreen modelData
+            screen: modelData
+
+            anchors { top: true; left: true; right: true; bottom: true }
+
+            WlrLayershell.layer:     WlrLayer.Overlay
+            WlrLayershell.namespace: "macswitcher"
+            WlrLayershell.keyboardFocus: switcher.shown
+                                         ? WlrKeyboardFocus.Exclusive
+                                         : WlrKeyboardFocus.None
+            color:          "transparent"
+            implicitWidth:  screen.width
+            implicitHeight: screen.height
+
+            // Input passes straight through unless the switcher is up.
+            mask: Region { item: switcher.shown ? null : emptyRegion }
+            Item { id: emptyRegion; width: 0; height: 0 }
+
+            AppSwitcher {
+                id: switcher
+                anchors.fill: parent
+                screenWidth:  switcherWindow.screen.width
+                screenHeight: switcherWindow.screen.height
             }
         }
     }
