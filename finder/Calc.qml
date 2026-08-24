@@ -18,14 +18,11 @@ QtObject {
 
     function evaluate(query) {
         if (!query || !hasDigit(query)) { root.result = ""; return }
-        proc.command = ["bash", "-c", "qalc -t " + _shellQuote(query) + " 2>/dev/null"]
+        proc.command = ["bash", "-c", "qalc -t " + Sys.quote(query) + " 2>/dev/null"]
         proc._forQuery = query
         proc.running = true
     }
 
-    function _shellQuote(s) {
-        return "'" + String(s).replace(/'/g, "'\\''") + "'"
-    }
 
     property var proc: Process {
         id: proc

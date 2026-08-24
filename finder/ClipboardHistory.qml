@@ -15,28 +15,9 @@ import Quickshell.Io
 QtObject {
     id: root
 
-    property string homeDir: ""
-    readonly property string dir: root.homeDir + "/.cache/finder/clipboard"
-    property bool _pendingRefresh: false
+    readonly property string dir: Sys.cacheDir + "/finder/clipboard"
 
     property var entries: []   // [{kind:"text"|"image", text, preview, file, path}], newest first
-
-    property var _homeProc: Process {
-        id: homeProc
-        command: ["bash", "-c", "echo -n $HOME"]
-        running: true
-        stdout: StdioCollector {
-            id: homeOut
-            onStreamFinished: {
-                root.homeDir = homeOut.text
-                root.startWatching()
-                if (root._pendingRefresh) {
-                    root._pendingRefresh = false
-                    readProc.running = true
-                }
-            }
-        }
-    }
 
     // ── Persistent watcher — started once, runs for the life of the shell ──
     // Reads each clipboard change into a temp file first (binary-safe — no
@@ -93,9 +74,6 @@ QtObject {
     }
 
     function refresh() {
-        // homeDir resolves async on startup; if a refresh lands before it's
-        // ready, `dir` would be a relative path with no $HOME prefix — defer.
-        if (!root.homeDir) { root._pendingRefresh = true; return }
         readProc.running = true
     }
 
@@ -142,16 +120,17 @@ QtObject {
     function copyBack(entry) {
         if (entry.kind === "image") {
             const ext = entry.file.split(".").pop()
-            copyProc.command = ["bash", "-c", "wl-copy -t image/" + ext + " < " + _shellQuote(entry.path)]
+            copyProc.command = ["bash", "-c", "wl-copy -t image/" + ext + " < " + Sys.quote(entry.path)]
         } else {
-            copyProc.command = ["bash", "-c", "wl-copy < " + _shellQuote(entry.path)]
+            copyProc.command = ["bash", "-c", "wl-copy < " + Sys.quote(entry.path)]
         }
         copyProc.running = true
     }
 
-    function _shellQuote(s) {
-        return "'" + String(s).replace(/'/g, "'\\''") + "'"
-    }
 
     property var copyProc: Process { id: copyProc; running: false }
+
+    // The watcher used to be kicked off from the $HOME probe's callback; with
+    // $HOME known synchronously it just starts with the singleton.
+    Component.onCompleted: root.startWatching()
 }

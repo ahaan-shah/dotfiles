@@ -35,13 +35,13 @@ QtObject {
         // fzf --filter: score+sort by the same query, non-interactive, best matches first.
         const cmd =
             "fd --type f --type d --exclude node_modules . ~ 2>/dev/null | " +
-            "fzf --filter=" + root._shellQuote(query) + " 2>/dev/null | head -n " + n
+            "fzf --filter=" + Sys.quote(query) + " 2>/dev/null | head -n " + n
         searchProc.command = ["bash", "-c", cmd]
         searchProc.running = true
     }
 
     function _parseResults(raw) {
-        const home = root._homeDir
+        const home = Sys.home
         const lines = raw.split("\n").map(l => l.trim()).filter(l => l.length > 0)
         root.results = lines.map(rawPath => {
             // fd appends a trailing "/" to directory results.
@@ -55,17 +55,6 @@ QtObject {
         })
     }
 
-    property string _homeDir: ""
-
-    property var _homeProc: Process {
-        id: homeProc
-        command: ["bash", "-c", "echo -n $HOME"]
-        running: true
-        stdout: StdioCollector {
-            id: homeOut
-            onStreamFinished: root._homeDir = homeOut.text
-        }
-    }
 
     // ── Preview ──────────────────────────────────────────────────────
     // previewFor() is async across up to two hops (mime detection, then
@@ -91,13 +80,10 @@ QtObject {
         root.preview = null
         root._mimeCallPath = path
         if (mimeProc.running) mimeProc.running = false
-        mimeProc.command = ["bash", "-c", "file --mime-type -b " + _shellQuote(path)]
+        mimeProc.command = ["bash", "-c", "file --mime-type -b " + Sys.quote(path)]
         mimeProc.running = true
     }
 
-    function _shellQuote(s) {
-        return "'" + String(s).replace(/'/g, "'\\''") + "'"
-    }
 
     property var mimeProc: Process {
         id: mimeProc
@@ -120,12 +106,12 @@ QtObject {
             const prefix = "/tmp/finder-preview-" + Math.floor(Math.random() * 1000000)
             if (pdfProc.running) pdfProc.running = false
             pdfProc.command = ["bash", "-c",
-                "pdftoppm -png -f 1 -l 1 -r 120 " + _shellQuote(path) + " " + _shellQuote(prefix) + " && ls " + prefix + "*"]
+                "pdftoppm -png -f 1 -l 1 -r 120 " + Sys.quote(path) + " " + Sys.quote(prefix) + " && ls " + prefix + "*"]
             pdfProc.running = true
         } else if (mime.startsWith("text/") || mime === "application/json" || mime === "inode/x-empty") {
             root._textCallPath = path
             if (textProc.running) textProc.running = false
-            textProc.command = ["bash", "-c", "head -c 6000 " + _shellQuote(path)]
+            textProc.command = ["bash", "-c", "head -c 6000 " + Sys.quote(path)]
             textProc.running = true
         } else {
             root.preview = { type: "none" }

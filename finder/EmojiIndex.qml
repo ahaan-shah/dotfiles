@@ -50,13 +50,10 @@ QtObject {
     }
 
     function copy(glyph) {
-        copyProc.command = ["bash", "-c", "printf '%s' " + _shellQuote(glyph) + " | wl-copy"]
+        copyProc.command = ["bash", "-c", "printf '%s' " + Sys.quote(glyph) + " | wl-copy"]
         copyProc.running = true
     }
 
-    function _shellQuote(s) {
-        return "'" + String(s).replace(/'/g, "'\\''") + "'"
-    }
 
     property var copyProc: Process { id: copyProc; running: false }
 

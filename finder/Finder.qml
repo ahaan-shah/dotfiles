@@ -569,9 +569,16 @@ Item {
                         // Bounding box, not a resize: previewing a full-resolution
                         // photo would otherwise decode every pixel of it into memory
                         // (a 6000x4000 shot is ~96 MB as a pixmap) to draw it in a
-                        // pane a few hundred points wide.
-                        sourceSize.width: 1200
-                        sourceSize.height: 1200
+                        // pane 380 points wide. 800 covers that pane at 2x DPI.
+                        sourceSize.width: 800
+                        sourceSize.height: 800
+                        // Previews are one-shot: a given wallpaper or clipboard
+                        // image is shown while it is selected and then not again.
+                        // Caching them means every image the selection passes over
+                        // stays resident in Qt's pixmap cache for the life of the
+                        // process, which is what made memory climb the longer
+                        // finder stayed up.
+                        cache: false
                     }
                 }
             }
