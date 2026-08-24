@@ -193,8 +193,8 @@ Item {
         anchors.horizontalCenterOffset: -75
         anchors.verticalCenterOffset: -175
         color: WalColors.foreground
-        font.family: "CodeNewRoman Nerd Font Propo"
-        font.pixelSize: 140
+        font.family: "JetBrainsMono Nerd Font Propo"
+        font.pixelSize: 127
         font.bold: true
         text: clockTick.hourText
         renderType: Text.NativeRendering
@@ -207,8 +207,8 @@ Item {
         anchors.horizontalCenterOffset: 75
         anchors.verticalCenterOffset: -90
         color: Qt.rgba(150 / 255, 150 / 255, 150 / 255, 0.6)
-        font.family: "CodeNewRoman Nerd Font Propo"
-        font.pixelSize: 140
+        font.family: "JetBrainsMono Nerd Font Propo"
+        font.pixelSize: 127
         font.bold: true
         text: clockTick.minuteText
         renderType: Text.NativeRendering
@@ -249,8 +249,8 @@ Item {
         anchors.topMargin: 20 * root.uiScale
         anchors.rightMargin: 40 * root.uiScale
         color: WalColors.foreground
-        font.family: "CodeNewRoman Nerd Font Propo"
-        font.pixelSize: 26
+        font.family: "JetBrainsMono Nerd Font Propo"
+        font.pixelSize: 24
         text: clockTick.dateText
         renderType: Text.NativeRendering
     }
@@ -263,8 +263,8 @@ Item {
         anchors.topMargin: 20 * root.uiScale
         anchors.leftMargin: 40 * root.uiScale
         color: WalColors.foreground
-        font.family: "CodeNewRoman Nerd Font Propo"
-        font.pixelSize: 26
+        font.family: "JetBrainsMono Nerd Font Propo"
+        font.pixelSize: 24
         textFormat: Text.StyledText
         text: "<i>Hello</i> <b>" + root.username + "</b>"
         renderType: Text.NativeRendering

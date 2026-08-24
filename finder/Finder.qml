@@ -378,7 +378,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 10
                     verticalAlignment: TextInput.AlignVCenter
-                    font.family: "Hack Nerd Font Propo"
+                    font.family: "JetBrainsMono Nerd Font Propo"
                     font.pixelSize: 14
                     color: root.fgColor
                     clip: true
@@ -458,7 +458,7 @@ Item {
                                         text: rowDelegate.modelData.emojiGlyph || ""
                                         color: root.fgColor
                                         font.pixelSize: 24
-                                        font.family: "Hack Nerd Font Propo"
+                                        font.family: "JetBrainsMono Nerd Font Propo"
                                     }
                                     Image {
                                         id: appIcon
@@ -492,7 +492,7 @@ Item {
                                             }
                                             color: root.fgColor
                                             font.pixelSize: 14
-                                            font.family: "Hack Nerd Font Propo"
+                                            font.family: "JetBrainsMono Nerd Font Propo"
                                         }
                                     }
                                 }
@@ -505,7 +505,7 @@ Item {
                                         elide: Text.ElideRight
                                         text: rowDelegate.modelData.title
                                         color: root.fgColor
-                                        font.family: "Hack Nerd Font Propo"
+                                        font.family: "JetBrainsMono Nerd Font Propo"
                                         font.pixelSize: rowDelegate.modelData.kind === "calc" ? 24 : 14
                                     }
                                     Text {
@@ -515,7 +515,7 @@ Item {
                                         text: rowDelegate.modelData.subtitle || ""
                                         color: root.fgColor
                                         opacity: 0.5
-                                        font.family: "Hack Nerd Font Propo"
+                                        font.family: "JetBrainsMono Nerd Font Propo"
                                         font.pixelSize: 12
                                     }
                                 }
@@ -589,9 +589,9 @@ Item {
                 visible: root.shown
                 topPadding: 6
 
-                Text { text: "↑↓ navigate"; color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "Hack Nerd Font Propo" }
-                Text { text: "↵ select";     color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "Hack Nerd Font Propo" }
-                Text { text: "esc close";    color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "Hack Nerd Font Propo" }
+                Text { text: "↑↓ navigate"; color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "JetBrainsMono Nerd Font Propo" }
+                Text { text: "↵ select";     color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "JetBrainsMono Nerd Font Propo" }
+                Text { text: "esc close";    color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "JetBrainsMono Nerd Font Propo" }
             }
         }
     }

@@ -126,6 +126,7 @@ Item {
                     anchors.centerIn: parent
                     text:       root.appName.length > 0 ? root.appName[0].toUpperCase() : "?"
                     color:      "white"
+                    font.family:     "JetBrainsMono Nerd Font Propo"
                     font.pixelSize:  parent.width * 0.45
                     font.weight:     Font.Medium
                 }

@@ -270,7 +270,7 @@ Item {
                                 anchors.centerIn: parent
                                 text:  (card.modelData.class || "?").charAt(0).toUpperCase()
                                 color: "white"
-                                font.family:    "Hack Nerd Font Propo"
+                                font.family:    "JetBrainsMono Nerd Font Propo"
                                 font.pixelSize: 22
                                 font.weight:    Font.Bold
                             }
@@ -307,7 +307,7 @@ Item {
                         visible:         text !== ""
                         color:           card.sel ? "white" : Qt.rgba(1,1,1,0.55)
                         font.pixelSize:  14
-                        font.family:     "Hack Nerd Font Propo"
+                        font.family:     "JetBrainsMono Nerd Font Propo"
                         font.weight:     card.sel ? Font.Medium : Font.Normal
                         Behavior on color { ColorAnimation { duration: 100 } }
                     }
@@ -325,7 +325,7 @@ Item {
             visible: root.appList.length === 0
             text:  "No windows open"
             color: Qt.rgba(1,1,1,0.8)
-            font.family:    "Hack Nerd Font Propo"
+            font.family:    "JetBrainsMono Nerd Font Propo"
             font.pixelSize: 14
         }
     }

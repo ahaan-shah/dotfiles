@@ -141,7 +141,7 @@ Item {
                             text:  tile.modelData.title || tile.modelData.initialTitle
                                    || tile.modelData.class
                             color: "white"
-                            font.family:    "Hack Nerd Font Propo"
+                            font.family:    "JetBrainsMono Nerd Font Propo"
                             font.pixelSize: 12
                         }
                     }

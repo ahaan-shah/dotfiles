@@ -38,9 +38,9 @@ Scope {
     property string homeDir: "/home/ahaan"
     property string scriptsDir: homeDir + "/.config/waybar/scripts"
 
-    // ---- fonts (from style.css: 15px, CodeNewRoman Nerd Font Propo) -----------
-    readonly property string fontFamily: "CodeNewRoman Nerd Font Propo"
-    readonly property int fontSize: 16
+    // ---- fonts (JetBrainsMono Nerd Font Propo; was CodeNewRoman) -------------
+    readonly property string fontFamily: "JetBrainsMono Nerd Font Propo"
+    readonly property int fontSize: 15
 
     // ---- pywal palette (parsed from ~/.cache/wal/colors-waybar.css) -----------
     // style.css did:  @import '../../.cache/wal/colors-waybar.css'
@@ -61,7 +61,26 @@ Scope {
     readonly property color ncBgStrong: alpha(colBg, 0.95)
     readonly property color ncAccent: col9
     readonly property color ncBorder: alpha(col7, 0.8)
-    readonly property string ncFont: "UbuntuMono Nerd Font"
+    readonly property string ncFont: "JetBrainsMono Nerd Font Propo"
+
+    //=====================================================================//
+    //  PANEL TEXT SIZE  —  change this one number                         //
+    //=====================================================================//
+    //  Every font.pixelSize inside the six dropdown panels (control centre,
+    //  calendar, battery, wifi, bluetooth, audio) is written as
+    //  root.ns(<base>), so this single multiplier scales all of them at once.
+    //
+    //    1.00 = the sizes measured to fit exactly after the switch to
+    //           JetBrainsMono, which is 20% wider than the UbuntuMono it
+    //           replaced. Below 1.00 everything just gets smaller.
+    //    1.10 = current. Comfortable, still ~8% of headroom left.
+    //    1.20 = the bleed threshold — at this point panel text is back to the
+    //           width that ran off the right edge of the wifi panel.
+    //
+    //  Nudge it in 0.05 steps. Anything at or above 1.20 will overflow.
+    //  The bar's own text is separate: that is `fontSize` near the top.
+    readonly property real ncScale: 1.10
+    function ns(base) { return Math.round(base * root.ncScale) }
 
     // Gap between the bar and any dropdown beneath it. These windows are layer
     // surfaces whose top already begins below the bar's 44px exclusive zone, so
@@ -710,7 +729,10 @@ Scope {
     // outside the BMP, so a pasted glyph is a surrogate pair that any tool
     // touching this file (sed, a heredoc, a diff viewer) can silently mangle.
     // Codepoints below were read out of UbuntuMonoNerdFont-Regular.ttf's own
-    // cmap by glyph name (md-wifi_strength_4 etc.), not recalled.
+    // cmap by glyph name (md-wifi_strength_4 etc.), not recalled. The bar now
+    // renders them from JetBrainsMono Nerd Font Propo instead; all 34 were
+    // verified present in that font's cmap before the switch (Nerd Fonts
+    // patches every family at the same codepoints, so the names still hold).
     function nf(cp) { return String.fromCodePoint(cp); }
     readonly property var g: ({
         wifi0:    String.fromCodePoint(0xf092f),   // md-wifi_strength_outline
@@ -1431,7 +1453,7 @@ Scope {
                     text: card.notif ? card.notif.summary : ""
                     color: root.ncText
                     font.family: root.ncFont
-                    font.pixelSize: 15; font.weight: Font.Medium   // .summary 0.95rem/500
+                    font.pixelSize: root.ns(12); font.weight: Font.Medium   // .summary 0.95rem/500
                     elide: Text.ElideRight
                 }
                 Text {
@@ -1440,7 +1462,7 @@ Scope {
                     text: card.notif ? card.notif.body : ""
                     color: root.ncText
                     font.family: root.ncFont
-                    font.pixelSize: 13                              // .body 0.85rem
+                    font.pixelSize: root.ns(11)                              // .body 0.85rem
                     textFormat: Text.StyledText                     // pango-ish markup
                     wrapMode: Text.WordWrap
                     maximumLineCount: 5
@@ -1452,7 +1474,8 @@ Scope {
                 Layout.alignment: Qt.AlignTop
                 text: "\u00d7"
                 color: root.ncText
-                font.pixelSize: 18
+                font.family: root.ncFont
+                font.pixelSize: root.ns(15)
                 MouseArea {
                     anchors.fill: parent; anchors.margins: -4
                     onClicked: { if (card.notif) card.notif.dismiss(); card.closed(); }
@@ -1468,7 +1491,7 @@ Scope {
         text: glyph
         color: "white"
         font.family: root.ncFont
-        font.pixelSize: 20
+        font.pixelSize: root.ns(17)
         MouseArea { anchors.fill: parent; anchors.margins: -6; onClicked: parent.clicked() }
     }
 
@@ -1609,7 +1632,7 @@ Scope {
             text: navBtn.glyph
             color: root.ncText
             font.family: root.ncFont
-            font.pixelSize: 13
+            font.pixelSize: root.ns(11)
         }
         MouseArea { anchors.fill: parent; onClicked: navBtn.clicked() }
     }
@@ -1675,7 +1698,7 @@ Scope {
             text: pib.glyph
             color: root.ncText
             font.family: root.ncFont
-            font.pixelSize: 14
+            font.pixelSize: root.ns(12)
             RotationAnimation on rotation {
                 running: pib.spinning
                 from: 0; to: 360
@@ -1713,7 +1736,7 @@ Scope {
             text: ptb.label
             color: ptb.accent ? root.contrastText(root.ncAccent) : ptb.textColor
             font.family: root.ncFont
-            font.pixelSize: 12
+            font.pixelSize: root.ns(10)
             font.weight: ptb.accent ? Font.DemiBold : Font.Normal
         }
         MouseArea { anchors.fill: parent; onClicked: ptb.clicked() }
@@ -1723,7 +1746,7 @@ Scope {
     component SectionLabel: Text {
         color: root.alpha(root.ncText, 0.5)
         font.family: root.ncFont
-        font.pixelSize: 10
+        font.pixelSize: root.ns(8)
         font.weight: Font.DemiBold
     }
 
@@ -1818,7 +1841,7 @@ Scope {
                     text: prow.glyph
                     color: prow.fg
                     font.family: root.ncFont
-                    font.pixelSize: 15
+                    font.pixelSize: root.ns(12)
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -1828,7 +1851,7 @@ Scope {
                         text: prow.label
                         color: prow.fg
                         font.family: root.ncFont
-                        font.pixelSize: 13
+                        font.pixelSize: root.ns(11)
                         font.weight: prow.active ? Font.DemiBold : Font.Normal
                         elide: Text.ElideRight
                     }
@@ -1838,7 +1861,7 @@ Scope {
                         text: prow.sub
                         color: prow.active ? root.alpha(prow.fg, 0.75) : root.alpha(root.ncText, 0.55)
                         font.family: root.ncFont
-                        font.pixelSize: 11
+                        font.pixelSize: root.ns(9)
                         elide: Text.ElideRight
                     }
                 }
@@ -1847,21 +1870,21 @@ Scope {
                     text: prow.trailText
                     color: prow.active ? root.alpha(prow.fg, 0.8) : root.alpha(root.ncText, 0.65)
                     font.family: root.ncFont
-                    font.pixelSize: 13
+                    font.pixelSize: root.ns(11)
                 }
                 Text {
                     visible: prow.trailGlyph !== "" && !prow.busy
                     text: prow.trailGlyph
                     color: prow.active ? prow.fg : root.alpha(root.ncText, 0.6)
                     font.family: root.ncFont
-                    font.pixelSize: 13
+                    font.pixelSize: root.ns(11)
                 }
                 Text {                                   // in-flight spinner
                     visible: prow.busy
                     text: root.g.loading
                     color: prow.fg
                     font.family: root.ncFont
-                    font.pixelSize: 14
+                    font.pixelSize: root.ns(12)
                     RotationAnimation on rotation {
                         running: prow.busy
                         from: 0; to: 360
@@ -1972,7 +1995,7 @@ Scope {
                 color: wnr.fg
                 selectionColor: root.alpha(root.ncAccent, 0.6)
                 font.family: root.ncFont
-                font.pixelSize: 13
+                font.pixelSize: root.ns(11)
                 clip: true
             }
         }
@@ -2012,7 +2035,7 @@ Scope {
                     color: wnr.fg
                     selectionColor: root.alpha(root.ncAccent, 0.6)
                     font.family: root.ncFont
-                    font.pixelSize: 14
+                    font.pixelSize: root.ns(12)
                     clip: true
                     focus: true
 
@@ -2055,7 +2078,7 @@ Scope {
                         text: "Password for " + wnr.ssid
                         color: root.alpha(wnr.fg, 0.4)
                         font.family: root.ncFont
-                        font.pixelSize: 14
+                        font.pixelSize: root.ns(12)
                         elide: Text.ElideRight
                     }
                 }
@@ -2081,7 +2104,7 @@ Scope {
             text: root.wifiPromptError
             color: wnr.active ? wnr.fg : root.ncAccent
             font.family: root.ncFont
-            font.pixelSize: 13
+            font.pixelSize: root.ns(11)
             font.weight: Font.Medium
             wrapMode: Text.WordWrap
         }
@@ -2170,7 +2193,7 @@ Scope {
                 color: bdr.fg
                 selectionColor: root.alpha(root.ncAccent, 0.6)
                 font.family: root.ncFont
-                font.pixelSize: 13
+                font.pixelSize: root.ns(11)
                 clip: true
                 focus: true
                 onAccepted: root.btRename(bdr.dev, nameField.text)
@@ -2213,14 +2236,14 @@ Scope {
             text: ic.label
             color: root.alpha(root.ncText, 0.5)
             font.family: root.ncFont
-            font.pixelSize: 12
+            font.pixelSize: root.ns(10)
         }
         Item { Layout.fillWidth: true }
         Text {
             text: ic.value
             color: root.ncText
             font.family: root.ncFont
-            font.pixelSize: 12
+            font.pixelSize: root.ns(10)
             font.weight: Font.Medium
         }
     }
@@ -2746,7 +2769,7 @@ Scope {
                             horizontalAlignment: Text.AlignHCenter
                             text: root.mprisPlayer ? (root.mprisPlayer.trackTitle || "") : ""
                             color: "white"; font.family: root.ncFont
-                            font.pixelSize: 18; font.bold: true; elide: Text.ElideRight
+                            font.pixelSize: root.ns(15); font.bold: true; elide: Text.ElideRight
                         }
                         Text {                                            // album
                             Layout.fillWidth: true
@@ -2754,14 +2777,14 @@ Scope {
                             visible: text !== ""
                             text: root.mprisPlayer ? (root.mprisPlayer.trackAlbum || "") : ""
                             color: Qt.rgba(1, 1, 1, 0.6); font.family: root.ncFont
-                            font.pixelSize: 13; elide: Text.ElideRight
+                            font.pixelSize: root.ns(11); elide: Text.ElideRight
                         }
                         Text {                                            // artist
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             text: root.mprisPlayer ? (root.mprisPlayer.trackArtist || "") : ""
                             color: Qt.rgba(1, 1, 1, 0.75); font.family: root.ncFont
-                            font.pixelSize: 14; elide: Text.ElideRight
+                            font.pixelSize: root.ns(12); elide: Text.ElideRight
                         }
 
                         Item { Layout.fillHeight: true }   // push controls + progress toward the bottom
@@ -2786,7 +2809,7 @@ Scope {
                                 Text {
                                     anchors.centerIn: parent
                                     text: (root.mprisPlayer && root.mprisPlayer.isPlaying) ? "\uf04c" : "\uf04b"
-                                    color: "#1a1a1a"; font.family: root.ncFont; font.pixelSize: 16
+                                    color: "#1a1a1a"; font.family: root.ncFont; font.pixelSize: root.ns(13)
                                 }
                                 MouseArea { anchors.fill: parent
                                     onClicked: if (root.mprisPlayer) root.mprisPlayer.isPlaying = !root.mprisPlayer.isPlaying }
@@ -2852,7 +2875,7 @@ Scope {
                             Layout.topMargin: 3
                             visible: mpBox.trackLen > 0
                             text: root.fmtTime(mpBox.shownPos) + " / " + root.fmtTime(mpBox.trackLen)
-                            color: Qt.rgba(1, 1, 1, 0.7); font.family: root.ncFont; font.pixelSize: 12
+                            color: Qt.rgba(1, 1, 1, 0.7); font.family: root.ncFont; font.pixelSize: root.ns(10)
                         }
                     }
                 }
@@ -2866,7 +2889,14 @@ Scope {
                         text: "Notification Center"           // title widget text
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 20
+                        // 17 overflowed: this row has 292-46-46-8-8 = 184px for
+                        // the text, and 19 chars x 0.6em x 17px = 194px, so the
+                        // glyphs ran under the DND button's hover highlight.
+                        // 14 (=15px at ncScale 1.10) needs 171px and fits.
+                        font.pixelSize: root.ns(14)
+                        // safety net: if ncScale is ever raised far enough to
+                        // overflow again, truncate rather than collide.
+                        elide: Text.ElideRight
                     }
                     // Do Not Disturb toggle (bell / bell-slash, accent when on)
                     Rectangle {
@@ -2879,7 +2909,7 @@ Scope {
                             anchors.centerIn: parent
                             text: root.dnd ? "\uf1f6" : "\uf0f3"   // bell-slash when on, bell when off
                             color: root.dnd ? root.ncAccent : root.ncText
-                            font.family: root.ncFont; font.pixelSize: 16
+                            font.family: root.ncFont; font.pixelSize: root.ns(13)
                         }
                         MouseArea { anchors.fill: parent; onClicked: root.dnd = !root.dnd }
                     }
@@ -2892,7 +2922,7 @@ Scope {
                         Text {
                             anchors.centerIn: parent
                             text: "󰆴"                          // title button-text
-                            color: root.ncText; font.family: root.ncFont; font.pixelSize: 16
+                            color: root.ncText; font.family: root.ncFont; font.pixelSize: root.ns(13)
                         }
                         MouseArea { anchors.fill: parent; onClicked: root.clearAllNotifs() }
                     }
@@ -2911,13 +2941,13 @@ Scope {
                             Layout.alignment: Qt.AlignHCenter
                             text: "\uf0f3"                     // bell (empty state)
                             color: root.alpha(root.ncText, 0.35)
-                            font.family: root.ncFont; font.pixelSize: 64
+                            font.family: root.ncFont; font.pixelSize: root.ns(53)
                         }
                         Text {
                             Layout.alignment: Qt.AlignHCenter
                             text: "No Notifications"
                             color: root.alpha(root.ncText, 0.5)
-                            font.family: root.ncFont; font.pixelSize: 18
+                            font.family: root.ncFont; font.pixelSize: root.ns(15)
                         }
                     }
 
@@ -2941,7 +2971,7 @@ Scope {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 12
-                    Text { text: "\uf028"; color: root.ncText; font.family: root.ncFont; font.pixelSize: 20 }   // volume label
+                    Text { text: "\uf028"; color: root.ncText; font.family: root.ncFont; font.pixelSize: root.ns(17) }   // volume label
                     ThemedSlider {
                         id: volSlider
                         Layout.fillWidth: true
@@ -2958,7 +2988,7 @@ Scope {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 12
-                    Text { text: "󰃠"; color: root.ncText; font.family: root.ncFont; font.pixelSize: 20 }         // backlight label
+                    Text { text: "󰃠"; color: root.ncText; font.family: root.ncFont; font.pixelSize: root.ns(17) }         // backlight label
                     ThemedSlider {
                         id: brightSlider
                         Layout.fillWidth: true
@@ -3025,7 +3055,7 @@ Scope {
                         text: root.monthNames[root.calMonth] + " " + root.calYear
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 16
+                        font.pixelSize: root.ns(13)
                         font.weight: Font.Medium
                     }
                     CalNavBtn { glyph: ""; onClicked: root.calNextMonth()  }  // ›  next month
@@ -3045,7 +3075,7 @@ Scope {
                             text: modelData
                             color: root.alpha(root.ncText, 0.5)
                             font.family: root.ncFont
-                            font.pixelSize: 12
+                            font.pixelSize: root.ns(10)
                             font.weight: Font.DemiBold
                         }
                     }
@@ -3076,7 +3106,7 @@ Scope {
                                 anchors.centerIn: parent
                                 text: modelData.num
                                 font.family: root.ncFont
-                                font.pixelSize: 13
+                                font.pixelSize: root.ns(11)
                                 color: !modelData.inMonth ? root.alpha(root.ncText, 0.3)
                                        : modelData.isToday ? root.contrastText(root.ncAccent)
                                        : root.ncText
@@ -3136,7 +3166,7 @@ Scope {
                         text: "󰁹"
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 26
+                        font.pixelSize: root.ns(22)
                     }
                     ColumnLayout {
                         spacing: 0
@@ -3144,7 +3174,7 @@ Scope {
                             text: "Battery"
                             color: root.ncText
                             font.family: root.ncFont
-                            font.pixelSize: 16
+                            font.pixelSize: root.ns(13)
                             font.weight: Font.Medium
                         }
                     }
@@ -3153,7 +3183,7 @@ Scope {
                         text: root.batCap + "%"
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 26
+                        font.pixelSize: root.ns(22)
                         font.weight: Font.DemiBold
                     }
                 }
@@ -3180,20 +3210,20 @@ Scope {
                         spacing: 2
                         Text { text: "Battery Health"; color: root.alpha(root.ncText, 0.5)
                                horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
-                               font.family: root.ncFont; font.pixelSize: 12 }
+                               font.family: root.ncFont; font.pixelSize: root.ns(10) }
                         Text { text: root.batHealthPct >= 0 ? Math.round(root.batHealthPct) + "%" : "—"
                                color: root.ncText; horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
-                               font.family: root.ncFont; font.pixelSize: 17; font.weight: Font.Medium }
+                               font.family: root.ncFont; font.pixelSize: root.ns(14); font.weight: Font.Medium }
                     }
                     Item { Layout.fillWidth: true }
                     ColumnLayout {
                         spacing: 2
                         Text { text: "Battery Size"; color: root.alpha(root.ncText, 0.5)
                                horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
-                               font.family: root.ncFont; font.pixelSize: 12 }
+                               font.family: root.ncFont; font.pixelSize: root.ns(10) }
                         Text { text: root.batSizeWh > 0 ? root.batSizeWh.toFixed(0) + " Wh" : "—"
                                color: root.ncText; horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignHCenter
-                               font.family: root.ncFont; font.pixelSize: 17; font.weight: Font.Medium }
+                               font.family: root.ncFont; font.pixelSize: root.ns(14); font.weight: Font.Medium }
                     }
                 }
 
@@ -3203,10 +3233,10 @@ Scope {
                     spacing: 2
                     Text { text: root.batTimeLabel; color: root.alpha(root.ncText, 0.5)
                            horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true
-                           font.family: root.ncFont; font.pixelSize: 12 }
+                           font.family: root.ncFont; font.pixelSize: root.ns(10) }
                     Text { text: root.fmtDuration(root.batTimeSeconds)
                            color: root.ncText; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true
-                           font.family: root.ncFont; font.pixelSize: 20; font.weight: Font.Bold }
+                           font.family: root.ncFont; font.pixelSize: root.ns(17); font.weight: Font.Bold }
 }
 
                 // ---------- charge-limit picker ----------
@@ -3217,7 +3247,7 @@ Scope {
                         text: "SET CHARGE LIMIT"
                         color: root.alpha(root.ncText, 0.5)
                         font.family: root.ncFont
-                        font.pixelSize: 10
+                        font.pixelSize: root.ns(8)
                         font.weight: Font.DemiBold
                     }
                     RowLayout {
@@ -3242,7 +3272,7 @@ Scope {
                                     text: capBox.modelData + "%"
                                     color: capBox.active ? root.contrastText(root.ncAccent) : root.ncText
                                     font.family: root.ncFont
-                                    font.pixelSize: 13
+                                    font.pixelSize: root.ns(11)
                                     font.weight: capBox.active ? Font.DemiBold : Font.Normal
                                 }
                                 MouseArea { anchors.fill: parent; onClicked: root.setBatteryThreshold(capBox.modelData) }
@@ -3302,13 +3332,13 @@ Scope {
                         text: root.wifiIcon(root.wifiSignal)
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 26
+                        font.pixelSize: root.ns(22)
                     }
                     Text {
                         text: "Wi-Fi"
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 16
+                        font.pixelSize: root.ns(13)
                         font.weight: Font.Medium
                     }
                     Item { Layout.fillWidth: true }
@@ -3352,7 +3382,7 @@ Scope {
                     text: root.wifiError
                     color: root.colCritical
                     font.family: root.ncFont
-                    font.pixelSize: 14
+                    font.pixelSize: root.ns(12)
                     font.weight: Font.Medium
                     wrapMode: Text.WordWrap
                 }
@@ -3364,7 +3394,7 @@ Scope {
                     color: root.alpha(root.ncText, 0.5)
                     horizontalAlignment: Text.AlignHCenter
                     font.family: root.ncFont
-                    font.pixelSize: 12
+                    font.pixelSize: root.ns(10)
                 }
 
                 // ---------- network list ----------
@@ -3421,7 +3451,7 @@ Scope {
                             color: root.alpha(root.ncText, 0.5)
                             horizontalAlignment: Text.AlignHCenter
                             font.family: root.ncFont
-                            font.pixelSize: 12
+                            font.pixelSize: root.ns(10)
                         }
                     }
                 }
@@ -3474,13 +3504,13 @@ Scope {
                         text: !root.btOn ? root.g.btOff : root.btConnectedCount > 0 ? root.g.btConn : root.g.bt
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 26
+                        font.pixelSize: root.ns(22)
                     }
                     Text {
                         text: "Bluetooth"
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 16
+                        font.pixelSize: root.ns(13)
                         font.weight: Font.Medium
                     }
                     Item { Layout.fillWidth: true }
@@ -3503,7 +3533,7 @@ Scope {
                     color: root.alpha(root.ncText, 0.5)
                     horizontalAlignment: Text.AlignHCenter
                     font.family: root.ncFont
-                    font.pixelSize: 12
+                    font.pixelSize: root.ns(10)
                 }
 
                 // ---------- error banner (bluetoothctl's own message) ----------
@@ -3513,7 +3543,7 @@ Scope {
                     text: root.btError
                     color: root.colCritical
                     font.family: root.ncFont
-                    font.pixelSize: 14
+                    font.pixelSize: root.ns(12)
                     font.weight: Font.Medium
                     wrapMode: Text.WordWrap
                 }
@@ -3570,7 +3600,7 @@ Scope {
                             color: root.alpha(root.ncText, 0.5)
                             horizontalAlignment: Text.AlignHCenter
                             font.family: root.ncFont
-                            font.pixelSize: 12
+                            font.pixelSize: root.ns(10)
                         }
                     }
                 }
@@ -3627,13 +3657,13 @@ Scope {
                         text: root.audMuted ? root.g.volumeOff : root.g.volume
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 26
+                        font.pixelSize: root.ns(22)
                     }
                     Text {
                         text: "Audio"
                         color: root.ncText
                         font.family: root.ncFont
-                        font.pixelSize: 16
+                        font.pixelSize: root.ns(13)
                         font.weight: Font.Medium
                     }
                     Item { Layout.fillWidth: true }
@@ -3815,8 +3845,8 @@ Scope {
                     Text {                               // image { color:@color7 }
                         text: pill.icon
                         color: root.col7
-                        font.family: "Ubuntu Nerd Font"
-                        font.pixelSize: 24
+                        font.family: "JetBrainsMono Nerd Font Propo"
+                        font.pixelSize: 21
                     }
 
                     Rectangle {                          // trough
@@ -3839,8 +3869,8 @@ Scope {
                         text: root.osdMode === "mic" ? (root.osdMuted ? "Muted" : "On")
                                                      : (root.osdValue + "%")
                         color: root.col7
-                        font.family: "Ubuntu Nerd Font"
-                        font.pixelSize: 18
+                        font.family: "JetBrainsMono Nerd Font Propo"
+                        font.pixelSize: 15
                         font.weight: Font.Medium
                     }
                 }

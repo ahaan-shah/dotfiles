@@ -230,7 +230,7 @@ hl.config({
             },
 
             bar_text_size    = 10,
-            bar_text_font    = "Hack Nerd Font Propo",
+            bar_text_font    = "JetBrainsMono Nerd Font Propo",
             bar_text_align   = "center",
             bar_title_enabled = false,
 
