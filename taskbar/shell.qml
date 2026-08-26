@@ -187,10 +187,12 @@ Scope {
     Timer { interval: 2000; running: root.batVisible; repeat: true; triggeredOnStart: true
             onTriggered: batThresholdRead.running = true }
 
-    // Writes the new cap directly (no sudo — see hypr/scripts udev rule that
-    // group-writes this sysfs attribute to the "power" group) and persists it
-    // to ~/.config/battery-threshold so scripts/apply-battery-threshold.sh can
-    // re-apply it on the next boot (the sysfs value itself resets to 100).
+    // Goes through apply-battery-threshold.sh rather than echoing to sysfs
+    // directly (no sudo either way — see the udev rule that group-writes this
+    // attribute to "power"). The script also persists the choice and, crucially,
+    // FORCES a real EC transaction: writing the value sysfs already holds can be
+    // a no-op at the driver level, which is why re-clicking the same percentage
+    // did nothing after a hibernate had silently reset the EC. See the script.
     function setBatteryThreshold(v) {
         // update the highlighted box immediately — don't wait on the shell
         // round-trip (write + notify-send) before the UI reflects the click.
@@ -198,10 +200,10 @@ Scope {
         // shortly after anyway, so this optimistic set self-corrects if the
         // write actually failed (e.g. permission denied pre-relogin).
         root.batThreshold = v;
-        root.run("echo " + v + " > /sys/class/power_supply/BAT0/charge_control_end_threshold 2>/tmp/batthr_err " +
-                  "&& mkdir -p ~/.config && echo " + v + " > ~/.config/battery-threshold " +
-                  "&& notify-send 'Battery' 'Charging capped at " + v + "%' " +
-                  "|| notify-send -u critical 'Battery' 'Failed to set charge threshold (check /tmp/batthr_err)'");
+        root.run("~/.config/scripts/apply-battery-threshold.sh " + v +
+                  " && notify-send 'Battery' 'Charging capped at " + v + "%' " +
+                  "|| notify-send -u critical 'Battery' 'Failed to set charge threshold " +
+                  "(see $XDG_RUNTIME_DIR/battery-threshold.log)'");
         batThresholdReapply.restart();
     }
     // re-read shortly after a click to confirm/correct the optimistic update
@@ -2709,7 +2711,11 @@ Scope {
                 Rectangle {
                     id: mpBox
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 300
+                    // 300 was a fixed guess and the content outgrew it, so `clip`
+                    // sliced the time readout in half. Track the content height and
+                    // only ever use 300 as a floor, so it can't clip again if the
+                    // fonts grow (ncScale) or a longer control row appears.
+                    Layout.preferredHeight: Math.max(300, mpCol.implicitHeight + 32)
                     visible: root.mprisPlayer !== null && root.mprisPlayer !== undefined
                     radius: 12
                     clip: true
@@ -2734,22 +2740,53 @@ Scope {
                         onTriggered: if (root.mprisPlayer) root.mprisPlayer.positionChanged()
                     }
 
-                    // blurred album-art background
-                    Image {
+                    // Blurred album-art background + dim overlay, rounded off.
+                    //
+                    // `clip: true` on a Rectangle clips to the BOUNDING RECT, not to
+                    // the rounded corners, so a full-bleed square child still paints
+                    // into the four corner notches outside the radius. Both of these
+                    // did, which is what put the dark square patches on the corners.
+                    //
+                    // Blur and mask are two SEPARATE stages on purpose. Doing both in
+                    // one MultiEffect does not work: enabling blur expands the
+                    // effect's padding rect, and the mask texture is stretched over
+                    // that larger rect, so the rounded mask lands outside the corners
+                    // and clips nothing. Measured — the notch pixel stayed art-
+                    // coloured instead of going back to the panel background.
+                    // Blurring on the Image's own layer and masking the wrapper
+                    // (a mask-only MultiEffect, so no padding) clips exactly.
+                    Item {
+                        id: mpBg
                         anchors.fill: parent
-                        source: root.mprisPlayer ? (root.mprisPlayer.trackArtUrl || "") : ""
-                        visible: source != ""
-                        fillMode: Image.PreserveAspectCrop
-                        // It is drawn a few hundred points wide and then blurred, so
-                        // the full-resolution cover art is never needed in memory.
-                        sourceSize.width: 600
-                        sourceSize.height: 600
                         layer.enabled: true
-                        layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 48 }
+                        layer.effect: MultiEffect { maskEnabled: true; maskSource: mpArtMask }
+
+                        Image {
+                            id: mpArt
+                            anchors.fill: parent
+                            source: root.mprisPlayer ? (root.mprisPlayer.trackArtUrl || "") : ""
+                            visible: source != ""
+                            fillMode: Image.PreserveAspectCrop
+                            // It is drawn a few hundred points wide and then blurred, so
+                            // the full-resolution cover art is never needed in memory.
+                            sourceSize.width: 600
+                            sourceSize.height: 600
+                            layer.enabled: true
+                            layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 48 }
+                        }
+                        Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.6) }
                     }
-                    Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.6) }
+                    // rounded-rect mask for the stack above (same pattern as Vinyl)
+                    Item {
+                        id: mpArtMask
+                        anchors.fill: parent
+                        layer.enabled: true
+                        visible: false
+                        Rectangle { anchors.fill: parent; radius: mpBox.radius; color: "black" }
+                    }
 
                     ColumnLayout {
+                        id: mpCol
                         anchors.fill: parent
                         anchors.margins: 16
                         spacing: 6
@@ -2770,14 +2807,6 @@ Scope {
                             text: root.mprisPlayer ? (root.mprisPlayer.trackTitle || "") : ""
                             color: "white"; font.family: root.ncFont
                             font.pixelSize: root.ns(15); font.bold: true; elide: Text.ElideRight
-                        }
-                        Text {                                            // album
-                            Layout.fillWidth: true
-                            horizontalAlignment: Text.AlignHCenter
-                            visible: text !== ""
-                            text: root.mprisPlayer ? (root.mprisPlayer.trackAlbum || "") : ""
-                            color: Qt.rgba(1, 1, 1, 0.6); font.family: root.ncFont
-                            font.pixelSize: root.ns(11); elide: Text.ElideRight
                         }
                         Text {                                            // artist
                             Layout.fillWidth: true
