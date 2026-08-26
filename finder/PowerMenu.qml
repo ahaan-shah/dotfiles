@@ -14,14 +14,30 @@ QtObject {
     id: root
 
     readonly property var items: [
-        { icon: "󰤄", label: "Sleep",    key: "sleep" },
-        { icon: "󰐥", label: "Shutdown", key: "shutdown" },
-        { icon: "󰜉", label: "Reboot",   key: "reboot" },
-        { icon: "󰍃", label: "Logout",   key: "logout" }
+        { icon: "󰤄", label: "Sleep",     key: "sleep" },
+        { icon: "󰜗", label: "Hibernate", key: "hibernate" },
+        { icon: "󰐥", label: "Shutdown",  key: "shutdown" },
+        { icon: "󰜉", label: "Reboot",    key: "reboot" },
+        { icon: "󰍃", label: "Logout",    key: "logout" }
     ]
 
     function run(key) {
         switch (key) {
+        case "hibernate":
+            // Suspend-to-disk. Set up 2026-08-26: a 20G /swapfile plus the
+            // resume hook and resume=/resume_offset= on the cmdline, because
+            // zram alone cannot hold the image (it lives in the RAM being
+            // saved). Preferred over Sleep for long idles — s2idle drains
+            // ~1.5%/h here (~20% overnight) and deep/S3 is unusable on this
+            // Raptor Lake firmware, never waking without a hard power cycle.
+            // Same hypridle guard as Sleep below: logind emits PrepareForSleep
+            // for hibernate too, so hypridle's before_sleep_cmd runs and
+            // inhibit_sleep=3 holds the inhibitor until the session is really
+            // locked — the machine cannot write the image while still unlocked.
+            sleepProc.command = ["bash", "-c",
+                "pgrep -x hypridle >/dev/null || { hypridle & disown; sleep 0.5; }; systemctl hibernate"]
+            sleepProc.running = true
+            break
         case "sleep":
             // Was a straight port of powermenu.sh's Sleep case, but that
             // script's manual "spawn hypridle, sleep 0.1, loginctl
