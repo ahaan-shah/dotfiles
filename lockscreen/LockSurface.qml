@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Effects
+import Quickshell
 import Quickshell.Io
 
 // 1:1 visual port of hypr/hyprlock.conf. Instantiated once per screen (by
@@ -19,6 +20,26 @@ import Quickshell.Io
 Item {
     id: root
     required property var context
+
+    // Skip the ~1s entrance animation (blur ramp, dim ramp, content fade)
+    // when this lock is being raised because the machine is about to sleep or
+    // hibernate — set by lockscreen-launch.sh --instant, which hypridle's
+    // before_sleep_cmd/after_sleep_cmd use.
+    //
+    // Why: the compositor confirms the lock as soon as the surface covers the
+    // screens (~250ms measured), which is when hypridle's inhibit_sleep=3
+    // releases the sleep inhibitor — correctly, since that is the instant the
+    // desktop stops being visible. systemd then freezes user.slice ~100-200ms
+    // later, which halts these animations 10-20% of the way through. They
+    // resume mid-flight on wake, so the lock appeared to "load in two halves":
+    // a bare blur before sleep, then the clock and password field fading in a
+    // second after opening the lid.
+    //
+    // The fix has to be to paint the final state instantly, NOT to delay the
+    // lock until the UI is ready — during any such delay the desktop would be
+    // visible and interactive again, which is the far worse bug.
+    // The idle-timeout lock (lock_cmd, no flag) keeps the full animation.
+    readonly property bool instantIntro: Quickshell.env("LOCKSCREEN_INSTANT") === "1"
 
     readonly property real vw: root.width
     readonly property real vh: root.height
@@ -138,7 +159,7 @@ Item {
             to: 0.5          // "blur to 50%" — MultiEffect's `blur` is
                               // already a 0-1 normalized amount, so 0.5 is
                               // literally that.
-            duration: 1000
+            duration: root.instantIntro ? 0 : 1000
             easing.type: Easing.OutQuad
         }
     }
@@ -155,7 +176,7 @@ Item {
         opacity: 0
         NumberAnimation on opacity {
             to: 0.15
-            duration: 1000
+            duration: root.instantIntro ? 0 : 1000
             easing.type: Easing.OutQuad
         }
     }
@@ -174,7 +195,7 @@ Item {
             property: "opacity"
             from: 0
             to: 1
-            duration: 450
+            duration: root.instantIntro ? 0 : 450
             easing.type: Easing.OutQuad
         }
 
