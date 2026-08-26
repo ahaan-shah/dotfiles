@@ -18,14 +18,13 @@ notify-send "Arch will sleep soon 🌙"
 (
     sleep "$seconds"
 
-    # Make sure hypridle is actually running — it's the thing that catches
-    # the logind Lock signal and runs lock_cmd (lockscreen-launch.sh) via
-    # before_sleep_cmd in hypridle.conf. It's already autostarted by
-    # hyprland.lua, so only spawn it if it's somehow dead (e.g. killed via
-    # idle-inhibitor.sh's "Always Awake" toggle and never turned back on) —
-    # spawning it unconditionally piled up duplicate/orphaned hypridle
-    # processes on every single sleep-timer run.
-    pgrep -x hypridle >/dev/null || { hypridle & disown; sleep 0.5; }
+    # hypridle runs before_sleep_cmd (which raises the lockscreen) and holds
+    # the delay inhibitor that keeps the machine awake until the session is
+    # really locked. It is autostarted by hyprland.lua, but can be off if it
+    # was toggled via idle-inhibitor.sh's "Always Awake". ensure-hypridle.sh
+    # starts it detached and waits for the inhibitor to actually exist — see
+    # that script for why `hypridle & disown; sleep 0.5` was not safe.
+    ~/.config/scripts/ensure-hypridle.sh
 
     # Suspend system. hypridle.conf's before_sleep_cmd already runs
     # `loginctl lock-session` itself (systemd holds a sleep inhibitor until

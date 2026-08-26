@@ -35,28 +35,21 @@ QtObject {
             // inhibit_sleep=3 holds the inhibitor until the session is really
             // locked — the machine cannot write the image while still unlocked.
             sleepProc.command = ["bash", "-c",
-                "pgrep -x hypridle >/dev/null || { hypridle & disown; sleep 0.5; }; systemctl hibernate"]
+                "~/.config/scripts/ensure-hypridle.sh; systemctl hibernate"]
             sleepProc.running = true
             break
         case "sleep":
-            // Was a straight port of powermenu.sh's Sleep case, but that
-            // script's manual "spawn hypridle, sleep 0.1, loginctl
-            // lock-session, sleep 0.2, suspend" dance is exactly the bug
-            // reported as "sometimes sleeping from here doesn't lock the
-            // screen": hypridle is already autostarted by hyprland.lua, so
-            // spawning a second one every time just piles up duplicate
-            // processes, and hypridle.conf's own before_sleep_cmd already
-            // runs `loginctl lock-session` itself (systemd holds a sleep
-            // inhibitor until that finishes) — the extra manual
-            // loginctl+sleep(0.2) here was redundant AND racy, since 200ms
-            // isn't guaranteed long enough for the lock surface to actually
-            // come up before suspend wins the race. Now: only respawn
-            // hypridle if it's not already running (e.g. killed via
-            // idle-inhibitor.sh's "Always Awake" toggle), then just suspend
-            // and let the already-configured before_sleep_cmd handle the
-            // lock reliably.
+            // ensure-hypridle.sh, not an inline respawn. hypridle is what runs
+            // before_sleep_cmd (raising the lockscreen) and what holds the
+            // delay inhibitor until the session is genuinely locked, so if it
+            // has been toggled off via idle-inhibitor.sh the machine would
+            // otherwise sleep unlocked. The previous inline
+            // `hypridle & disown; sleep 0.5` looked equivalent but was not:
+            // a Quickshell Process hands its child a pipe, so that hypridle
+            // was killed by SIGPIPE as soon as this command exited, taking its
+            // inhibitor with it. See ensure-hypridle.sh.
             sleepProc.command = ["bash", "-c",
-                "pgrep -x hypridle >/dev/null || { hypridle & disown; sleep 0.5; }; systemctl suspend"]
+                "~/.config/scripts/ensure-hypridle.sh; systemctl suspend"]
             sleepProc.running = true
             break
         case "shutdown":
