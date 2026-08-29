@@ -1256,15 +1256,82 @@ Scope {
         for (var i = list.length - 1; i >= 0; i--) list[i].dismiss();
     }
 
-    // active player for the control-center mpris widget (prefer one that's playing)
-    readonly property var mprisPlayer: {
+    // ---- active player for the control-center mpris widget --------------------
+    //
+    // Sticky by design. The old rule was "prefer one that's playing, else the
+    // FIRST on the bus", so the instant Spotify paused the widget jumped to
+    // whatever else happened to be registered - here zen, which sits on the bus
+    // for the whole browser session and usually has no track at all. Now the
+    // last player that actually PLAYED keeps the widget while it is paused, and
+    // hands over only when another player starts playing (or the user swipes).
+    //
+    // The pin is stored as bus name + identity rather than the object, because
+    // an MprisPlayer is destroyed when its app quits. Bus name is the precise
+    // key; identity is the fallback, since zen's bus name carries a per-launch
+    // instance number (org.mpris.MediaPlayer2.firefox.instance_1_94) while
+    // "Zen Browser" survives a restart.
+    property string mprisPinnedBus: ""
+    property string mprisPinnedId: ""
+    property var mprisPlayer: null
+
+    function mprisPin(p) {
+        if (!p) return;
+        root.mprisPinnedBus = p.dbusName || "";
+        root.mprisPinnedId = p.identity || "";
+        root.mprisResolve();
+    }
+
+    // Recomputed rather than bound, so the pin can be re-written to whatever was
+    // actually picked. A stale pin (app quit while paused) would otherwise sit
+    // there and steal the widget back the moment that app reappeared.
+    function mprisResolve() {
         var ps = Mpris.players.values;
-        var first = null;
+        var byBus = null, byId = null, playing = null;
         for (var i = 0; i < ps.length; i++) {
-            if (!first) first = ps[i];
-            if (ps[i].isPlaying) return ps[i];
+            var p = ps[i];
+            if (!playing && p.isPlaying) playing = p;
+            if (root.mprisPinnedBus !== "" && p.dbusName === root.mprisPinnedBus) byBus = p;
+            else if (!byId && root.mprisPinnedId !== "" && p.identity === root.mprisPinnedId) byId = p;
         }
-        return first;
+        var pick = byBus || byId || playing || (ps.length > 0 ? ps[0] : null);
+        root.mprisPinnedBus = pick ? (pick.dbusName || "") : "";
+        root.mprisPinnedId = pick ? (pick.identity || "") : "";
+        root.mprisPlayer = pick;
+    }
+
+    // Two-finger swipe on the media widget walks this list (spotify -> zen ->
+    // spotify). dir is +1 / -1; a manual pick pins like a play does, so it
+    // sticks until something else starts playing or the user swipes again.
+    function mprisCycle(dir) {
+        var ps = Mpris.players.values;
+        if (ps.length < 2) return;
+        var idx = -1;
+        for (var i = 0; i < ps.length; i++) if (ps[i] === root.mprisPlayer) { idx = i; break; }
+        var n = ((idx + (dir >= 0 ? 1 : -1)) % ps.length + ps.length) % ps.length;
+        root.mprisPin(ps[n]);
+    }
+
+    Component.onCompleted: root.mprisResolve()
+    Connections {
+        target: Mpris.players
+        function onValuesChanged() { root.mprisResolve(); }
+    }
+    // One watcher per live player: whoever starts playing takes the pin. The
+    // delegates are rebuilt whenever the array is reassigned (players coming and
+    // going), which is harmless - they hold no state, and a Connections only
+    // forwards signals emitted after it exists, so a rebuild cannot re-pin.
+    Instantiator {
+        model: Mpris.players.values
+        delegate: Connections {
+            required property var modelData
+            target: modelData
+            function onIsPlayingChanged() { if (modelData.isPlaying) root.mprisPin(modelData); }
+            // A player that appears on the bus ALREADY playing (spotify launched
+            // straight into a track) never emits isPlayingChanged afterwards, so
+            // the watcher alone would never see it and the widget would sit on
+            // whatever it had. Claim the pin at creation instead.
+            Component.onCompleted: if (modelData.isPlaying) root.mprisPin(modelData);
+        }
     }
 
     // ---- volume / backlight state for the control-center sliders -------------
@@ -2930,6 +2997,122 @@ Scope {
                     border.width: 2
                     border.color: "white"
 
+                    // ---- two-finger swipe cycles the player -------------------
+                    // A touchpad two-finger swipe reaches QML as scroll events -
+                    // there is no separate swipe gesture on this stack.
+                    //
+                    // This MUST be a MouseArea. Measured on this Quickshell/Qt
+                    // build, a WheelHandler receives NO wheel events at all (a
+                    // HoverHandler beside it fires normally), while
+                    // MouseArea.onWheel receives every one - which is why the
+                    // first attempt at this silently did nothing.
+                    //
+                    // Declared as the FIRST child, so it sits at the bottom of
+                    // the stack, and acceptedButtons: Qt.NoButton so it can never
+                    // take a click from the transport buttons or the seek bar
+                    // above it. Wheel still reaches it because nothing above
+                    // connects to `wheel`, so nothing above accepts one.
+                    MouseArea {
+                        id: mpSwipe
+                        anchors.fill: parent
+                        acceptedButtons: Qt.NoButton
+
+                        // Horizontal travel that counts as a swipe. From a real
+                        // touchpad capture on this machine: one deliberate
+                        // sideways swipe covers 25-410px (median 119) over ~20
+                        // events, i.e. ~5px per event. 25 is the smallest real
+                        // swipe seen, and firing only once per gesture means a
+                        // low bar costs nothing.
+                        readonly property int threshold: 25
+                        // This hardware reports angleDelta at exactly 12x
+                        // pixelDelta; a plain mouse wheel sets only angleDelta.
+                        readonly property int anglePerPixel: 12
+                        property real accX: 0
+                        property real accY: 0
+                        property bool fired: false
+
+                        function endGesture() { accX = 0; accY = 0; fired = false; }
+
+                        onWheel: (w) => {
+                            // The touchpad brackets every gesture with a
+                            // zero-delta event (libinput axis_stop). Measured: it
+                            // segmented a 1856-event capture into 65 gestures
+                            // cleanly. Momentum events would otherwise keep
+                            // cycling after the fingers lift, so they end it too.
+                            if (w.phase === Qt.ScrollEnd || w.phase === Qt.ScrollMomentum
+                                || (w.angleDelta.x === 0 && w.angleDelta.y === 0
+                                    && w.pixelDelta.x === 0 && w.pixelDelta.y === 0)) {
+                                mpSwipe.endGesture();
+                                gestureGap.stop();
+                                return;
+                            }
+                            // Fallback boundary if phase is ever absent: a gap in
+                            // the event stream ends the gesture.
+                            gestureGap.restart();
+
+                            if (Mpris.players.values.length < 2) return;
+
+                            mpSwipe.accX += w.pixelDelta.x !== 0 ? w.pixelDelta.x
+                                                                 : w.angleDelta.x / mpSwipe.anglePerPixel;
+                            mpSwipe.accY += w.pixelDelta.y !== 0 ? w.pixelDelta.y
+                                                                 : w.angleDelta.y / mpSwipe.anglePerPixel;
+
+                            // exactly one switch per swipe, and only for a swipe
+                            // that is mostly sideways - comparing against accY is
+                            // what keeps ordinary vertical scrolling inert.
+                            if (mpSwipe.fired) return;
+                            if (Math.abs(mpSwipe.accX) < mpSwipe.threshold) return;
+                            if (Math.abs(mpSwipe.accX) <= Math.abs(mpSwipe.accY)) return;
+                            mpSwipe.fired = true;
+                            mpBox.startCycle(mpSwipe.accX < 0 ? 1 : -1);
+                        }
+                    }
+                    Timer { id: gestureGap; interval: 150; onTriggered: mpSwipe.endGesture() }
+
+                    // ---- player-change transition ----------------------------
+                    // The swap is deferred to the MIDPOINT of the animation, so
+                    // the outgoing player slides out and the incoming one slides
+                    // in from the opposite side. Switching the data first and
+                    // animating after would just be the same abrupt change with a
+                    // wipe over it.
+                    property real swapShift: 0
+                    property real swapFade: 1
+                    // A swipe landing mid-transition is remembered rather than
+                    // dropped - swiping twice quickly should advance twice. One
+                    // deep on purpose: a flurry of swipes should not queue up a
+                    // long train of animations to sit through.
+                    property int pendingDir: 0
+                    function startCycle(dir) {
+                        if (mpSwap.running) { mpBox.pendingDir = dir; return; }
+                        mpSwap.dir = dir;
+                        mpSwap.start();
+                    }
+                    SequentialAnimation {
+                        id: mpSwap
+                        property int dir: 1
+                        ParallelAnimation {
+                            NumberAnimation { target: mpBox; property: "swapShift"
+                                              to: -mpSwap.dir * 34; duration: 120; easing.type: Easing.InQuad }
+                            NumberAnimation { target: mpBox; property: "swapFade"
+                                              to: 0; duration: 120; easing.type: Easing.InQuad }
+                        }
+                        ScriptAction { script: {
+                            root.mprisCycle(mpSwap.dir);
+                            mpBox.swapShift = mpSwap.dir * 34;   // jump to the far side to slide back in
+                        } }
+                        ParallelAnimation {
+                            NumberAnimation { target: mpBox; property: "swapShift"
+                                              to: 0; duration: 200; easing.type: Easing.OutCubic }
+                            NumberAnimation { target: mpBox; property: "swapFade"
+                                              to: 1; duration: 200; easing.type: Easing.OutCubic }
+                        }
+                        onFinished: if (mpBox.pendingDir !== 0) {
+                            var d = mpBox.pendingDir;
+                            mpBox.pendingDir = 0;
+                            mpBox.startCycle(d);
+                        }
+                    }
+
                     property real trackLen: root.mprisPlayer ? (root.mprisPlayer.length || 0) : 0
                     // live position: bound to the player; the timer below keeps it ticking
                     property real curPos: root.mprisPlayer ? root.mprisPlayer.position : 0
@@ -2964,6 +3147,7 @@ Scope {
                     Item {
                         id: mpBg
                         anchors.fill: parent
+                        opacity: mpBox.swapFade          // cross-fades with the swap; no slide
                         layer.enabled: true
                         layer.effect: MultiEffect { maskEnabled: true; maskSource: mpArtMask }
 
@@ -2996,6 +3180,20 @@ Scope {
                         anchors.fill: parent
                         anchors.margins: 16
                         spacing: 6
+                        opacity: mpBox.swapFade
+                        // a Translate transform, not x - mpCol is anchor-filled
+                        transform: Translate { x: mpBox.swapShift }
+
+                        // which player the widget is on - only worth the space
+                        // once there is more than one to swipe between.
+                        Text {
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            visible: Mpris.players.values.length > 1
+                            text: root.mprisPlayer ? (root.mprisPlayer.identity || "") : ""
+                            color: Qt.rgba(1, 1, 1, 0.55); font.family: root.ncFont
+                            font.pixelSize: root.ns(9); elide: Text.ElideRight
+                        }
 
                         // spinning circular cover on top
                         Vinyl {
