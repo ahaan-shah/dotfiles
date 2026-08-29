@@ -37,6 +37,8 @@ Scope {
     // ---- VERIFY: home directory (used for pywal colors + scripts) -------------
     property string homeDir: "/home/ahaan"
     property string scriptsDir: homeDir + "/.config/waybar/scripts"
+    // Quickshell.env is synchronous, so this needs no deferral.
+    property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
 
     // ---- fonts (JetBrainsMono Nerd Font Propo; was CodeNewRoman) -------------
     readonly property string fontFamily: "JetBrainsMono Nerd Font Propo"
@@ -2232,16 +2234,35 @@ Scope {
         id: ic
         property string label: ""
         property string value: ""
+
         Layout.fillWidth: true
+        // preferredWidth 1 makes the grid split the row on the space it actually
+        // has, rather than sizing columns from their contents. Without it a long
+        // value (a 15-character IP, "1080 Mbit/s", an interface named wlp0s20f3)
+        // grew the cell's implicit width, and a GridLayout will not shrink a
+        // cell below that - so on some networks the panel's whole content was
+        // pushed out past its own right edge.
+        Layout.preferredWidth: 1
         spacing: 6
+
         Text {
+            // The label yields first: it is a constant caption, whereas the
+            // value is the actual information, so an elided "IP Addre..." beats
+            // an elided address.
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            elide: Text.ElideRight
             text: ic.label
             color: root.alpha(root.ncText, 0.5)
             font.family: root.ncFont
             font.pixelSize: root.ns(10)
         }
-        Item { Layout.fillWidth: true }
         Text {
+            // Natural width, but never more than most of the cell, so a
+            // pathological value still cannot push the panel open.
+            Layout.maximumWidth: ic.width * 0.74
+            horizontalAlignment: Text.AlignRight
+            elide: Text.ElideRight
             text: ic.value
             color: root.ncText
             font.family: root.ncFont
@@ -2522,6 +2543,105 @@ Scope {
                             style: Text.Outline
                             Behavior on color { ColorAnimation { duration: 300 } }
                         }
+                    }
+                }
+
+                //=== voxtype : voice-to-text ==================================
+                // Recording indicator, sitting left of the bluetooth glyph.
+                // Collapsed to zero width when idle, so it costs no bar space
+                // until it has something to say.
+                //
+                // Driven by voxtype's own state file rather than by polling
+                // `voxtype status`: the daemon rewrites that file in place on
+                // every transition, and the inode is stable across a full
+                // idle -> recording -> idle cycle (verified with stat), so one
+                // inotify watch survives instead of needing a re-arm.
+                Item {
+                    id: vox
+
+                    // 'state' is already taken on Item -- same reason the
+                    // network module below calls its own field netState.
+                    property string voxState: "idle"     // idle|recording|transcribing
+                    readonly property bool active: voxState === "recording"
+                                                || voxState === "transcribing"
+
+                    // A Behavior cannot attach to an attached property, so the
+                    // reveal animates a plain real and the layout width is
+                    // bound to that. (The hover drawer above puts a Behavior
+                    // directly on Layout.preferredWidth, which silently never
+                    // animates -- worth fixing there too.)
+                    property real openAmount: active ? 1 : 0
+                    Behavior on openAmount {
+                        NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+                    }
+
+                    // One phase drives all five bars, rather than five
+                    // independent animations: it keeps them in a fixed
+                    // relationship and leaves exactly one value to reset. A
+                    // running:-bound animation freezes its property wherever it
+                    // stood when the binding goes false, so the reset is done
+                    // from the state change below, not from inside the anim.
+                    property real phase: 0
+                    NumberAnimation on phase {
+                        running: vox.active
+                        loops: Animation.Infinite
+                        from: 0; to: 2 * Math.PI
+                        duration: vox.voxState === "transcribing" ? 1400 : 900
+                    }
+                    onVoxStateChanged: if (!vox.active) vox.phase = 0
+
+                    // Recording: a travelling wave (per-bar phase offset).
+                    // Transcribing: a shallower breath, all bars in step, so
+                    // the two states read differently at a glance.
+                    function barHeight(i) {
+                        var wave = vox.voxState === "transcribing";
+                        var amp  = wave ? 0.45 : 1.0;
+                        var off  = wave ? 0 : i * 0.9;
+                        return 3 + 10 * amp * (0.5 + 0.5 * Math.sin(vox.phase + off));
+                    }
+
+                    clip: true
+                    implicitHeight: voxRow.implicitHeight
+                    Layout.preferredWidth: (voxRow.implicitWidth + 10) * openAmount
+                    opacity: openAmount
+
+                    Row {
+                        id: voxRow
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right      // reveal leftward
+                        anchors.rightMargin: 5
+                        spacing: 2
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.g.mic
+                            font.family: root.fontFamily
+                            font.pixelSize: root.fontSize
+                            color: vox.voxState === "recording" ? root.colCritical
+                                                                : root.col9
+                            Behavior on color { ColorAnimation { duration: 200 } }
+                        }
+
+                        Repeater {
+                            model: 5
+                            Rectangle {
+                                width: 2
+                                radius: 1
+                                anchors.verticalCenter: parent.verticalCenter
+                                height: vox.barHeight(index)
+                                color: vox.voxState === "recording" ? root.colCritical
+                                                                    : root.col9
+                                Behavior on color { ColorAnimation { duration: 200 } }
+                            }
+                        }
+                    }
+
+                    FileView {
+                        id: voxStateFile
+                        path: root.runtimeDir + "/voxtype/state"
+                        watchChanges: true
+                        onFileChanged: reload()
+                        onLoaded: vox.voxState = (voxStateFile.text() || "idle").trim()
                     }
                 }
 

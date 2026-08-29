@@ -230,9 +230,9 @@
 # background must also be defined in hex or remain commented out. 1 = on, 0 = off.
 # You can define as many as 8 different colors. They range from bottom to top of screen
 gradient = 1
-gradient_color_1 = '#9EA197'
-gradient_color_2 = '#A4A69C'
-gradient_color_3 = '#B4B4AA'
+gradient_color_1 = '#A84234'
+gradient_color_2 = '#DC4223'
+gradient_color_3 = '#D2472E'
 ;gradient_color_4 = '#768A78'
 ;gradient_color_5 = '#39698A'
 ;gradient_color_6 = '#39698A'

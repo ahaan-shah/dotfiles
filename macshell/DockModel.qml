@@ -28,13 +28,6 @@ ListModel {
         separator: false
     }
     ListElement {
-        name: "Librewolf"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/librewolf.svg"
-        command: "librewolf --new-window"
-        windowClass: "librewolf"
-        separator: false
-    }
-    ListElement {
         name: "Chromium"
         icon: "/usr/share/icons/Papirus-Dark/128x128/apps/chromium.svg"
         command: "chromium"
@@ -53,13 +46,6 @@ ListModel {
         icon: "/home/ahaan/.local/share/icons/webapps/openai.svg"
         command: "chromium --app=https://chat.openai.com"
         windowClass: "chat.openai"
-        separator: false
-    }
-    ListElement {
-        name: "Claude"
-        icon: "/home/ahaan/.local/share/icons/webapps/claude.png"
-        command: "chromium --app=https://claude.ai/new"
-        windowClass: "claude.ai"
         separator: false
     }
     ListElement {

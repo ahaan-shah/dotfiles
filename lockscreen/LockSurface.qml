@@ -341,7 +341,11 @@ Item {
     QtObject {
         id: dotsSync
         function sync() {
-            const len = Math.min(root.context.currentText.length, 24)
+            // Comfortably more than the pill can show at once: the row scrolls,
+            // so this only needs to outlast any realistic password. If it were
+            // set to roughly what fits, typing past that point would add no dot
+            // and the row would stop moving — no feedback at all.
+            const len = Math.min(root.context.currentText.length, 64)
             while (dotsModel.count < len) dotsModel.append({})
             while (dotsModel.count > len) dotsModel.remove(dotsModel.count - 1)
         }
@@ -352,19 +356,42 @@ Item {
         function onCurrentTextChanged() { dotsSync.sync() }
     }
 
-    Row {
+    // The dot row is clipped to the pill and scrolls. At a fixed 9px + 5px
+    // spacing the model's 24-dot cap came to ~331px of row against a pill only
+    // vw*0.085 (~122px) wide, so a long password spilled the dots straight out
+    // over the blurred wallpaper.
+    Item {
+        id: dotsClip
         anchors.centerIn: passwordPill
-        spacing: 5
+        width: passwordPill.width - 12 * root.uiScale
+        height: passwordPill.height
+        clip: true                     // hard backstop, whatever the maths does
         visible: dotsModel.count > 0
-        Repeater {
-            model: dotsModel
-            Rectangle {
-                width: 9
-                height: 9
-                radius: 4.5
-                color: "#1a1d29"
-                opacity: 0
-                scale: 0.4
+
+        Row {
+            id: dotsRow
+            spacing: 5
+            y: (dotsClip.height - height) / 2
+
+            // Centred while the dots still fit; once they do not, the row is
+            // pinned to the right edge so the newest dot is always visible and
+            // the oldest ones slide out under the left edge of the pill. The
+            // dots keep their size — they disappear into the box rather than
+            // shrinking to make room.
+            x: dotsRow.width <= dotsClip.width
+               ? (dotsClip.width - dotsRow.width) / 2
+               : dotsClip.width - dotsRow.width
+            Behavior on x { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+
+            Repeater {
+                model: dotsModel
+                Rectangle {
+                    width: 9
+                    height: 9
+                    radius: 4.5
+                    color: "#1a1d29"
+                    opacity: 0
+                    scale: 0.4
                 // A Behavior armed via Component.onCompleted (tried first)
                 // has a known QML timing gotcha: the very first property
                 // change right after an item is created can land before
@@ -377,8 +404,9 @@ Item {
                 // character (see the ListModel note above), this animation
                 // now genuinely only plays once per dot, on the dot that
                 // was just typed — not on every dot, every keystroke.
-                NumberAnimation on opacity { to: 1; duration: 220; easing.type: Easing.OutQuad }
-                NumberAnimation on scale   { to: 1; duration: 220; easing.type: Easing.OutBack }
+                    NumberAnimation on opacity { to: 1; duration: 220; easing.type: Easing.OutQuad }
+                    NumberAnimation on scale   { to: 1; duration: 220; easing.type: Easing.OutBack }
+                }
             }
         }
     }
