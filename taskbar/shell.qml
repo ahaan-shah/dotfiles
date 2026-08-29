@@ -1230,10 +1230,26 @@ Scope {
     readonly property int tLow:      6000
     readonly property int tCritical: 1000
 
-    // live popup list (separate from history). Reassigned so bindings update.
-    property var popupList: []
-    function pushPopup(n, ms) { popupList = popupList.concat([{ notif: n, ms: ms }]); }
-    function dropPopup(n) { popupList = popupList.filter(function (e) { return e.notif !== n; }); }
+    // Live popup list (separate from history).
+    //
+    // This used to be a plain JS array, reassigned on every push and drop —
+    // which rebuilds EVERY Repeater delegate (the array-model gotcha in
+    // CLAUDE.md). Two visible consequences whenever more than one popup was
+    // on screen: the entire stack blinked out for a frame and re-ran its
+    // 200ms fade-in every time any one of them expired, and each surviving
+    // card's auto-dismiss Timer restarted from zero, so popups outlived their
+    // own timeout. A ListModel removes one row without touching its
+    // neighbours, so the others neither flicker nor lose their timers.
+    ListModel { id: popupModel; dynamicRoles: true }
+
+    function pushPopup(n, ms) { popupModel.append({ notif: n, ms: ms }); }
+    // Called by a card once its fade-out has finished. Removal is always
+    // initiated by the card itself (close button or timeout), so the model
+    // needs no "closing" role.
+    function removePopup(n) {
+        for (var i = 0; i < popupModel.count; i++)
+            if (popupModel.get(i).notif === n) { popupModel.remove(i); return; }
+    }
 
     function clearAllNotifs() {
         var list = notifServer.trackedNotifications.values;
@@ -2398,17 +2414,30 @@ Scope {
                     SystemClock { id: clock; precision: SystemClock.Seconds }
                 }
 
-                // mpris  (spotify)  →  "[   {status_icon} | {dynamic} ]"
+                // mpris  (spotify / cliamp)  →  "[   {status_icon} | {dynamic} ]"
                 BarLabel {
                     id: mpris
-                    // pick the spotify player
+                    // music players this island is willing to show, matched
+                    // case-insensitively against identity + bus name.
+                    // cliamp advertises identity "Cliamp" on
+                    // org.mpris.MediaPlayer2.cliamp — "spotify" only ever
+                    // appears in its xesam:url, never in the name, so the old
+                    // spotify-only match never saw it.
+                    readonly property var known: ["spotify", "cliamp"]
+                    // pick a known player, preferring one that is actually playing
                     property var player: {
                         var ps = Mpris.players.values;
+                        var idle = null;
                         for (var i = 0; i < ps.length; i++) {
-                            var name = (ps[i].identity || "") + " " + (ps[i].dbusName || "");
-                            if (name.toLowerCase().indexOf("spotify") !== -1) return ps[i];
+                            var name = ((ps[i].identity || "") + " " + (ps[i].dbusName || "")).toLowerCase();
+                            var hit = false;
+                            for (var k = 0; k < known.length; k++)
+                                if (name.indexOf(known[k]) !== -1) { hit = true; break; }
+                            if (!hit) continue;
+                            if (ps[i].isPlaying) return ps[i];
+                            if (!idle) idle = ps[i];
                         }
-                        return null;
+                        return idle;
                     }
                     property int st: player ? player.playbackState : MprisPlaybackState.Stopped
                     // status-icons from your config: playing=\uf04c paused=\uf04b stopped=\uf04d
@@ -2749,12 +2778,25 @@ Scope {
         delegate: PanelWindow {
             required property var modelData
             screen: modelData
-            visible: root.popupList.length > 0
+            visible: popupModel.count > 0
             color: "transparent"
             anchors { top: true; left: true }
             margins { top: root.panelTopMargin; left: 10 }
             implicitWidth: 260                       // notification-window-width 250
-            implicitHeight: Math.max(1, popupCol.implicitHeight)
+
+            // The height is deliberately FIXED instead of tracking the card
+            // stack, and this is the fix for the "white box left behind when a
+            // notification disappears" bug. SHRINKING a layer surface leaves a
+            // translucent white block filling the strip that was removed, for
+            // a few hundred ms — nothing in the QML scene draws it (proved by
+            // painting the window red and the cards blue: the block stayed
+            // white), and pinning implicitHeight made it vanish completely.
+            // So the surface now keeps one size for its whole life and only
+            // the cards inside it come and go. `mask` keeps input to the cards
+            // themselves, exactly as macshell's dock window does, so the empty
+            // space below them stays click-through.
+            implicitHeight: screen.height
+            mask: Region { item: popupCol }
             exclusiveZone: 0
             WlrLayershell.layer: WlrLayer.Overlay    // config: "layer": "overlay"
             WlrLayershell.namespace: "quickshell-notifications"
@@ -2762,25 +2804,69 @@ Scope {
             Column {
                 id: popupCol
                 width: parent.width
-                spacing: 8
+                // spacing 0 on purpose — the 8px gap between cards lives
+                // INSIDE each slot below. Column spacing only exists between
+                // items, so it would snap shut the instant a collapsing slot
+                // hit zero, which is what made the cards below jump the last
+                // few pixels after an otherwise smooth collapse.
+                spacing: 0
                 Repeater {
-                    model: root.popupList
-                    delegate: NotifCard {
-                        required property var modelData
-                        required property int index
-                        width: popupCol.width
-                        notif: modelData.notif
-                        onClosed: root.dropPopup(modelData.notif)
+                    model: popupModel
+                    // Each card sits in a slot that owns the card plus the gap
+                    // under it. Closing animates the SLOT's height to zero, so
+                    // the card and its gap disappear as one motion and the
+                    // cards below slide up smoothly instead of snapping.
+                    delegate: Item {
+                        id: popupSlot
+                        required property var model
+                        // Held on the slot so it survives the model row being
+                        // removed out from under us.
+                        readonly property var myNotif: model.notif
 
-                        // appear animation
-                        opacity: 0
-                        Component.onCompleted: opacity = 1
-                        Behavior on opacity { NumberAnimation { duration: 200 } }
+                        width: popupCol.width
+                        implicitHeight: card.implicitHeight + popupGap
+                        height: implicitHeight
+                        clip: closing               // card must not spill while the slot shrinks
+
+                        readonly property int popupGap: 8
+                        property bool closing: false
+
+                        function close() {
+                            if (closing) return;
+                            closing = true;         // enables the Behavior below first
+                            card.opacity = 0;
+                            height = 0;             // breaks the binding; Behavior animates it
+                            reaper.start();
+                        }
+                        Behavior on height {
+                            // Only while closing: height is otherwise bound to
+                            // implicitHeight, which settles as the icon/text
+                            // load, and animating that would look like a jitter.
+                            enabled: popupSlot.closing
+                            NumberAnimation { duration: 200; easing.type: Easing.InOutQuad }
+                        }
+                        Timer {
+                            id: reaper
+                            interval: 220; repeat: false
+                            onTriggered: root.removePopup(popupSlot.myNotif)
+                        }
+
+                        NotifCard {
+                            id: card
+                            width: popupSlot.width
+                            notif: popupSlot.myNotif
+                            onClosed: popupSlot.close()
+
+                            // appear animation
+                            opacity: 0
+                            Component.onCompleted: opacity = 1
+                            Behavior on opacity { NumberAnimation { duration: 200 } }
+                        }
 
                         // auto-dismiss after the per-urgency timeout (history is kept)
                         Timer {
-                            interval: modelData.ms; running: true; repeat: false
-                            onTriggered: root.dropPopup(modelData.notif)
+                            interval: popupSlot.model.ms; running: true; repeat: false
+                            onTriggered: popupSlot.close()
                         }
                     }
                 }
