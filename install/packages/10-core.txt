@@ -75,6 +75,8 @@ gvfs
 gvfs-mtp
 gvfs-smb
 papirus-icon-theme        # DockModel.qml points at Papirus-Dark icon paths
+desktop-file-utils        # update-desktop-database, for the webapp .desktop entries
+gtk-update-icon-cache     # icon cache refresh after deploying webapp icons
 chromium                  # the dock's webapp entries are `chromium --app=...`
 
 # ── referenced by configs this installer deploys ──────────────────────

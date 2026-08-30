@@ -299,8 +299,24 @@ phase_configs() {
 
     # Webapp .desktop files and their icons — the dock's ChatGPT/Claude/
     # TradingView entries point at ~/.local/share/icons/webapps.
-    deploy_dir "$DOTDIR/webapps/applications" "$HOME/.local/share/applications" || true
-    deploy_dir "$DOTDIR/webapps/icons"        "$HOME/.local/share/icons/webapps" || true
+    # Webapp launchers. Their `Icon=` lines are ABSOLUTE paths into the original
+    # machine's home (a .desktop file cannot expand $HOME), so every one of them
+    # would show a blank icon under a different username. Rewrite them to this
+    # user's home after copying.
+    if deploy_dir "$DOTDIR/webapps/applications" "$HOME/.local/share/applications"; then
+        if [ "$DRY_RUN" = 0 ]; then
+            # A generated cache must never be copied in from the repo — it is
+            # rebuilt below and a stale one hides newly added entries.
+            rm -f "$HOME/.local/share/applications/mimeinfo.cache"
+            # Rewrite ANY reference to the original user's home, not just the
+            # icon dir: claude-code-url-handler.desktop points its Exec= at
+            # ~/.local/bin, and a .local/share-only pattern silently missed it.
+            find "$HOME/.local/share/applications" -name '*.desktop' -exec \
+                sed -i "s#/home/[A-Za-z0-9_.-]\+/#$HOME/#g" {} +
+        fi
+        ok "webapp launchers repointed at $HOME"
+    fi
+    deploy_dir "$DOTDIR/webapps/icons" "$HOME/.local/share/icons/webapps" || true
     deploy_dir "$DOTDIR/wallpapers"           "$HOME/Pictures/wallpapers" || true
     deploy_dir "$DOTDIR/spicetify/Themes"     "$HOME/.config/spicetify/Themes" || true
 
@@ -321,6 +337,18 @@ phase_configs() {
     ok "launch scripts marked executable"
 
     run xdg-user-dirs-update
+
+    # Without these, a freshly copied .desktop file is invisible to mime
+    # handling and its icon does not resolve until something else happens to
+    # trigger a refresh. (finder parses .desktop files itself so it is
+    # unaffected, but `gio launch`, xdg-open and GTK all read these caches.)
+    if have update-desktop-database; then
+        run update-desktop-database "$HOME/.local/share/applications"
+        ok "desktop database rebuilt"
+    fi
+    if have gtk-update-icon-cache && [ -d "$HOME/.local/share/icons/hicolor" ]; then
+        run gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor"
+    fi
     ok "configs deployed"
 }
 
@@ -521,6 +549,21 @@ phase_system() {
     enable_unit systemd-timesyncd.service
     enable_unit fstrim.timer
     pacman -Qq cups >/dev/null 2>&1 && enable_unit cups.service
+
+    # ── flatpak ────────────────────────────────────────────────────────
+    # Installing the package leaves it with NO remotes, so `flatpak install`
+    # finds nothing at all. Add Flathub system-wide, matching this setup.
+    # hyprland.lua already puts both flatpak export dirs on XDG_DATA_DIRS, so
+    # installed apps show up in launchers once a remote exists.
+    if have flatpak; then
+        if flatpak remotes --system 2>/dev/null | grep -q '^flathub'; then
+            skip "flathub remote already configured"
+        else
+            run sudo flatpak remote-add --if-not-exists --system \
+                flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+            ok "flathub remote added"
+        fi
+    fi
 
     # ── fingerprint retry budget ───────────────────────────────────────
     # A fingerprint reader burns faillock attempts fast; the stock deny=3 locks
