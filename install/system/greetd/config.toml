@@ -1,0 +1,10 @@
+# greetd + tuigreet on VT1.
+#
+# `setfont ter-132b` needs terminus-font (in 30-fonts.txt) — without it the
+# greeter still runs, just at the default console font size.
+[terminal]
+vt = 1
+
+[default_session]
+command = "sh -c 'setfont ter-132b && tuigreet --time --asterisks --remember'"
+user = "greeter"

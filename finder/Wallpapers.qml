@@ -22,7 +22,7 @@ import Quickshell.Io
 QtObject {
     id: root
 
-    readonly property string dir: "/home/ahaan/Pictures/wallpapers"
+    readonly property string dir: (Quickshell.env("HOME") || "") + "/Pictures/wallpapers"
     property var wallpapers: []   // [{name, path}]
 
     function refresh() {

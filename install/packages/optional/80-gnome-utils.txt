@@ -1,0 +1,8 @@
+# GNOME utilities
+gnome-calculator
+gnome-calendar
+gnome-clocks
+gnome-disk-utility
+snapshot
+gradia
+nwg-displays

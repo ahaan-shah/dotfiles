@@ -1,0 +1,57 @@
+# voxtype — push-to-talk dictation, bound to CTRL+. in hyprland.lua.
+# @HOME@ is substituted by install.sh. Regenerate with: install.sh --only apps
+state_file = "auto"
+
+[hotkey]
+# Deliberately disabled: hyprland.lua owns the binding (press = record start,
+# release = record stop), which is what makes it push-to-talk rather than a
+# toggle. Two hl.bind() calls on the same key are fine because they differ by
+# the `release` flag.
+enabled = false
+key = "SCROLLLOCK"
+modifiers = []
+
+[audio]
+device = "default"
+sample_rate = 16000
+max_duration_secs = 60
+
+[whisper]
+model = "base.en"
+language = "en"
+translate = false
+# whisper's own default is 4 threads, NOT nproc. Measured on a 5s clip:
+# 29.0s at the default vs 16.4s at 16 threads on small.en. Set it explicitly.
+threads = 16
+# Keeps the model resident so the first word is fast. Costs ~62 MB with the
+# Vulkan build (the model lives in GPU memory), ~477 MB on the CPU build.
+on_demand_loading = false
+
+[output]
+mode = "type"
+fallback_to_clipboard = true
+type_delay_ms = 0
+pre_type_delay_ms = 0
+
+[output.notification]
+# All off: the post_process hook below sends the notification instead, because
+# only it knows whether the text was typed or diverted to the clipboard.
+on_recording_start = false
+on_recording_stop = false
+on_transcription = false
+
+[status]
+icon_theme = "emoji"
+
+[osd]
+# voxtype's own OSD logs "OSD child exited 3 times within 5s" here and never
+# renders; the taskbar draws its own recording indicator instead.
+enabled = false
+
+[output.post_process]
+# Schema note: this is [output.post_process] with a `command` key. The flat
+# `post_process_command` form is the per-[profiles.*] variant and is NOT valid
+# here. Validate any edit with:  voxtype -c <file> config
+command = "@HOME@/.config/scripts/voxtype-clipboard-fallback.sh"
+timeout_ms = 2000
+fallback_on_empty = true

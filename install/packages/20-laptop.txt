@@ -1,0 +1,5 @@
+# LAPTOP — skipped automatically when no battery is detected.
+fprintd                   # lockscreen/LockContext.qml fingerprint path
+cpupower
+zram-generator            # see system/systemd/zram-generator.conf
+acpi

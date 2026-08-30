@@ -1,0 +1,17 @@
+bibata-cursor-theme
+brave-bin
+calcure
+catppuccin-gtk-theme-mocha
+cliamp
+clock-tui
+fum-bin
+localsend-bin
+neofetch
+nomacs
+python-pywalfox
+rstudio-desktop-bin
+spotify
+voxtype
+vscodium-bin
+yay
+zen-browser-bin

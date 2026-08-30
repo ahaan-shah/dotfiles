@@ -37,6 +37,44 @@ local color2 = colors.color2 or "rgb(6a6b69)" -- only used in a comment original
 
 
 ------------------------------------------------------------------
+-- HARDWARE PROFILE
+------------------------------------------------------------------
+-- install.sh detects this machine's monitor, battery, LEDs, touchpad and
+-- integrated GPU and writes them to ~/.config/scripts/hardware.env as plain
+-- KEY="value" lines. The shell scripts source that file; this parses it.
+--
+-- Why a generated file rather than values edited into this config: the same
+-- config then runs unmodified on any machine, and re-detecting is a one-command
+-- operation (`install.sh --only hardware`) instead of a hand-edit.
+--
+-- Every lookup below falls back to a value that WORKS ON UNKNOWN HARDWARE
+-- rather than to this laptop's specifics — a missing env file must degrade to a
+-- usable desktop, never to a black screen.
+local function read_hw_env()
+    local t = {}
+    local home = os.getenv("HOME")
+    if not home then return t end
+    local f = io.open(home .. "/.config/scripts/hardware.env", "r")
+    if not f then return t end
+    for line in f:lines() do
+        local k, v = line:match('^%s*([A-Z_][A-Z0-9_]*)%s*=%s*"(.-)"%s*$')
+        if k and v ~= "" then t[k] = v end
+    end
+    f:close()
+    return t
+end
+
+local hw = read_hw_env()
+
+-- Hyprland wants a number for a numeric scale but the string "auto" for the
+-- automatic mode, so pass through only what is genuinely numeric.
+local function num_or_string(v, fallback)
+    if v == nil then return fallback end
+    return tonumber(v) or v
+end
+
+
+------------------------------------------------------------------
 -- GPU SELECTION  (must stay at the top of this file)
 ------------------------------------------------------------------
 -- This box is an Optimus hybrid: Intel Iris Xe (0000:00:02.0, i915) drives
@@ -87,7 +125,9 @@ local color2 = colors.color2 or "rgb(6a6b69)" -- only used in a comment original
 -- NOTE: HDMI-A-1 is wired to the dGPU (card1-HDMI-A-1), so external HDMI
 -- output is deliberately given up by this pin. USB-C/DP-alt runs off the
 -- iGPU and is unaffected. Revisit only if HDMI out is actually needed.
-local IGPU_PCI = "0000:00:02.0" -- Intel Iris Xe; `lspci` to confirm if hardware changes
+-- Supplied by hardware.env. When absent, resolve_igpu_node() below returns nil
+-- and AQ_DRM_DEVICES is simply never set, which is the old unpinned behaviour.
+local IGPU_PCI = hw.IGPU_PCI
 
 local function sh(cmd)
     local p = io.popen(cmd .. " 2>/dev/null")
@@ -98,11 +138,15 @@ local function sh(cmd)
 end
 
 local function resolve_igpu_node()
+    if not IGPU_PCI or IGPU_PCI == "" then return nil end
     -- primary: udev's by-path symlink, resolved to its real cardN target
     local node = sh("readlink -f /dev/dri/by-path/pci-" .. IGPU_PCI .. "-card")
     -- fallback: ask sysfs which cardN this PCI device owns
     if not (node and node:match("^/dev/dri/card%d+$")) then
-        local name = sh("ls /sys/bus/pci/devices/" .. IGPU_PCI .. "/drm/ | grep -m1 -E '^card[0-9]+$'")
+        -- sh() appends 2>/dev/null to the END of the pipeline, which does not
+        -- cover ls's own stderr; redirect it here or a machine without this PCI
+        -- path prints an error into Hyprland's log on every config parse.
+        local name = sh("ls /sys/bus/pci/devices/" .. IGPU_PCI .. "/drm/ 2>/dev/null | grep -m1 -E '^card[0-9]+$'")
         node = name and ("/dev/dri/" .. name) or nil
     end
     -- the pattern anchor is what guarantees no colon ever reaches aquamarine
@@ -122,11 +166,16 @@ end
 -- MONITORS
 ------------------------------------------------------------------
 -- Original: monitor = eDP-1, 2880x1620@120, 0x0, 2
+-- Values come from hardware.env. The fallbacks are Hyprland's own catch-all
+-- (output "" matches any monitor, preferred/auto let it pick) — confirmed
+-- against upstream's example/hyprland.lua. That is deliberately NOT this
+-- laptop's 2880x1620@120: a config that cannot find its profile must still
+-- light up an unknown panel.
 hl.monitor({
-    output   = "eDP-1",
-    mode     = "2880x1620@120",
-    position = "0x0",
-    scale    = 2,
+    output   = hw.PRIMARY_MONITOR  or "",
+    mode     = hw.MONITOR_MODE     or "preferred",
+    position = hw.MONITOR_POSITION or "auto",
+    scale    = num_or_string(hw.MONITOR_SCALE, "auto"),
 })
 -- Original (commented out):
 -- hl.monitor({ output = "HDMI-A-1", mode = "1920x1080@60", position = "0x0", scale = 1 })
@@ -151,7 +200,13 @@ hl.env("TERMINAL", "kitty")
 hl.env("EDITOR", "vim")
 
 -- toolkit-specific scale
-hl.env("GDK_SCALE", "2")
+-- GDK_SCALE only accepts an INTEGER. Setting it to 2 on a 1x display makes
+-- every GTK app twice the size it should be, so it is set only when the
+-- monitor scale is a whole number above 1.
+local _gdkScale = tonumber(hw.MONITOR_SCALE or "")
+if _gdkScale and _gdkScale > 1 and _gdkScale == math.floor(_gdkScale) then
+    hl.env("GDK_SCALE", tostring(math.floor(_gdkScale)))
+end
 hl.env("GDK_BACKEND", "wayland")
 hl.env("GTK_USE_PORTAL", "0")
 
@@ -184,9 +239,14 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("/usr/lib/gvfsd")
     hl.exec_cmd("/usr/lib/gvfsd-fuse $XDG_RUNTIME_DIR/gvfs -f")
 
+    -- Fills TOUCHPAD_DEVICE into hardware.env on the first login after a fresh
+    -- install: it is the one hardware fact that needs a running compositor, so
+    -- install.sh cannot get it from a TTY. Returns in ~10ms on every later boot
+    -- once the name is recorded. See scripts/complete-hardware-profile.sh.
+    hl.exec_cmd("~/.config/scripts/complete-hardware-profile.sh")
+
     hl.exec_cmd("hyprpaper")
     hl.exec_cmd("hypridle")
-    hl.exec_cmd("swww-daemon")
     -- elephant + walker replaced by finder/ (native Quickshell reimplementation,
     -- no elephant backend needed) — left here commented, not deleted, in case
     -- of rollback.
@@ -380,10 +440,15 @@ hl.config({
 -- Gestures (was commented out in the original):
 -- hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace", scale = 1.5 })
 
-hl.device({
-    name    = "asup1204:00-093a:2642-touchpad",
-    enabled = true,
-})
+-- toggle-touchpad.sh flips this device at runtime via `hyprctl eval`. The name
+-- is machine-specific, so it comes from the profile; with no profile there is
+-- simply no device block, which is harmless (enabled = true is the default).
+if hw.TOUCHPAD_DEVICE then
+    hl.device({
+        name    = hw.TOUCHPAD_DEVICE,
+        enabled = true,
+    })
+end
 
 
 ------------------------------------------------------------------
@@ -461,10 +526,9 @@ hl.bind("ALT + Alt_L",       hl.dsp.exec_cmd("echo \"confirm\" | socat - UNIX-CO
 -- bindm = mouse bind ({ mouse = true })
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + R",         hl.dsp.window.resize(), { mouse = true })
-
--- Hymission
--- hl.bind("SUPER + A", hl.dsp.plugin("hymission:open"))
-hl.bind("SUPER + A", hl.dsp.exec_cmd("~/.config/scripts/hymission-fix.sh"))
+-- SUPER + A removed: it ran ~/.config/scripts/hymission-fix.sh, which does
+-- not exist (never written), and the hymission plugin is not loaded either —
+-- hyprpm lists only hyprbars. The key was doing nothing at all.
 
 -- Toggle Layout (the old plugin:xtd:throwunfocused bind on this same key
 -- in the .conf is dead/superseded — SUPER + T is toggle-layout only)
@@ -484,7 +548,7 @@ hl.bind("F4", hl.dsp.exec_cmd("brightnessctl set 10%- && qs -p ~/.config/taskbar
 hl.bind("F5", hl.dsp.exec_cmd("brightnessctl set +10% && qs -p ~/.config/taskbar ipc call osd brightness"), { repeating = true })
 
 -- Keyboard backlight (unchanged)
-hl.bind("F7", hl.dsp.exec_cmd("/home/ahaan/.config/scripts/kbdbacklight_toggle.sh"))
+hl.bind("F7", hl.dsp.exec_cmd("~/.config/scripts/kbdbacklight_toggle.sh"))
 
 -- Mic mute (with OSD + keyboard LED sync). bindel = repeating + locked.
 -- Routed through micmute-led.sh instead of a bare `pactl ... toggle` because
@@ -514,9 +578,9 @@ hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record stop"), { release = tru
 hl.bind("F12", hl.dsp.exec_cmd("kitty --title btop -e zsh -i -c btop"))
 
 -- Screenshot Utilities
-hl.bind("F11",         hl.dsp.exec_cmd("hyprshot -m region -o /home/ahaan/Pictures/Screenshots"))
-hl.bind("ALT + Print", hl.dsp.exec_cmd("hyprshot -m window -o /home/ahaan/Pictures/Screenshots"))
-hl.bind("Print",       hl.dsp.exec_cmd("hyprshot -m active -m output -o /home/ahaan/Pictures/Screenshots"))
+hl.bind("F11",         hl.dsp.exec_cmd("hyprshot -m region -o ~/Pictures/Screenshots"))
+hl.bind("ALT + Print", hl.dsp.exec_cmd("hyprshot -m window -o ~/Pictures/Screenshots"))
+hl.bind("Print",       hl.dsp.exec_cmd("hyprshot -m active -m output -o ~/Pictures/Screenshots"))
 
 -- Colorpicker
 hl.bind("ALT + C", hl.dsp.exec_cmd("hyprpicker -a"))
@@ -554,7 +618,10 @@ hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-laun
 hl.bind("ALT + W", hl.dsp.exec_cmd("echo \"open:wallpaper\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
 -- Study
-hl.bind("SUPER + G", hl.dsp.exec_cmd("nautilus \"/home/ahaan/college/year-4/sleep deprivv project\""))
+-- Personal shortcut: edit studyDir (or drop this bind) on a machine where
+-- that folder does not exist. Nothing else depends on it.
+local studyDir = os.getenv("HOME") .. "/college/year-4/sleep deprivv project"
+hl.bind("SUPER + G", hl.dsp.exec_cmd("nautilus \"" .. studyDir .. "\""))
 
 
 ------------------------------------------------------------------

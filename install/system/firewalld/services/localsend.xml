@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LocalSend needs BOTH protocols on 53317: TCP carries the file transfer, UDP
+  carries multicast device discovery. An earlier version of this file defined
+  only the TCP port, which let transfers work once you had typed in an address
+  by hand but left devices unable to find each other.
+-->
+<service>
+  <short>LocalSend</short>
+  <description>LocalSend file transfer (TCP 53317) and device discovery (UDP 53317)</description>
+  <port port="53317" protocol="tcp"/>
+  <port port="53317" protocol="udp"/>
+</service>

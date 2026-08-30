@@ -53,9 +53,8 @@ sed -i "s/^gradient_color_1 = .*/gradient_color_1 = '$COLOR1'/" "$CAVA_CONFIG"
 sed -i "s/^gradient_color_2 = .*/gradient_color_2 = '$COLOR2'/" "$CAVA_CONFIG"
 sed -i "s/^gradient_color_3 = .*/gradient_color_3 = '$COLOR3'/" "$CAVA_CONFIG"
 
-# Restart SwayOSD
-pkill swayosd-server
-swayosd-server & disown
+# SwayOSD restart removed: swayosd is not installed and the taskbar draws its
+# own OSD pill (see the OSD BACKEND section of taskbar/shell.qml).
 
 # Handle Cava restart in the same terminal window using screen
 if pgrep -f cava > /dev/null; then

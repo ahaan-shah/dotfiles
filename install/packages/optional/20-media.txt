@@ -1,0 +1,7 @@
+# Media players and capture
+mpv
+imv
+obs-studio
+aur:spotify
+aur:cliamp
+aur:nomacs

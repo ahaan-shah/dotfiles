@@ -24,9 +24,19 @@
 #                              correct immediately, not just after the next
 #                              F9 press)
 
-LED="platform::micmute"
+# Machine-specific names come from the profile install.sh generates. Sourcing
+# it (rather than hardcoding) is what lets this script run unmodified on any
+# machine; the fallback keeps it working if the profile has not been written.
+HW_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/hardware.env"
+# shellcheck source=/dev/null
+[ -r "$HW_ENV" ] && . "$HW_ENV"
+
+LED="${MICMUTE_LED:-}"
 
 sync_led() {
+    # No LED on this machine (or no profile yet): muting still works, there is
+    # just nothing to light up.
+    [ -n "$LED" ] && [ -e "/sys/class/leds/$LED" ] || return 0
     if pactl get-source-mute @DEFAULT_SOURCE@ | grep -q yes; then
         brightnessctl -d "$LED" set 0 >/dev/null 2>&1   # muted -> LED off
     else

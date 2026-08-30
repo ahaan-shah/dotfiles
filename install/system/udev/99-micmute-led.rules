@@ -1,0 +1,11 @@
+# Detach the mic-mute LED from the kernel's own audio-micmute trigger.
+#
+# The kernel drives this LED lit-when-MUTED and offers no polarity knob. This
+# repo wants the opposite (lit = mic live), which is only possible once the
+# trigger is "none" and userspace owns the LED. With the trigger released, the
+# brightness file is writable unprivileged through the same seat ACL that
+# already covers the keyboard backlight, so scripts/micmute-led.sh needs no
+# privileges of its own.
+#
+# Matches any platform mic-mute LED, not just this laptop's.
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="*micmute*", ATTR{trigger}="none"

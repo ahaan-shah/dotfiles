@@ -1,0 +1,14 @@
+# Make the battery charge cap writable by the `power` group.
+#
+# WHY: the taskbar battery panel sets the cap on a click, and a click cannot
+# raise a sudo password prompt. Rather than a helper daemon or a setuid binary,
+# the attribute itself is handed to a group the user is in. sysfs resets this to
+# 100 on every boot, and udev re-applies the ownership on every `add`, so the
+# two stay in step.
+#
+# Generalised from the original BAT0-only rule: KERNEL=="BAT[0-9]*" also covers
+# machines whose pack enumerates as BAT1. Laptops with no such attribute simply
+# never match — the RUN keys are skipped, not failed.
+SUBSYSTEM=="power_supply", KERNEL=="BAT[0-9]*", TEST=="charge_control_end_threshold", \
+    RUN+="/usr/bin/chgrp power /sys/class/power_supply/%k/charge_control_end_threshold", \
+    RUN+="/usr/bin/chmod g+w /sys/class/power_supply/%k/charge_control_end_threshold"

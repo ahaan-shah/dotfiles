@@ -75,6 +75,25 @@ if (( TOTAL == 0 )); then
     exit 0
 fi
 
+# "name oldver -> newver" (AUR lines also have a trailing " [1h2m]" build
+# estimate) -> sets P_NAME/P_OLD/P_NEW, used to lay these out as columns.
+parse_line() {
+    local line="$1" rest after
+    P_NAME="${line%% *}"
+    rest="${line#* }"
+    P_OLD="${rest%% -> *}"
+    after="${rest#* -> }"
+    P_NEW="${after%% *}"
+}
+
+NAME_W=7   # min width to fit the "PACKAGE" header
+OLD_W=3    # min width to fit the "OLD" header
+for line in "${QU_LINES[@]}" "${AUR_LINES[@]}"; do
+    parse_line "$line"
+    (( ${#P_NAME} > NAME_W )) && NAME_W=${#P_NAME}
+    (( ${#P_OLD} > OLD_W )) && OLD_W=${#P_OLD}
+done
+
 declare -A IDX_NAME IDX_SOURCE
 idx=0
 
@@ -82,6 +101,7 @@ print_section() {
     local title="$1" count="$2"
     (( count > 0 )) || return
     printf '\n%s%s%s (%d)%s\n' "$BOLD" "$CYAN" "$title" "$count" "$RESET"
+    printf '       %s%-*s  %*s      %s%s\n' "$BOLD" "$NAME_W" "PACKAGE" "$OLD_W" "OLD" "NEW" "$RESET"
 }
 
 list_bucket() {
@@ -91,7 +111,8 @@ list_bucket() {
         idx=$((idx + 1))
         IDX_NAME[$idx]="$name"
         IDX_SOURCE[$idx]="$source"
-        printf '  %s%3d)%s %s\n' "$YELLOW" "$idx" "$RESET" "${bucket[$name]}"
+        parse_line "${bucket[$name]}"
+        printf '  %s%3d)%s %-*s  %*s  ->  %s\n' "$YELLOW" "$idx" "$RESET" "$NAME_W" "$P_NAME" "$OLD_W" "$P_OLD" "$P_NEW"
     done
 }
 
@@ -106,20 +127,22 @@ list_bucket OTHER_L repo
 
 print_section "AUR" "${#AUR_LINES[@]}"
 for line in "${AUR_LINES[@]}"; do
-    name="${line%% *}"
+    parse_line "$line"
     idx=$((idx + 1))
-    IDX_NAME[$idx]="$name"
+    IDX_NAME[$idx]="$P_NAME"
     IDX_SOURCE[$idx]="aur"
-    printf '  %s%3d)%s %s\n' "$YELLOW" "$idx" "$RESET" "$line"
+    printf '  %s%3d)%s %-*s  %*s  ->  %s\n' "$YELLOW" "$idx" "$RESET" "$NAME_W" "$P_NAME" "$OLD_W" "$P_OLD" "$P_NEW"
 done
 
-print_section "Flatpak" "${#FLAT_IDS[@]}"
-for i in "${!FLAT_IDS[@]}"; do
-    idx=$((idx + 1))
-    IDX_NAME[$idx]="${FLAT_IDS[$i]}"
-    IDX_SOURCE[$idx]="flatpak"
-    printf '  %s%3d)%s %s (%s)\n' "$YELLOW" "$idx" "$RESET" "${FLAT_NAMES[$i]}" "${FLAT_IDS[$i]}"
-done
+if (( ${#FLAT_IDS[@]} > 0 )); then
+    printf '\n%s%sFlatpak%s (%d)\n' "$BOLD" "$CYAN" "$RESET" "${#FLAT_IDS[@]}"
+    for i in "${!FLAT_IDS[@]}"; do
+        idx=$((idx + 1))
+        IDX_NAME[$idx]="${FLAT_IDS[$i]}"
+        IDX_SOURCE[$idx]="flatpak"
+        printf '  %s%3d)%s %-*s  %s\n' "$YELLOW" "$idx" "$RESET" "$NAME_W" "${FLAT_NAMES[$i]}" "${FLAT_IDS[$i]}"
+    done
+fi
 
 printf '\n%sTotal: %d package(s) to update.%s\n' "$BOLD" "$TOTAL" "$RESET"
 printf 'Type the numbers of any packages to %sexclude%s (space separated), or press Enter to update everything:\n> ' "$RED" "$RESET"

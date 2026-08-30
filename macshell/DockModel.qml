@@ -1,5 +1,9 @@
 import QtQuick
 
+// NOTE: ListElement values must be compile-time literals — no bindings, no JS —
+// so a home-relative icon path cannot call Quickshell.env() here. Such paths are
+// written with a leading "~/" and expanded by Dock.qml's _expandHome() as the
+// model is read in _rebuild(). Keeps this file free of any hardcoded username.
 ListModel {
 
     ListElement {
@@ -43,9 +47,16 @@ ListModel {
     }
     ListElement {
         name: "ChatGPT"
-        icon: "/home/ahaan/.local/share/icons/webapps/openai.svg"
+        icon: "~/.local/share/icons/webapps/openai.svg"
         command: "chromium --app=https://chat.openai.com"
         windowClass: "chat.openai"
+        separator: false
+    }
+    ListElement {
+        name: "Claude"
+        icon: "~/.local/share/icons/webapps/claude.png"
+        command: "chromium --app=https://claude.ai/new"
+        windowClass: "claude.ai"
         separator: false
     }
     ListElement {
@@ -57,7 +68,7 @@ ListModel {
     }
     ListElement {
         name: "TradingView"
-        icon: "/home/ahaan/.local/share/icons/webapps/tradingview.svg"
+        icon: "~/.local/share/icons/webapps/tradingview.svg"
         command: "chromium --app=https://www.tradingview.com/chart/lCRrEItS/"
         windowClass: "tradingview"
         separator: false

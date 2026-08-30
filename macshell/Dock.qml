@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
+import Quickshell
 import "."
 
 Item {
@@ -96,6 +97,16 @@ Item {
         }
     }
 
+    // ── Home-relative paths ──────────────────────────────
+    // DockModel's ListElements cannot evaluate JS, so any icon living under the
+    // user's home is written there as "~/..." and expanded here instead. Only a
+    // leading "~/" is treated specially; absolute paths pass through untouched.
+    readonly property string homeDir: Quickshell.env("HOME") || ""
+    function _expandHome(path) {
+        if (typeof path !== "string" || path.substring(0, 2) !== "~/") return path
+        return root.homeDir + path.substring(1)
+    }
+
     // ── Stable state ──────────────────────────────────────────────
     property var _unpinnedOrder: []
     property var dynamicApps:    []  // written atomically by _rebuild(), never a binding
@@ -110,7 +121,7 @@ Item {
         for (let i = 0; i < dockModel.count; i++) {
             pinned.push({
                 name:        dockModel.get(i).name,
-                icon:        dockModel.get(i).icon,
+                icon:        root._expandHome(dockModel.get(i).icon),
                 command:     dockModel.get(i).command,
                 windowClass: dockModel.get(i).windowClass,
                 separator:   dockModel.get(i).separator,

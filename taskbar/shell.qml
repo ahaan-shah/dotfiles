@@ -11,7 +11,7 @@
 //  scripts, so behaviour is identical.                       //
 //                                                            //
 //  >>> TO VERIFY ON YOUR MACHINE (search VERIFY)             //
-//      1. homeDir (below) if your user isn't "ahaan"         //
+//      1. homeDir (below) now resolves from $HOME at runtime //
 //      2. Bluetooth property names (BluetoothDevice.*)       //
 //      wifi essid/signal tooltip reads it via `nmcli` — needs //
 //      NetworkManager running (icon works regardless).       //
@@ -35,7 +35,7 @@ Scope {
     id: root
 
     // ---- VERIFY: home directory (used for pywal colors + scripts) -------------
-    property string homeDir: "/home/ahaan"
+    property string homeDir: Quickshell.env("HOME") || ""
     property string scriptsDir: homeDir + "/.config/waybar/scripts"
     // Quickshell.env is synchronous, so this needs no deferral.
     property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
@@ -160,11 +160,25 @@ Scope {
     // charge_full/charge_full_design directly instead (same ratio upower
     // itself uses under the hood).
     property real batHealthPct: -1
+
+    // The battery is BAT0 on this laptop but BAT1 on plenty of others, so the
+    // name is resolved at call time instead of being written into the source:
+    // first from the profile install.sh generates, then by globbing sysfs.
+    // Emitted as a shell prelude because both readers are Process commands.
+    readonly property string batResolve:
+        "HW=\"${XDG_CONFIG_HOME:-$HOME/.config}/scripts/hardware.env\"; " +
+        "[ -r \"$HW\" ] && . \"$HW\"; " +
+        // NOTE: an unset BATTERY must NOT collapse to the parent directory —
+        // \"/sys/class/power_supply/\" is itself a valid directory, so a bare
+        // [ -d ] test would pass and the glob fallback would never run.
+        "B=; [ -n \"${BATTERY:-}\" ] && B=\"/sys/class/power_supply/$BATTERY\"; " +
+        "[ -n \"$B\" ] && [ -d \"$B\" ] || B=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1); "
+
     Process {
         id: batHealthRead
-        command: ["bash", "-c",
-            "cat /sys/class/power_supply/BAT0/charge_full 2>/dev/null; echo '|'; " +
-            "cat /sys/class/power_supply/BAT0/charge_full_design 2>/dev/null"]
+        command: ["bash", "-c", root.batResolve +
+            "cat \"$B/charge_full\" 2>/dev/null; echo '|'; " +
+            "cat \"$B/charge_full_design\" 2>/dev/null"]
         stdout: StdioCollector { onStreamFinished: {
             var p = (this.text || "").trim().split("|");
             var full = parseFloat(p[0]); var design = parseFloat(p[1]);
@@ -182,7 +196,8 @@ Scope {
     property int batThreshold: 100
     Process {
         id: batThresholdRead
-        command: ["cat", "/sys/class/power_supply/BAT0/charge_control_end_threshold"]
+        command: ["bash", "-c", root.batResolve +
+                  "cat \"$B/charge_control_end_threshold\" 2>/dev/null"]
         stdout: StdioCollector { onStreamFinished: {
             var v = parseInt((this.text || "").trim()); if (!isNaN(v)) root.batThreshold = v; } }
     }

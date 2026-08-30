@@ -34,10 +34,9 @@ alias clr='clear'
 alias neo="neofetch"
 alias ff="fastfetch"
 alias yaz="yazi"
-alias bkpdots="/home/ahaan/.config/scripts/backup_configs.sh"
-alias backupnow="/home/ahaan/.config/scripts/backup_files.sh"
+alias bkpdots="~/.config/scripts/backup_configs.sh"
+alias backupnow="~/.config/scripts/backup_files.sh"
 alias py="python"
-#alias arduinodata="/home/ahaan/college/year-2/sem4/dsp/Arduino/scripts/log_arduino.sh"
 alias f="figlet"
 alias btui="bluetui"
 alias ave="source .venv/bin/activate"
@@ -45,13 +44,13 @@ alias jnotes="jupyter notebook"
 alias jlab="jupyter lab"
 
 alias connectiphone="ifuse ~/iphone && nautilus ~/iphone/DCIM"
-alias ninitimes="/home/ahaan/.config/scripts/sleep-timer.sh"
+alias ninitimes="~/.config/scripts/sleep-timer.sh"
 
 # system update and install and remove packages
-alias update="/home/ahaan/.config/scripts/system-update.sh"
-alias get="/home/ahaan/.config/scripts/pkg-install.sh"
-alias aurget="/home/ahaan/.config/scripts/pkg-aur-install.sh"
-alias remove="/home/ahaan/.config/scripts/pkg-remove.sh" 
+alias update="~/.config/scripts/system-update.sh"
+alias get="~/.config/scripts/pkg-install.sh"
+alias aurget="~/.config/scripts/pkg-aur-install.sh"
+alias remove="~/.config/scripts/pkg-remove.sh" 
 
 # encryption
 alias sycrypt="gpg -c"
@@ -75,3 +74,4 @@ export VISUAL="vim"
 export PATH=$PATH:~/.spicetify
 export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/go/bin:$PATH"
+export LIBVIRT_DEFAULT_URI=qemu:///system

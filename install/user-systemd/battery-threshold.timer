@@ -1,0 +1,25 @@
+[Unit]
+Description=Watchdog for the BAT0 charge cap
+
+# Why a watchdog and not just "set it once": the cap is enforced by the EC, and
+# the EC drops it silently. sysfs keeps reading the correct number, so nothing
+# short of watching the battery charge past the cap reveals it. Known triggers:
+# resume from hibernate (the kernel's cached value survives in the restored
+# image while the EC has reset), and an upstream asus-wmi issue where
+# asus_wmi_set_devstate() fails to reach the EC with no error reported.
+#
+# 1 minute is comfortably tight: charging 80% -> 100% takes far longer, so a
+# lapse is caught well before it meaningfully overcharges.
+#
+# Note this is a MONOTONIC timer, so the clock does not advance while suspended
+# and the first post-resume run can be up to a minute late. That is fine for the
+# same reason. (Persistent= is deliberately absent — it only affects OnCalendar
+# timers and would do nothing here.)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

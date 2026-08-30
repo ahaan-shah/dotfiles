@@ -1,0 +1,6 @@
+# AUR — required. Installed with yay, which the installer bootstraps if absent.
+# Format matches the optional lists: an "aur:" prefix means "not in the official
+# repos", so a single parser handles every manifest in this directory.
+aur:bibata-cursor-theme   # hyprland.lua sets XCURSOR_THEME=Bibata-Original-Ice
+aur:python-pywalfox       # apply-wallpaper.sh calls `pywalfox update`
+aur:voxtype               # CTRL+. push-to-talk dictation

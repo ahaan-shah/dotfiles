@@ -1,0 +1,1 @@
+SUBSYSTEM=="power_supply", KERNEL=="BAT0", RUN+="/usr/bin/chgrp power /sys/class/power_supply/BAT0/charge_control_end_threshold", RUN+="/usr/bin/chmod g+w /sys/class/power_supply/BAT0/charge_control_end_threshold"

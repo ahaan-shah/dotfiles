@@ -1,0 +1,12 @@
+# FONTS
+# ttf-jetbrains-mono-nerd is REQUIRED: every shell in this repo sets
+# "JetBrainsMono Nerd Font Propo" and draws its icons from that font's cmap.
+# terminus-font is REQUIRED: greetd's config runs `setfont ter-132b`.
+ttf-jetbrains-mono-nerd
+ttf-jetbrains-mono
+terminus-font
+noto-fonts
+noto-fonts-emoji
+ttf-hack-nerd
+ttf-roboto
+ttf-roboto-mono

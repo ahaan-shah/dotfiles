@@ -1,0 +1,7 @@
+[Unit]
+Description=Re-assert the BAT0 charge cap if the EC has dropped it
+Documentation=file:%h/.config/scripts/apply-battery-threshold.sh
+
+[Service]
+Type=oneshot
+ExecStart=%h/.config/scripts/apply-battery-threshold.sh --check

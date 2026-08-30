@@ -1,0 +1,1 @@
+ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="platform::micmute", ATTR{trigger}="none"

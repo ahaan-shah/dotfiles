@@ -23,10 +23,20 @@
 #    The only way to notice is behavioural, which is what --check does.
 set -u
 
-THRESH=/sys/class/power_supply/BAT0/charge_control_end_threshold
+# Machine-specific names come from the profile install.sh generates. Sourcing
+# it (rather than hardcoding) is what lets this script run unmodified on any
+# machine; the fallback keeps it working if the profile has not been written.
+HW_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/hardware.env"
+# shellcheck source=/dev/null
+[ -r "$HW_ENV" ] && . "$HW_ENV"
+
+BAT="/sys/class/power_supply/${BATTERY:-BAT0}"
+THRESH="$BAT/charge_control_end_threshold"
 STATE="$HOME/.config/battery-threshold"
 LOG="${XDG_RUNTIME_DIR:-/tmp}/battery-threshold.log"
-BAT=/sys/class/power_supply/BAT0
+
+# Desktops, and laptops whose firmware exposes no cap, have nothing to do here.
+[ -e "$THRESH" ] || exit 0
 
 log() { printf '%s  %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
 

@@ -21,6 +21,12 @@ Item {
     id: root
     required property var context
 
+    // Home directory, resolved at runtime rather than hardcoded, so this
+    // config is portable to any user/machine. Quickshell.env is synchronous
+    // (same reason finder/Sys.qml uses it), so it is safe to read from a
+    // property binding evaluated during initial construction.
+    readonly property string home: Quickshell.env("HOME") || ""
+
     // Skip the ~1s entrance animation (blur ramp, dim ramp, content fade)
     // when this lock is being raised because the machine is about to sleep or
     // hibernate — set by lockscreen-launch.sh --instant, which hypridle's
@@ -110,11 +116,11 @@ Item {
     // entirely, only the correct path is ever set.
     property string wallpaperPath: {
         const m = /^path\s*=\s*(.+)$/m.exec(hyprpaperFile.text())
-        return m ? m[1].trim() : "/home/ahaan/Pictures/wallpapers/dune.jpg"
+        return m ? m[1].trim() : (root.home + "/Pictures/wallpapers/dune.jpg")
     }
     FileView {
         id: hyprpaperFile
-        path: "/home/ahaan/.config/hypr/hyprpaper.conf"
+        path: root.home + "/.config/hypr/hyprpaper.conf"
         blockLoading: true
         blockAllReads: true
         watchChanges: true

@@ -1,0 +1,90 @@
+# CORE — the desktop cannot work without these.
+# Every entry is here because something in this repo actually calls it; the
+# ones that are non-obvious carry the reason.
+
+# ── compositor / session ──────────────────────────────────────────────
+hyprland
+hypridle
+hyprpaper
+hyprpicker
+hyprshot                  # F11 / Print / ALT+Print binds
+xdg-desktop-portal-hyprland
+xdg-user-dirs
+quickshell                # taskbar, macshell, finder, lockscreen all run on it
+qt5-wayland
+qt6-wayland
+lxqt-policykit            # hyprland.lua autostarts lxqt-policykit-agent
+greetd
+greetd-tuigreet
+polkit
+
+# ── audio ─────────────────────────────────────────────────────────────
+pipewire
+pipewire-alsa
+pipewire-jack
+pipewire-pulse
+wireplumber               # wpctl, used by the F3 volume bind
+libpulse                  # pactl, used by F1/F2 and micmute-led.sh
+gst-plugin-pipewire
+sof-firmware
+
+# ── network / bluetooth ───────────────────────────────────────────────
+networkmanager            # the taskbar wifi panel is nmcli-driven
+iwd                       # NM's wifi backend here (see wifi_backend.conf)
+bluez
+bluez-utils               # bluetoothctl — the bluetooth panel's action path
+upower                    # Quickshell.Services.UPower, battery widget
+power-profiles-daemon     # finder/PowerProfiles.qml
+firewalld                 # the network phase configures it (LocalSend exception)
+
+# ── terminal / shell ──────────────────────────────────────────────────
+kitty                     # $TERMINAL, and the F12 btop bind
+zsh
+zsh-autosuggestions
+zsh-syntax-highlighting
+starship
+vim
+nano
+less
+which
+
+# ── things the code shells out to (each verified against the source) ──
+wl-clipboard              # finder's clipboard history + voxtype fallback
+jq
+socat                     # every IPC socket in this repo
+fd                        # finder file search
+fzf                       # finder fuzzy ranking
+grim
+slurp
+imagemagick
+ffmpeg
+poppler                   # pdftoppm, finder's PDF previews
+libnotify                 # notify-send
+glib2                     # gio launch, used by finder's app launcher
+lua54                     # hyprland.lua offline syntax check
+libqalculate              # qalc, finder's calculator mode
+brightnessctl             # F4/F5, kbd backlight, micmute LED
+python-pywal              # the whole colour scheme
+inotify-tools             # WalColors live theme reload in all three shells
+wtype                     # voxtype types through this
+keyd                      # capslock remap (see system/keyd/default.conf)
+
+# ── file manager / desktop plumbing ───────────────────────────────────
+nautilus                  # SUPER+E and SUPER+G
+gvfs
+gvfs-mtp
+gvfs-smb
+papirus-icon-theme        # DockModel.qml points at Papirus-Dark icon paths
+chromium                  # the dock's webapp entries are `chromium --app=...`
+
+# ── referenced by configs this installer deploys ──────────────────────
+btop                      # F12
+cava                      # apply-wallpaper.sh syncs its gradient to pywal
+fastfetch
+
+# ── build toolchain (needed for yay + hyprpm plugin builds) ───────────
+base-devel
+git
+cmake
+meson
+rsync
