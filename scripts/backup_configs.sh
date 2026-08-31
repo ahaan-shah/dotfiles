@@ -71,6 +71,10 @@ sync "$HOME/.config/cava"        "$DOTDIR/cava"
 sync "$HOME/.config/fastfetch"   "$DOTDIR/fastfetch"
 sync "$HOME/.config/neofetch"    "$DOTDIR/neofetch"
 sync "$HOME/.config/fum"         "$DOTDIR/fum"
+# btop.conf is part of the desktop — F12 is bound to it in hyprland.lua — and
+# install.sh already tries to deploy ~/.config/btop, so without this line a
+# fresh machine silently got stock btop settings.
+sync "$HOME/.config/btop"        "$DOTDIR/btop"
 sync "$HOME/.config/scripts"     "$DOTDIR/scripts"
 sync "$HOME/.config/macshell"    "$DOTDIR/macshell"
 sync "$HOME/.config/taskbar"     "$DOTDIR/taskbar"
