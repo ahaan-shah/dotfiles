@@ -258,9 +258,9 @@ hl.on("hyprland.start", function()
     -- re-applies the taskbar battery panel's saved charge cap (sysfs
     -- resets to 100 on every boot) — see scripts/apply-battery-threshold.sh
     hl.exec_cmd("~/.config/scripts/apply-battery-threshold.sh")
-    -- sync the mic LED to actual mute state right away, don't wait for the
-    -- first F9 press (see scripts/micmute-led.sh)
-    hl.exec_cmd("~/.config/scripts/micmute-led.sh sync")
+    -- always come up with the mic MUTED and the LED off, whatever mute state
+    -- wireplumber restores from the last session (see scripts/micmute-led.sh)
+    hl.exec_cmd("~/.config/scripts/micmute-led.sh startup")
     -- macdock + macswitcher merged into one Quickshell instance (macshell)
     hl.exec_cmd("~/.config/macshell/macshell-launch.sh")
     hl.exec_cmd("~/.config/taskbar/taskbar-launch.sh")

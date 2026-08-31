@@ -20,9 +20,10 @@
 #   micmute-led.sh toggle   — toggles source mute, syncs the LED, fires the
 #                              taskbar OSD (bound to F9 in hyprland.lua)
 #   micmute-led.sh sync     — waits for the audio server, then syncs the LED
-#                              to the current mute state, no toggle (run at
-#                              Hyprland startup so the LED is correct
-#                              immediately, not just after the next F9 press)
+#                              to the current mute state, no toggle
+#   micmute-led.sh startup  — waits for the audio server, forces the mic MUTED
+#                              and the LED off, whatever wireplumber restored
+#                              (run from hyprland.start)
 
 # Machine-specific names come from the profile install.sh generates. Sourcing
 # it (rather than hardcoding) is what lets this script run unmodified on any
@@ -91,6 +92,30 @@ sync_wait() {
     return 1
 }
 
+# Startup. wireplumber restores whatever mute state the previous session ended
+# with, so a fresh login can come up with the mic live. This machine should
+# always start muted, so assert it rather than read it — but still wait for the
+# server the same way sync_wait does, and still set the LED from a read-back so
+# it reflects reality rather than intent.
+mute_on_start() {
+    local i
+    for i in $(seq 1 120); do          # 120 * 0.25s = 30s ceiling
+        if mute_state >/dev/null; then
+            # The first readable answer can still predate wireplumber's restore
+            # (it applies the saved state as it creates the node), so settle
+            # before muting — otherwise the restore lands after us and wins.
+            sleep 1
+            pactl set-source-mute @DEFAULT_SOURCE@ 1 >/dev/null 2>&1
+            sync_led
+            return 0
+        fi
+        sleep 0.25
+    done
+    # Audio server never came up. Nothing to mute and nothing reliable to show,
+    # so leave the LED alone rather than assert a state we never read.
+    return 1
+}
+
 case "$1" in
     toggle)
         pactl set-source-mute @DEFAULT_SOURCE@ toggle
@@ -100,8 +125,11 @@ case "$1" in
     sync)
         sync_wait
         ;;
+    startup)
+        mute_on_start
+        ;;
     *)
-        echo "usage: $0 {toggle|sync}" >&2
+        echo "usage: $0 {toggle|sync|startup}" >&2
         exit 1
         ;;
 esac
