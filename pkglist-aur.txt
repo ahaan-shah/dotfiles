@@ -8,6 +8,7 @@ fum-bin
 localsend-bin
 neofetch
 nomacs
+python-pywal
 python-pywalfox
 rstudio-desktop-bin
 spotify

@@ -1,3 +1,0 @@
-# Chat and social
-discord
-signal-desktop

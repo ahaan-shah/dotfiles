@@ -1,0 +1,14 @@
+# Virtual machines — QEMU/KVM through libvirt, driven by virt-manager.
+#
+# Installed only when the CPU actually reports virtualisation support; the
+# `virt` phase then sets the qemu user/group, enables the modular libvirt
+# daemons and marks the default NAT network autostart, so "download an ISO and
+# create a VM" works with no further setup.
+qemu-desktop              # the desktop-oriented QEMU build (x86_64 + UI)
+libvirt
+virt-manager
+virt-viewer
+dnsmasq                   # libvirt's default NAT network needs it for DHCP/DNS
+edk2-ovmf                 # UEFI firmware for guests (Windows 11, Secure Boot)
+swtpm                     # emulated TPM 2.0 — also a Windows 11 requirement
+vde2                      # libvirt's userspace networking backend

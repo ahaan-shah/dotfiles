@@ -155,6 +155,31 @@ detect_touchpad() {
 }
 
 # --- run everything -----------------------------------------------------
+# detect_fprint — is there a real fingerprint reader fprintd can talk to?
+# Gated on the tool AND on an enumerated device: fprintd being installed proves
+# nothing (20-laptop.txt installs it on every laptop), and `fprintd-list`
+# exits non-zero with no device, so the call is guarded.
+detect_fprint() {
+    command -v fprintd-list >/dev/null 2>&1 || return 1
+    local out
+    out="$(fprintd-list "$USER" 2>/dev/null || true)"
+    case "$out" in
+        *"found "[1-9]*) ;;
+        *) return 1 ;;
+    esac
+    # The device name, for the report. Falls back to a generic label.
+    printf '%s\n' "$(printf '%s' "$out" | sed -n 's/^Fingerprints for user .* on \(.*\):$/\1/p' \
+                      | head -1)" | grep . || echo "fingerprint reader"
+}
+
+# detect_kvm — hardware virtualisation, which gates the whole `virt` phase.
+# /dev/kvm is the honest test but only exists once the module is loaded, so the
+# CPU flags are checked too: a fresh TTY install may not have loaded kvm yet.
+detect_kvm() {
+    [ -e /dev/kvm ] && return 0
+    grep -qE '^flags.*\b(vmx|svm)\b' /proc/cpuinfo
+}
+
 detect_all() {
     HW_BATTERY=$(detect_battery || true)
     HW_CHARGE_CAP=0
@@ -165,12 +190,16 @@ detect_all() {
     HW_TOUCHPAD=$(detect_touchpad || true)
     MON_NAME=; MON_MODE=; MON_SCALE=; MON_POS=; MON_SOURCE=
     detect_monitor || true
+    HW_FPRINT=$(detect_fprint || true)
+    HW_KVM=0
+    if detect_kvm; then HW_KVM=1; fi
     HW_LIVE=0
     if hypr_live; then HW_LIVE=1; fi
 }
 
 print_detection() {
     local cap="no"; [ "$HW_CHARGE_CAP" = 1 ] && cap="yes"
+    local kvm="no — the VM phase will be skipped"; [ "${HW_KVM:-0}" = 1 ] && kvm="yes"
     cat <<REPORT
   user / home        : $USER  ($HOME)
   monitor            : ${MON_NAME:-<none detected>}  ${MON_MODE:-} pos=${MON_POS:-} scale=${MON_SCALE:-}
@@ -180,6 +209,8 @@ print_detection() {
   mic-mute LED       : ${HW_MICMUTE_LED:-<none>}
   touchpad device    : ${HW_TOUCHPAD:-<needs a live Hyprland session>}
   integrated GPU     : ${HW_IGPU_PCI:-<none detected — GPU pin will stay off>}
+  fingerprint reader : ${HW_FPRINT:-<none detected>}
+  KVM virtualisation : $kvm
 REPORT
 }
 

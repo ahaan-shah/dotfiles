@@ -1,9 +1,0 @@
-# Development
-go
-r
-python-pipx
-gcc-fortran
-ripgrep
-linux-headers
-aur:vscodium-bin
-aur:rstudio-desktop-bin

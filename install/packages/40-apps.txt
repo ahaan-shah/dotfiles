@@ -1,0 +1,73 @@
+# Applications — installed unconditionally, from the official repos.
+#
+# These used to sit behind a per-group y/n prompt. That prompt is gone: the
+# point of this installer is to reproduce the desktop, and answering "n" to a
+# group produced a machine that was subtly not this one. Anything genuinely
+# unwanted is one `pacman -R` away afterwards.
+#
+# Deliberately NOT here (the user's call, and each is a large install nobody
+# should get by surprise): r, steam, discord.
+
+# ── media ────────────────────────────────────────────────────────────────
+mpv                       # mimeapps.list: every audio/video type
+imv                       # mimeapps.list: every image type
+obs-studio
+
+# ── chat ─────────────────────────────────────────────────────────────────
+signal-desktop
+
+# ── documents / office ───────────────────────────────────────────────────
+libreoffice-still
+obsidian
+calibre                   # mimeapps.list: application/epub+zip
+papers                    # mimeapps.list: application/pdf
+zathura
+zathura-pdf-poppler
+apostrophe
+gnome-text-editor         # mimeapps.list: text/plain, text/x-shellscript
+
+# ── development ──────────────────────────────────────────────────────────
+go
+python-pipx
+gcc-fortran
+ripgrep
+linux-headers             # needed by any DKMS module built later
+
+# ── terminal tooling ─────────────────────────────────────────────────────
+yazi
+htop
+tmux
+tealdeer
+tree
+figlet
+cmatrix
+dysk
+wiremix
+bluetui
+impala
+minicom
+
+# ── GNOME utilities ──────────────────────────────────────────────────────
+gnome-calculator
+gnome-calendar
+gnome-clocks
+gnome-disk-utility
+snapshot
+gradia
+nwg-displays
+
+# ── printing ─────────────────────────────────────────────────────────────
+cups
+cups-pk-helper
+system-config-printer
+
+# ── system utilities ─────────────────────────────────────────────────────
+flatpak                   # the system phase adds the Flathub remote
+ifuse
+usbutils
+unzip
+zip
+wget
+intel-gpu-tools
+mesa-utils
+vulkan-tools

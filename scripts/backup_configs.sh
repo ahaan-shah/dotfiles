@@ -24,6 +24,12 @@ SRCREPO="${HYPRAHAAN_SRC:-$HOME/projects/hyprahaan}"
 # ── things that must never be committed ──────────────────────────────────
 EXCLUDES=(
     --exclude 'hardware.env'        # machine-specific; install.sh regenerates it
+    # nwg-displays writes these with THIS panel's resolution/scale hardcoded.
+    # hyprland.lua does not source them, so they are inert here — but they are
+    # machine-specific values in a public repo, same class as hardware.env.
+    --exclude 'monitors.conf'
+    --exclude 'monitors.lua'
+    --exclude 'workspaces.conf'
     --exclude 'backup_files.sh'     # names personal directories
     --exclude 'wake-lag-*'          # bulky machine-specific diagnostic captures
     --exclude 'wake-lag-logs/'
@@ -121,6 +127,13 @@ done
 # Authored in the source repo; carried here so a fresh machine only ever needs
 # to clone the dotfiles repo.
 if [ -d "$SRCREPO/install" ]; then
+    # Refresh the shipped mimeapps template from the live file FIRST, so the
+    # copy that travels inside install/ can never drift from reality. It is the
+    # fallback the installer uses when run from the source repo rather than
+    # from this mirror.
+    if [ -f "$HOME/.config/mimeapps.list" ] && [ -d "$SRCREPO/install/templates" ]; then
+        cp -f "$HOME/.config/mimeapps.list" "$SRCREPO/install/templates/mimeapps.list"
+    fi
     sync "$SRCREPO/install" "$DOTDIR/install"
 else
     echo "Missing: $SRCREPO/install (set HYPRAHAAN_SRC if the repo moved)"

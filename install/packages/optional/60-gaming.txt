@@ -1,6 +1,0 @@
-# Gaming
-# NOTE: for per-game dGPU offload set a game's Steam launch options to
-#   prime-run %command%
-# Do not offload the Steam client itself — it is Chromium/CEF and would hold
-# the discrete GPU out of its deepest idle state the whole time Steam is open.
-steam

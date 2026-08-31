@@ -9,7 +9,7 @@ git clone https://github.com/ahaan-shah/dotfiles.git ~/.config/dotfiles
 ```
 
 Run it as your normal user, not root. It calls `sudo` only in the one phase
-that needs it, and that phase can be skipped with `--no-root`.
+that needs it, and those phases can be skipped with `--no-root`.
 
 ## Try it without committing to anything
 
@@ -29,17 +29,78 @@ that needs it, and that phase can be skipped with `--no-root`.
 | Phase | |
 |---|---|
 | `preflight` | Arch check, network check, hardware detection report, confirm |
-| `packages` | pacman core/fonts/laptop, GPU userspace matched to the actual vendor, bootstraps `yay`, AUR, then prompts per optional app group |
+| `packages` | Every manifest in `packages/`, GPU userspace matched to the actual vendor, then the four AUR packages (bootstrapping `yay` first) |
 | `configs` | Deploys config directories into `~/.config`, backing up anything it overwrites |
 | `hardware` | Detects this machine and writes `~/.config/scripts/hardware.env` |
 | `apps` | voxtype model + config, Spotify Wayland flag, battery cap preference, login shell |
 | `usersystemd` | User units, enables the battery watchdog timer and voxtype |
 | `system` | `/etc` rules, group membership, system services, greetd |
 | `network` | Wifi (NetworkManager + iwd), Bluetooth, and the firewall with the LocalSend exception |
+| `virt` | QEMU/KVM via libvirt: qemu.conf, the `libvirt` group, the modular daemons, and the default NAT network |
 | `theming` | pywal templates, primes the colour scheme, generates `hyprpaper.conf`, GTK/cursor |
 | `plugins` | Builds and enables `hyprbars` via `hyprpm` |
 | `hibernation` | Opt-in. Swap file, `resume=` cmdline, resume hook — the only phase that edits your bootloader |
+| `fingerprint` | Offers to enrol fingers, if a reader is detected. Interactive by nature |
 | `verify` | Asserts the result, including that `hyprland.lua` actually parses |
+
+## Packages
+
+There is no interactive package picker. Answering "no" to a group produced a
+machine that was subtly not this one, which defeats the point, so every
+manifest in `packages/` is installed:
+
+| Manifest | |
+|---|---|
+| `10-core.txt` | The compositor, the four Quickshell apps' runtime deps, the shell |
+| `20-laptop.txt` | Battery, fingerprint, zram — installed only when a battery exists |
+| `30-fonts.txt` | JetBrainsMono Nerd Font and friends |
+| `40-apps.txt` | The applications. Deliberately excludes `r`, `steam`, `discord` |
+| `50-aur.txt` | Exactly four: `bibata-cursor-theme`, `voxtype`, `localsend-bin`, `neofetch` |
+| `60-virt.txt` | QEMU/libvirt — installed only when the CPU reports VT-x/AMD-V |
+| `90-nvidia.txt` | Reference only. Never installed; see the NVIDIA note at the bottom |
+
+The AUR list is short on purpose: an AUR build is slow and can fail, and which
+browser or music player you want is a personal choice. Everything else — Zen,
+Brave, Spotify, VSCodium, the TUI toys — is one fuzzy search away afterwards:
+
+```sh
+~/.config/scripts/pkg-aur-install.sh
+```
+
+Note `mimeapps.list` points `http`/`https` at `zen.desktop`. Until you install
+Zen, those associations fall through to Chromium, which is in `10-core.txt`.
+
+## Virtual machines
+
+The `virt` phase exists because none of what libvirt needs is a default. After
+it, opening virt-manager and pointing it at a downloaded ISO just works:
+
+1. `qemu.conf` gets `user`/`group = "qemu"` — edited key-by-key, because the
+   file is package-owned and shipping a whole copy would generate `.pacnew`
+   noise on every libvirt update.
+2. You are added to the `libvirt` group. **Not** `kvm` — systemd's own
+   `50-udev-default.rules` already gives `/dev/kvm` mode 0666.
+3. The modular `virt*d` sockets are enabled (not the monolithic `libvirtd`).
+   They are socket-activated, so nothing runs until virt-manager connects.
+4. The `default` NAT network is marked autostart and started. The package
+   defines it but leaves it stopped, which is why a fresh VM otherwise reports
+   *"Network 'default' is not active"*.
+
+`edk2-ovmf` and `swtpm` are included so UEFI and TPM 2.0 guests (Windows 11)
+work without hunting for firmware.
+
+## Fingerprint
+
+If a reader is detected, the `fingerprint` phase offers to enrol fingers, one
+at a time, from a menu of all ten, and asks after each whether you want
+another. It runs second-to-last: it is the only phase that needs you physically
+at the machine, so everything that can be done without you already has been.
+
+It enrols fingerprints only — it does **not** wire `pam_fprintd` into
+`/etc/pam.d`. The lockscreen calls `fprintd-verify` directly, so enrolment is
+all it needs, and editing `system-auth` is a well-known way to lock yourself
+out. `--yes` skips the phase rather than hanging on a swipe that cannot be
+automated; run it later with `--only fingerprint`.
 
 ## One run, from a bare TTY
 

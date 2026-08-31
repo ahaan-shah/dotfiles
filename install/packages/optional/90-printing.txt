@@ -1,4 +1,0 @@
-# Printing (enables cups.service)
-cups
-cups-pk-helper
-system-config-printer

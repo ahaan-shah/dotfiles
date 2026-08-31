@@ -125,6 +125,36 @@ ask_yn() {
     done
 }
 
+# ask_choice <question> <default-index> <label...> — numbered menu.
+# Echoes the 1-BASED INDEX of the choice on stdout; prompts go to stderr so the
+# caller can capture it with a plain command substitution. Returning the index
+# rather than the label is deliberate: labels are decorated for display, and
+# reverse-mapping a decorated string back to its array slot is exactly the kind
+# of fragile matching this repo has been bitten by before. Honours --yes.
+ask_choice() {
+    local q="$1" def="$2"; shift 2
+    local n=$# i ans
+    if [ "$ASSUME_YES" = 1 ]; then echo "$def"; return 0; fi
+    printf '\n  %s%s%s\n' "$C_B" "$q" "$C_RST" >&2
+    i=1
+    for ans in "$@"; do printf '    %2d) %s\n' "$i" "$ans" >&2; i=$((i+1)); done
+    while true; do
+        printf '  %sChoice%s [%s] ' "$C_B" "$C_RST" "$def" >&2
+        read -r ans </dev/tty || ans=""
+        ans="${ans:-$def}"
+        if [ -n "${ans//[0-9]/}" ] || [ -z "$ans" ]; then
+            printf '    enter a number between 1 and %d\n' "$n" >&2
+            continue
+        fi
+        if [ "$ans" -ge 1 ] && [ "$ans" -le "$n" ]; then
+            _log_raw "ASK   $q -> #$ans"
+            echo "$ans"
+            return 0
+        fi
+        printf '    enter a number between 1 and %d\n' "$n" >&2
+    done
+}
+
 # ask_val <question> <default>  — echoes the answer on stdout.
 ask_val() {
     local q="$1" def="$2" ans

@@ -1,0 +1,15 @@
+# AUR — the short list, built with yay (which the installer bootstraps).
+#
+# Only what the desktop itself needs or the user explicitly wants on every
+# machine. Everything else that happens to be installed here (browsers,
+# spotify, editors, TUI toys) is deliberately NOT auto-installed: an AUR build
+# is slow, can fail, and is a personal choice. Install those afterwards with
+#     ~/.config/scripts/pkg-aur-install.sh
+# which is a fuzzy AUR search-and-install, themed from pywal.
+#
+# The "aur:" prefix is what read_manifest keys on, so one parser handles every
+# manifest in this directory.
+aur:bibata-cursor-theme   # hyprland.lua sets XCURSOR_THEME=Bibata-Original-Ice
+aur:voxtype               # CTRL+. push-to-talk dictation
+aur:localsend-bin         # the firewall phase opens TCP+UDP 53317 for it
+aur:neofetch              # dropped from the repos; ~/.config/neofetch is deployed

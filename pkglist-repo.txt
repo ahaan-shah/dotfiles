@@ -97,7 +97,6 @@ pipewire-jack
 pipewire-pulse
 power-profiles-daemon
 python-pipx
-python-pywal
 qemu-desktop
 qt5-wayland
 qt6-wayland

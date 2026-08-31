@@ -1,9 +1,0 @@
-# Office, reading and writing
-libreoffice-still
-obsidian
-calibre
-papers
-zathura
-zathura-pdf-poppler
-apostrophe
-gnome-text-editor

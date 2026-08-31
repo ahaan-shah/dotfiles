@@ -1,3 +1,0 @@
-# Browsers
-aur:zen-browser-bin
-aur:brave-bin

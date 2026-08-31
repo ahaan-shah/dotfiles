@@ -7,12 +7,17 @@
 # the systemd units, the root-level rules, and the theme. It is idempotent —
 # re-running it is a supported way to repair a half-finished install.
 #
-#   ./install.sh                 full install, prompting for optional app groups
+#   ./install.sh                 full install
 #   ./install.sh --dry-run       print every action, change nothing
 #   ./install.sh --yes           take every default, no prompts
 #   ./install.sh --only hardware run one phase
-#   ./install.sh --skip system   skip a phase
+#   ./install.sh --skip virt     skip a phase
 #   ./install.sh --list          list phases
+#
+# Package selection is not interactive. Every manifest in packages/ is
+# installed, because a half-answered prompt produces a machine that is subtly
+# not this one. The AUR list is deliberately four packages; install anything
+# else afterwards with ~/.config/scripts/pkg-aur-install.sh.
 #
 # NVIDIA is deliberately out of scope: not every machine has one, and getting
 # hybrid graphics wrong costs a black screen. See install/README.md.
@@ -25,12 +30,11 @@ DOTDIR="$(dirname "$SCRIPT_DIR")"     # the repo root: configs live beside insta
 DRY_RUN=0
 ASSUME_YES=0
 NO_ROOT=0
-NO_OPTIONAL=0
 ONLY=""
 SKIP=""
 LOGFILE="/tmp/hyprahaan-install-$(date +%Y%m%d-%H%M%S).log"
 
-ALL_PHASES="preflight packages configs hardware apps usersystemd system network theming plugins hibernation verify"
+ALL_PHASES="preflight packages configs hardware apps usersystemd system network virt theming plugins hibernation fingerprint verify"
 
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
@@ -48,7 +52,6 @@ while [ $# -gt 0 ]; do
         --dry-run)      DRY_RUN=1 ;;
         --yes|-y)       ASSUME_YES=1 ;;
         --no-root)      NO_ROOT=1 ;;
-        --no-optional)  NO_OPTIONAL=1 ;;
         --only)         ONLY="${2:-}"; shift ;;
         --skip)         SKIP="${SKIP} ${2:-}"; shift ;;
         --list)         echo "$ALL_PHASES" | tr ' ' '\n'; exit 0 ;;
@@ -66,7 +69,7 @@ want_phase() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 0 · PREFLIGHT
+# 1 · PREFLIGHT
 # ═══════════════════════════════════════════════════════════════════════
 phase_preflight() {
     phase "Preflight"
@@ -94,11 +97,11 @@ phase_preflight() {
 
     if [ "$HW_LIVE" = 0 ]; then
         printf '\n'
-        info "No Hyprland session is running, so the monitor mode and touchpad"
-        info "name cannot be read. Safe catch-all values will be used now; after"
-        info "your first login run:"
-        info "    ${C_B}$SCRIPT_DIR/install.sh --only hardware${C_RST}"
-        info "to pin the exact values."
+        info "No Hyprland session is running. The monitor is read from its EDID"
+        info "and the refresh rate is left as 'highrr', so both are correct"
+        info "without one. The touchpad name is the only fact that genuinely"
+        info "needs a session — complete-hardware-profile.sh fills that in at"
+        info "your first login, so this is still a single-run install."
     fi
 
     printf '\n'
@@ -112,7 +115,7 @@ phase_preflight() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 1 · PACKAGES
+# 2 · PACKAGES
 # ═══════════════════════════════════════════════════════════════════════
 
 # read_manifest <file> -> prints "repo <name>" or "aur <name>" per line
@@ -177,23 +180,26 @@ install_gpu_userspace() {
     elif grep -qi 'AuthenticAMD' /proc/cpuinfo; then pac_install amd-ucode; fi
 }
 
-choose_optional() {
-    OPTIONAL_REPO=(); OPTIONAL_AUR=()
-    [ "$NO_OPTIONAL" = 1 ] && { skip "optional groups skipped (--no-optional)"; return 0; }
-    local f name desc kind pkg
-    shopt -s nullglob
-    for f in "$SCRIPT_DIR"/packages/optional/*.txt; do
-        name="$(basename "$f" .txt)"; name="${name#*-}"
-        desc="$(head -1 "$f" | sed 's/^# \{0,1\}//')"
-        printf '\n  %s%s%s\n' "$C_B" "$desc" "$C_RST"
-        printf '    %s\n' "$(read_manifest "$f" | awk '{print $2}' | tr '\n' ' ')"
-        if ask_yn "Install this group?" y; then
-            while read -r kind pkg; do
-                [ "$kind" = aur ] && OPTIONAL_AUR+=("$pkg") || OPTIONAL_REPO+=("$pkg")
-            done < <(read_manifest "$f")
-        fi
+# install_manifest <file...> — install every package listed, repo and AUR
+# alike, in two batches. yay is bootstrapped lazily, only if an AUR entry is
+# actually reached, so a machine that needs no AUR package never builds it.
+install_manifest() {
+    local repo=() aur=() kind pkg f
+    for f in "$@"; do
+        [ -r "$f" ] || { skip "$(basename "$f"): no such manifest"; continue; }
+        while read -r kind pkg; do
+            if [ "$kind" = aur ]; then aur+=("$pkg"); else repo+=("$pkg"); fi
+        done < <(read_manifest "$f")
     done
-    shopt -u nullglob
+    if [ "${#repo[@]}" -gt 0 ]; then
+        info "installing ${#repo[@]} repository packages"
+        pac_install "${repo[@]}"
+    fi
+    if [ "${#aur[@]}" -gt 0 ]; then
+        bootstrap_yay
+        info "installing ${#aur[@]} AUR packages (built from source — this is the slow part)"
+        aur_install "${aur[@]}"
+    fi
 }
 
 phase_packages() {
@@ -202,49 +208,37 @@ phase_packages() {
     info "refreshing package databases"
     run sudo pacman -Sy --noconfirm
 
-    local repo=() aur=() kind pkg f
-    for f in "$SCRIPT_DIR"/packages/10-core.txt "$SCRIPT_DIR"/packages/30-fonts.txt; do
-        while read -r kind pkg; do
-            [ "$kind" = aur ] && aur+=("$pkg") || repo+=("$pkg")
-        done < <(read_manifest "$f")
-    done
+    # Core, fonts and applications go on every machine.
+    install_manifest "$SCRIPT_DIR/packages/10-core.txt" \
+                     "$SCRIPT_DIR/packages/30-fonts.txt" \
+                     "$SCRIPT_DIR/packages/40-apps.txt"
 
+    # Laptop-only: the battery panel, the charge cap and the fingerprint reader
+    # have nothing to do on a desktop.
     if [ -n "${HW_BATTERY:-}" ]; then
-        while read -r kind pkg; do
-            [ "$kind" = aur ] && aur+=("$pkg") || repo+=("$pkg")
-        done < <(read_manifest "$SCRIPT_DIR/packages/20-laptop.txt")
+        install_manifest "$SCRIPT_DIR/packages/20-laptop.txt"
     else
         skip "no battery detected — laptop packages skipped"
     fi
 
-    info "installing ${#repo[@]} repository packages"
-    pac_install "${repo[@]}"
-    ok "repository packages done"
+    # Virtualisation, only where the CPU can actually do it.
+    if [ "${HW_KVM:-0}" = 1 ]; then
+        install_manifest "$SCRIPT_DIR/packages/60-virt.txt"
+    else
+        skip "no VT-x/AMD-V support — virtualisation packages skipped"
+    fi
 
     install_gpu_userspace
 
-    bootstrap_yay
-    while read -r kind pkg; do
-        [ "$kind" = aur ] && aur+=("$pkg")
-    done < <(read_manifest "$SCRIPT_DIR/packages/40-aur.txt")
-    info "installing ${#aur[@]} AUR packages (this builds from source and is slow)"
-    aur_install "${aur[@]}"
-    ok "AUR packages done"
+    # AUR last: it is the slow, fallible part, so everything that can succeed
+    # has already succeeded by the time a build can fail.
+    install_manifest "$SCRIPT_DIR/packages/50-aur.txt"
 
-    choose_optional
-    if [ "${#OPTIONAL_REPO[@]}" -gt 0 ]; then
-        info "installing ${#OPTIONAL_REPO[@]} optional repository packages"
-        pac_install "${OPTIONAL_REPO[@]}"
-    fi
-    if [ "${#OPTIONAL_AUR[@]}" -gt 0 ]; then
-        info "installing ${#OPTIONAL_AUR[@]} optional AUR packages"
-        aur_install "${OPTIONAL_AUR[@]}"
-    fi
     ok "packages complete"
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 2 · CONFIGS
+# 3 · CONFIGS
 # ═══════════════════════════════════════════════════════════════════════
 # Anything matching these never reaches ~/.config/scripts.
 SCRIPT_EXCLUDES=(
@@ -293,7 +287,12 @@ phase_configs() {
     # Single files, which live in differently-shaped places in the mirror.
     deploy_file "$DOTDIR/starship/starship.toml" "$HOME/.config/starship.toml" || \
         deploy_file "$DOTDIR/starship.toml" "$HOME/.config/starship.toml" || true
-    deploy_file "$DOTDIR/mimeapps.list" "$HOME/.config/mimeapps.list" || true
+    # mimeapps.list decides which app opens which file type. The dotfiles
+    # mirror carries the live copy (backup_configs.sh keeps it fresh); the
+    # template beside install/ is the guaranteed fallback, so a run from the
+    # source repo — where the mirror-shaped files do not exist — still gets it.
+    deploy_file "$DOTDIR/mimeapps.list" "$HOME/.config/mimeapps.list" || \
+        deploy_file "$SCRIPT_DIR/templates/mimeapps.list" "$HOME/.config/mimeapps.list" || true
     deploy_file "$DOTDIR/shell/.zshrc"  "$HOME/.zshrc"  || true
     deploy_file "$DOTDIR/shell/.bashrc" "$HOME/.bashrc" || true
 
@@ -353,7 +352,7 @@ phase_configs() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 3 · HARDWARE
+# 4 · HARDWARE
 # ═══════════════════════════════════════════════════════════════════════
 phase_hardware() {
     phase "Hardware profile"
@@ -373,7 +372,7 @@ phase_hardware() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 4 · APPS  (per-application config that is not just a directory copy)
+# 5 · APPS  (per-application config that is not just a directory copy)
 # ═══════════════════════════════════════════════════════════════════════
 phase_apps() {
     phase "Application config"
@@ -451,7 +450,7 @@ phase_apps() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 5 · USER SYSTEMD
+# 6 · USER SYSTEMD
 # ═══════════════════════════════════════════════════════════════════════
 phase_usersystemd() {
     phase "User systemd units"
@@ -481,7 +480,7 @@ phase_usersystemd() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 6 · SYSTEM  (the only phase that needs root)
+# 7 · SYSTEM  (root: /etc files, groups, system services)
 # ═══════════════════════════════════════════════════════════════════════
 enable_unit() {
     local u="$1"
@@ -601,7 +600,7 @@ phase_system() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 7 · NETWORK — wifi, bluetooth, firewall
+# 8 · NETWORK — wifi, bluetooth, firewall
 # ═══════════════════════════════════════════════════════════════════════
 phase_network() {
     phase "Wifi, Bluetooth and firewall"
@@ -654,7 +653,7 @@ phase_network() {
     run sudo systemctl start firewalld.service
 
     if [ "$DRY_RUN" = 1 ]; then
-        printf '  %sDRY%s firewall-cmd --permanent --zone=public --add-service={ssh,localsend} && --reload\n' "$C_DIM" "$C_RST"
+        printf '  %sDRY%s firewall-cmd --permanent --zone=public --add-service ssh/dhcpv6-client/localsend, then --reload\n' "$C_DIM" "$C_RST"
         return 0
     fi
 
@@ -688,7 +687,114 @@ phase_network() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 8 · THEMING
+# 9 · VIRTUALISATION — QEMU/KVM via libvirt
+# ═══════════════════════════════════════════════════════════════════════
+# Goal: after this phase, opening virt-manager and pointing it at a downloaded
+# ISO just works — no group juggling, no "network 'default' is not active", no
+# permission errors on the disk image.
+#
+# Four things are needed and none of them are defaults:
+#   1. qemu.conf's user/group, or the qemu process cannot read files it owns
+#   2. membership of the `libvirt` group, or every virsh call asks for a password
+#   3. the modular virt*d sockets enabled (this is the modern split daemon;
+#      the monolithic libvirtd is deliberately left alone)
+#   4. the default NAT network marked autostart, or guests have no network
+#      after the next reboot
+phase_virt() {
+    phase "Virtual machines"
+    if [ "$NO_ROOT" = 1 ]; then skip "--no-root given"; return 0; fi
+
+    if [ "${HW_KVM:-0}" != 1 ]; then
+        skip "no hardware virtualisation on this CPU — nothing to configure"
+        return 0
+    fi
+    if ! have virsh; then
+        skip "libvirt not installed — run the packages phase first"
+        return 0
+    fi
+
+    sudo_prime
+
+    # ── 1 · qemu runs as the qemu user ─────────────────────────────────
+    # qemu.conf is package-owned and ~45k of commented defaults, so it is
+    # edited key-by-key rather than replaced: shipping a whole copy would
+    # generate .pacnew noise on every libvirt update.
+    local qc=/etc/libvirt/qemu.conf
+    if [ -f "$qc" ]; then
+        if [ "$(sudo -n grep -cE '^\s*(user|group)\s*=\s*"qemu"' "$qc" 2>/dev/null || echo 0)" = 2 ]; then
+            skip "qemu.conf user/group already set"
+        else
+            run sudo cp -a "$qc" "$qc.bak-$BACKUP_STAMP"
+            # Rewrite the key if present (commented or not), else append it.
+            run sudo sed -i -E \
+                -e 's|^#?\s*user\s*=.*|user = "qemu"|' \
+                -e 's|^#?\s*group\s*=.*|group = "qemu"|' "$qc"
+            run_sh "sudo grep -qE '^user = \"qemu\"'  $qc || echo 'user = \"qemu\"'  | sudo tee -a $qc >/dev/null"
+            run_sh "sudo grep -qE '^group = \"qemu\"' $qc || echo 'group = \"qemu\"' | sudo tee -a $qc >/dev/null"
+            ok "qemu.conf: user/group = qemu"
+        fi
+    fi
+
+    # ── 2 · group membership ───────────────────────────────────────────
+    # Same caveat as the `power` group in the system phase: this does NOT
+    # reach an already-running session.
+    # Only `libvirt`. NOT `kvm`: systemd's own 50-udev-default.rules gives
+    # /dev/kvm mode 0666, so kvm membership buys nothing, and adding a group
+    # the working reference machine does not have is a silent divergence.
+    if getent group libvirt >/dev/null 2>&1 && ! id -nG "$USER" | tr ' ' '\n' | grep -qx libvirt; then
+        run sudo usermod -aG libvirt "$USER"
+        ok "added $USER to group libvirt"
+        warn "log out and back in before virt-manager connects without a password prompt"
+    else
+        skip "$USER already in the libvirt group"
+    fi
+
+    # ── 3 · the modular libvirt daemons ────────────────────────────────
+    # Sockets, not services: they are socket-activated, so nothing runs until
+    # virt-manager actually connects.
+    local u
+    for u in virtqemud.socket virtnetworkd.socket virtstoraged.socket \
+             virtnodedevd.socket virtsecretd.socket virtlogd.socket; do
+        enable_unit "$u"
+    done
+    run sudo systemctl start virtqemud.socket virtnetworkd.socket
+
+    # ── 4 · the default NAT network ────────────────────────────────────
+    # Defined by the package but neither started nor autostarted, which is why
+    # a fresh VM reports "Network not active". `virsh net-info` is the honest
+    # check; both flags are set independently because either can be off.
+    if [ "$DRY_RUN" = 1 ]; then
+        info "DRY would mark libvirt's default network autostart and start it"
+    elif sudo virsh net-info default >/dev/null 2>&1; then
+        if [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Autostart/{print $2}')" != "yes" ]; then
+            run sudo virsh net-autostart default
+            ok "default network set to autostart"
+        else
+            skip "default network already autostart"
+        fi
+        if [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Active/{print $2}')" != "yes" ]; then
+            run sudo virsh net-start default
+            ok "default network started"
+        else
+            skip "default network already active"
+        fi
+    else
+        warn "libvirt has no 'default' network defined — create one in virt-manager"
+    fi
+
+    # The default storage pool holds the disk images. Package-provided, but
+    # start it so the New VM wizard has somewhere to put a qcow2.
+    if [ "$DRY_RUN" != 1 ] && sudo virsh pool-info default >/dev/null 2>&1; then
+        sudo virsh pool-autostart default >/dev/null 2>&1 || true
+        sudo virsh pool-start default >/dev/null 2>&1 || true
+        ok "default storage pool active ($(sudo virsh pool-dumpxml default 2>/dev/null | sed -n 's|.*<path>\(.*\)</path>.*|\1|p'))"
+    fi
+
+    ok "VMs ready — open virt-manager, point it at an ISO, and create"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# 10 · THEMING
 # ═══════════════════════════════════════════════════════════════════════
 phase_theming() {
     phase "Theming"
@@ -764,7 +870,7 @@ HP
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 8 · HYPRLAND PLUGINS
+# 11 · HYPRLAND PLUGINS
 # ═══════════════════════════════════════════════════════════════════════
 phase_plugins() {
     phase "Hyprland plugins (hyprbars)"
@@ -791,7 +897,7 @@ phase_plugins() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 9 · HIBERNATION  (opt-in — this one edits the bootloader)
+# 12 · HIBERNATION  (opt-in — this one edits the bootloader)
 # ═══════════════════════════════════════════════════════════════════════
 phase_hibernation() {
     phase "Hibernation"
@@ -841,7 +947,103 @@ phase_hibernation() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 10 · VERIFY
+# 13 · FINGERPRINT — enrolment, if there is a reader
+# ═══════════════════════════════════════════════════════════════════════
+# Runs late on purpose: it is the one phase that needs the user to physically
+# touch the sensor, several times per finger, so everything that can be done
+# without them is already done.
+#
+# Note this enrols fingerprints only — it does NOT wire fprintd into PAM.
+# The lockscreen shells out to `fprintd-verify` directly (see
+# lockscreen/LockContext.qml), so enrolment is all it needs, and editing
+# /etc/pam.d/system-auth to add pam_fprintd is a well-known way to lock
+# yourself out of your own machine.
+FINGERS=(
+    left-thumb  left-index-finger  left-middle-finger  left-ring-finger  left-little-finger
+    right-thumb right-index-finger right-middle-finger right-ring-finger right-little-finger
+)
+
+phase_fingerprint() {
+    phase "Fingerprint enrolment"
+
+    if [ -z "${HW_FPRINT:-}" ]; then
+        if have fprintd-enroll; then
+            skip "fprintd is installed but no reader was detected — nothing to enrol"
+        else
+            skip "no fingerprint reader detected"
+        fi
+        return 0
+    fi
+    ok "reader: $HW_FPRINT"
+
+    if [ "$DRY_RUN" = 1 ]; then
+        info "DRY would offer to enrol fingerprints (interactive — needs the sensor)"
+        return 0
+    fi
+    # A finger swipe cannot be automated, so an unattended run must not hang
+    # here waiting for one.
+    if [ "$ASSUME_YES" = 1 ]; then
+        skip "--yes given: enrolment needs you at the sensor. Run later with:"
+        info "    $SCRIPT_DIR/install.sh --only fingerprint"
+        return 0
+    fi
+
+    # What is already enrolled, so the menu can say so rather than letting the
+    # user silently overwrite a finger.
+    local enrolled=""
+    enrolled="$(fprintd-list "$USER" 2>/dev/null | sed -n 's/^ *- #[0-9]*: *//p' || true)"
+    if [ -n "$enrolled" ]; then
+        info "already enrolled: $(printf '%s' "$enrolled" | tr '\n' ' ')"
+    fi
+
+    ask_yn "Set up fingerprint login now?" y || { skip "fingerprint enrolment declined"; return 0; }
+
+    while true; do
+        # Rebuild the labels each pass so a finger just enrolled is marked.
+        enrolled="$(fprintd-list "$USER" 2>/dev/null | sed -n 's/^ *- #[0-9]*: *//p' || true)"
+        # Match against a delimited string rather than piping into `grep -q`:
+        # grep exits on its first match, the producer dies of SIGPIPE, and
+        # `set -o pipefail` then reports a false failure. This file has been
+        # bitten by that four times.
+        local elist=$'\n'"$enrolled"$'\n'
+        local labels=() f mark
+        for f in "${FINGERS[@]}"; do
+            mark=""
+            case "$elist" in
+                *$'\n'"$f"$'\n'*) mark="   ${C_DIM}(enrolled — re-scanning replaces it)${C_RST}" ;;
+            esac
+            labels+=("${f//-/ }$mark")
+        done
+
+        local pick finger
+        pick="$(ask_choice "Which finger?" 7 "${labels[@]}")"
+        finger="${FINGERS[$((pick-1))]}"
+
+        printf '\n  %sScanning %s.%s Lift and re-place the finger when prompted,\n' \
+               "$C_B" "${finger//-/ }" "$C_RST"
+        printf '  usually five to eight times, until it reports enroll-completed.\n\n'
+
+        # fprintd-enroll drives the sensor and prints its own progress; it must
+        # keep the terminal. A failed scan is not fatal — offer a retry.
+        if fprintd-enroll -f "$finger" </dev/tty; then
+            ok "$finger enrolled"
+        else
+            err "enrolment of $finger did not complete"
+            ask_yn "Try that finger again?" y && continue
+        fi
+
+        ask_yn "Enrol another finger?" n || break
+    done
+
+    enrolled="$(fprintd-list "$USER" 2>/dev/null | sed -n 's/^ *- #[0-9]*: *//p' || true)"
+    if [ -n "$enrolled" ]; then
+        ok "enrolled fingers: $(printf '%s' "$enrolled" | tr '\n' ' ')"
+        info "the lockscreen picks these up automatically — no PAM changes needed"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# 14 · VERIFY
 # ═══════════════════════════════════════════════════════════════════════
 V_PASS=0; V_FAIL=0
 chk()  { V_PASS=$((V_PASS+1)); ok "$1"; }
@@ -945,6 +1147,67 @@ phase_verify() {
     check "first-boot profile completer deployed" \
           "[ -x '$HOME/.config/scripts/complete-hardware-profile.sh' ]"
 
+    # ── default applications ───────────────────────────────────────────
+    # mimeapps.list is what makes "open this file" pick the right app. A
+    # default pointing at a .desktop that is not installed is not fatal (the
+    # lookup falls through to the next association) but it is worth naming,
+    # because it silently changes which app opens your files.
+    if [ -s "$HOME/.config/mimeapps.list" ]; then
+        chk "mimeapps.list deployed ($(grep -c '=' "$HOME/.config/mimeapps.list") associations)"
+        local d dangling=""
+        while read -r d; do
+            [ -f "/usr/share/applications/$d" ] || \
+            [ -f "$HOME/.local/share/applications/$d" ] || dangling="$dangling $d"
+        done < <(sed -n '/^\[Default Applications\]/,/^\[/p' "$HOME/.config/mimeapps.list" \
+                 | grep -oE '[A-Za-z0-9_.+-]+\.desktop' | sort -u)
+        if [ -n "$dangling" ]; then
+            warn "default apps not installed (openers fall through):$dangling"
+        else
+            chk "every default application is installed"
+        fi
+    else
+        bad "mimeapps.list missing — file associations will be unset"
+    fi
+
+    # ── virtualisation ─────────────────────────────────────────────────
+    if [ "${HW_KVM:-0}" = 1 ] && have virsh; then
+        check "libvirt qemu daemon socket enabled" "systemctl is-enabled virtqemud.socket"
+        # `id -nG` reads the CURRENT session, which will not show a group added
+        # minutes ago; getent reads the on-disk database, which does.
+        check "$USER is in the libvirt group" \
+              "getent group libvirt | grep -q '[:,]$USER\(,\|\$\)'"
+        # qemu.conf is world-readable (-rw-r--r--), so this needs no sudo —
+        # and must not use it: a `sudo -n` that cannot authenticate would fail
+        # the check on a file that is perfectly correct.
+        check "qemu.conf sets user/group" \
+              "[ \"\$(grep -cE '^(user|group) = \"qemu\"' /etc/libvirt/qemu.conf 2>/dev/null || echo 0)\" = 2 ]"
+        # virsh against qemu:///system does need root. Rather than report a
+        # false failure when sudo cannot authenticate non-interactively, say so.
+        if sudo -n true 2>/dev/null; then
+            if sudo -n virsh net-info default >/dev/null 2>&1; then
+                check "libvirt default network autostarts" \
+                      "[ \"\$(sudo -n virsh net-info default 2>/dev/null | awk '/^Autostart/{print \$2}')\" = yes ]"
+                check "libvirt default network is active" \
+                      "[ \"\$(sudo -n virsh net-info default 2>/dev/null | awk '/^Active/{print \$2}')\" = yes ]"
+            else
+                warn "libvirt has no 'default' network — new VMs will have no NAT networking"
+            fi
+        else
+            skip "libvirt network state needs root; re-run the virt phase to check it"
+        fi
+    fi
+
+    # ── fingerprint ────────────────────────────────────────────────────
+    if [ -n "${HW_FPRINT:-}" ]; then
+        local fcount
+        fcount="$(fprintd-list "$USER" 2>/dev/null | grep -c '^ *- #' || true)"
+        if [ "${fcount:-0}" -gt 0 ]; then
+            chk "fingerprint reader with $fcount finger(s) enrolled"
+        else
+            warn "fingerprint reader present but nothing enrolled — run: $SCRIPT_DIR/install.sh --only fingerprint"
+        fi
+    fi
+
     # ── systemd ────────────────────────────────────────────────────────
     if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
         check "battery-threshold.timer enabled" "systemctl --user is-enabled battery-threshold.timer"
@@ -975,7 +1238,7 @@ main() {
         esac
         # Any single phase still needs the hardware facts in scope.
         [ "$ONLY" = preflight ] || detect_all
-        case "$ONLY" in system|network|hibernation|packages) sudo_prime ;; esac
+        case "$ONLY" in system|network|virt|hibernation|packages) sudo_prime ;; esac
     fi
 
     want_phase preflight   && phase_preflight
@@ -986,9 +1249,11 @@ main() {
     want_phase usersystemd && phase_usersystemd
     want_phase system      && phase_system
     want_phase network     && phase_network
+    want_phase virt        && phase_virt
     want_phase theming     && phase_theming
     want_phase plugins     && phase_plugins
     want_phase hibernation && phase_hibernation
+    want_phase fingerprint && phase_fingerprint
     want_phase verify      && phase_verify
 
     phase_close
@@ -1000,9 +1265,12 @@ main() {
        the battery panel write the charge cap without sudo — do not reach an
        already-running session.
     2. At the greeter, log in and start ${C_B}Hyprland${C_RST}.
-    3. From inside the session, run:
-         ${C_B}$SCRIPT_DIR/install.sh --only hardware${C_RST}
-       to pin the real monitor mode and touchpad name, then log out and back in.
+    3. Nothing else is required. The touchpad name is the one fact that needs
+       a live session, and ${C_B}complete-hardware-profile.sh${C_RST} fills it in
+       automatically at your first login.
+
+  Install more from the AUR (browsers, Spotify, editors) with:
+    ${C_B}~/.config/scripts/pkg-aur-install.sh${C_RST}
 
   Backups of anything overwritten: ${BACKUP_ROOT:-<nothing was overwritten>}
   Full log: $LOGFILE
