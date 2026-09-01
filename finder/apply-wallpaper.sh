@@ -22,9 +22,26 @@ fi
 HYPERPAPER_CONFIG="$HOME/.config/hypr/hyprpaper.conf"
 CAVA_CONFIG="$HOME/.config/cava/config"
 
-# Update hyprpaper.conf (assuming single monitor setup)
+# Machine-specific names come from the profile install.sh generates. Sourcing
+# it (rather than hardcoding) is what lets this script run unmodified on any
+# machine; the fallback keeps it working if the profile has not been written.
+HW_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/hardware.env"
+# shellcheck source=/dev/null
+[ -r "$HW_ENV" ] && . "$HW_ENV"
+
+# Update hyprpaper.conf.
+#
+# The monitor name was hardcoded to eDP-1 here, which quietly undid the
+# detection install.sh's theming phase does: that phase writes this same file
+# with the detected monitor, and then the first wallpaper change overwrote it
+# with this laptop's panel name. On a machine whose output is named anything
+# else hyprpaper then matches nothing and the wallpaper stops applying.
+#
+# An EMPTY monitor is hyprpaper's own catch-all ("apply to every output"), so
+# a missing profile degrades to a wallpaper on all monitors rather than none —
+# and it is exactly what install.sh emits when detection comes up empty too.
 echo "wallpaper {" > "$HYPERPAPER_CONFIG"
-echo "monitor = eDP-1" >> "$HYPERPAPER_CONFIG"
+echo "monitor = ${PRIMARY_MONITOR:-}" >> "$HYPERPAPER_CONFIG"
 echo "path = $WALLPAPER_PATH" >> "$HYPERPAPER_CONFIG"
 echo "fit_mode = cover" >> "$HYPERPAPER_CONFIG"
 echo "}" >> "$HYPERPAPER_CONFIG"
