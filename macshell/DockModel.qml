@@ -53,13 +53,6 @@ ListModel {
         separator: false
     }
     ListElement {
-        name: "Claude"
-        icon: "~/.local/share/icons/webapps/claude.png"
-        command: "chromium --app=https://claude.ai/new"
-        windowClass: "claude.ai"
-        separator: false
-    }
-    ListElement {
         name: "VSCodium"
         icon: "/usr/share/icons/Papirus-Dark/128x128/apps/vscodium.svg"
         command: "codium"
