@@ -274,31 +274,56 @@ Scope {
     // built-in outputs (eDP on laptops, LVDS on older ones, DSI on tablets).
     function dispIsInternal(m) { return !!m && /^(eDP|LVDS|DSI)/i.test(m.name); }
 
-    // Scales Hyprland will take without rounding. It demands a logical size
-    // that is a whole number of pixels and silently snaps anything else to the
-    // nearest divisor it can find, so the usual 1–3x ladder is filtered against
-    // the monitor's own resolution instead of being offered blind. On this
-    // laptop's 2880x1620 that drops 1.75x (1645.7px wide) and leaves six
-    // buttons; on a 1920x1080 external it drops the same one.
-    function dispScaleOptions(m) {
-        if (!m) return [];
-        var cands = [1, 1.25, 1.5, 1.75, 2, 2.5, 3];
-        var out = [];
-        for (var i = 0; i < cands.length; i++) {
-            var w = m.width / cands[i], h = m.height / cands[i];
-            if (Math.abs(w - Math.round(w)) < 0.001 && Math.abs(h - Math.round(h)) < 0.001)
-                out.push(cands[i]);
+    // The ladder, the same on every display.
+    //
+    // Hyprland wants a logical size that is a whole number of pixels, and will
+    // NOT take one of these verbatim when it cannot divide cleanly — it snaps
+    // to the nearest scale it can and says nothing. Measured on this laptop's
+    // 2880x1620: asking for 1.75 lands on 1.8 (2880/1.8 = 1600 and 1620/1.8 =
+    // 900, both whole). That is the compositor's call, not something this
+    // panel can talk it out of, so the buttons offer the round numbers and the
+    // DISPLAYS row below reports what it actually settled on.
+    readonly property var dispScales: [1, 1.25, 1.5, 1.75, 2]
+    // Hyprland does that snapping itself, but NOT silently: handing it 1.75
+    // puts a toast on screen — "Invalid scale passed to monitor eDP-1: 1.75,
+    // using suggested scale: 1.80" — and then applies 1.8 anyway. It is a
+    // notification, not a config error, so `hyprctl configerrors` stays empty
+    // and it cannot be dismissed or suppressed from here. The only way not to
+    // see it is to never send a scale the compositor would object to.
+    //
+    // So the same arithmetic is done first, and only the result is sent.
+    // Scales live on a 1/120 grid — the unit of the fractional-scale protocol,
+    // which is why Hyprland's suggestion is always a multiple of it — and one
+    // is clean when the logical width AND height both come out whole. Search
+    // outward from what was asked for and take the first that does: for 1.75
+    // on 2880x1620 that is 1.8, the exact figure the toast suggested.
+    function dispCleanScale(m, v) {
+        if (!m) return v;
+        var want = Math.round(v * 120);
+        var w120 = Math.round(m.width * 120), h120 = Math.round(m.height * 120);
+        for (var off = 0; off <= 60; off++) {
+            for (var dir = 0; dir < (off === 0 ? 1 : 2); dir++) {
+                var s120 = (off === 0) ? want : (dir === 0 ? want + off : want - off);
+                if (s120 <= 0) continue;
+                if (w120 % s120 === 0 && h120 % s120 === 0) return s120 / 120;
+            }
         }
-        // Whatever the display is on right now always gets a button, even when
-        // it is not one of ours — otherwise a monitor scaled from a config file
-        // would show a row with nothing selected in it.
-        var cur = Number(m.scale);
-        var have = out.some(function (v) { return Math.abs(v - cur) < 0.01; });
-        if (!have && cur > 0) {
-            out.push(Math.round(cur * 100) / 100);
-            out.sort(function (a, b) { return a - b; });
+        // Nothing clean within half a scale step either way — vanishingly
+        // unlikely for a real mode, and Hyprland arbitrating (loudly) beats
+        // this panel silently doing nothing.
+        return v;
+    }
+
+    // The highlight is nearest-wins rather than an exact match: click 1.75 and
+    // the monitor ends up on 1.8, so an equality test would leave the row with
+    // nothing selected at all.
+    function dispNearestScale(cur) {
+        var best = -1, bestD = Infinity;
+        for (var i = 0; i < root.dispScales.length; i++) {
+            var d = Math.abs(root.dispScales[i] - cur);
+            if (d < bestD) { bestD = d; best = root.dispScales[i]; }
         }
-        return out;
+        return best;
     }
     function dispScaleLabel(v) { return (Math.round(v * 100) / 100) + "x"; }
 
@@ -310,6 +335,7 @@ Scope {
     // eDP-1: 2 → 1.5 → 2 changed and restored the scale with the mode intact.
     function dispSetScale(m, v) {
         if (!m) return;
+        v = root.dispCleanScale(m, v);
         var mode = m.width + "x" + m.height + "@" + Number(m.refreshRate).toFixed(2);
         var lua = "hl.monitor({ output = '" + m.name + "', mode = '" + mode + "', " +
                   "position = '" + m.x + "x" + m.y + "', scale = " + v + " })";
@@ -4644,12 +4670,12 @@ Scope {
                     Layout.fillWidth: true
                     spacing: 6
                     Repeater {
-                        model: root.dispScaleOptions(root.dispMon)
+                        model: root.dispScales
                         delegate: Rectangle {
                             id: scaleBox
                             required property var modelData
                             property bool active: !!root.dispMon
-                                                  && Math.abs(Number(root.dispMon.scale) - modelData) < 0.01
+                                                  && root.dispNearestScale(Number(root.dispMon.scale)) === modelData
                             Layout.fillWidth: true
                             Layout.preferredHeight: 34
                             radius: 10
