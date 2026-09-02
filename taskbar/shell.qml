@@ -236,15 +236,18 @@ Scope {
     property bool netVisible: false
     property bool btVisible:  false
     property bool audVisible: false
+    property bool agentVisible: false
 
     function closePanels() {
         root.ccVisible = false; root.calVisible = false; root.batVisible = false;
         root.netVisible = false; root.btVisible = false; root.audVisible = false;
+        root.agentVisible = false;
     }
     function panelOpen(which) {
         return which === "cc"  ? root.ccVisible  : which === "cal" ? root.calVisible
              : which === "bat" ? root.batVisible : which === "net" ? root.netVisible
-             : which === "bt"  ? root.btVisible  : which === "aud" ? root.audVisible : false;
+             : which === "bt"  ? root.btVisible  : which === "aud" ? root.audVisible
+             : which === "agent" ? root.agentVisible : false;
     }
     function togglePanel(which) {
         var wasOpen = root.panelOpen(which);
@@ -256,6 +259,7 @@ Scope {
         else if (which === "net") root.netVisible = true;
         else if (which === "bt")  root.btVisible  = true;
         else if (which === "aud") root.audVisible = true;
+        else if (which === "agent") root.agentVisible = true;
     }
 
     //========================================================================//
@@ -787,7 +791,10 @@ Scope {
         radar:    String.fromCodePoint(0xf0437),   // md-radar (scan for devices)
         eye:      String.fromCodePoint(0xf06e),    // fa-eye
         eyeOff:   String.fromCodePoint(0xf070),    // fa-eye_slash
-        loading:  String.fromCodePoint(0xf0772)
+        loading:  String.fromCodePoint(0xf0772),
+        robot:    String.fromCodePoint(0xf16a3),   // md-robot_outline (agents, idle)
+        robotOn:  String.fromCodePoint(0xf06a9),   // md-robot         (agents, live)
+        refresh:  String.fromCodePoint(0xf0450)    // md-refresh
     })
 
     function wifiIcon(sig) {
@@ -1208,6 +1215,460 @@ Scope {
     }
 
     //========================================================================//
+    //  AGENTS  (AI coding-agent plan, rate limits and token history)         //
+    //========================================================================//
+    // Ported from omarchy's `omarchy.agents` bar plugin (MIT — basecamp/omarchy
+    // @ quattro, shell/plugins/agents/). Their Main/Agent/Panel.qml split is
+    // folded into this file's single-shell layout, and the chrome is this
+    // repo's (ncBg card, ncBorder, SectionLabel, PanelDivider) rather than
+    // theirs, but the data model and the derivations below are theirs.
+    //
+    // THE PANEL NEVER LEARNS HOW A NUMBER WAS MADE. It reads JSON records out
+    // of one directory; a collector script is what puts them there:
+    //
+    //     scripts/agent-usage-<id>  ->  <agentsUsageDir>/<id>.json  ->  a tab
+    //
+    // That indirection is the whole design, and it is what makes the module
+    // universal: nothing below names "claude". This machine has only that one
+    // agent, but someone installing these dotfiles with codex gets a second tab
+    // by dropping in a second collector — no edit to this file. See
+    // scripts/agent-usage-update.sh for the writer half of the contract.
+    //
+    // Record contract (every field optional except id):
+    //   id, name, ready, tierLabel, usageStatusText, authHelpText
+    //   limits[]      {label, title?, percent 0..1, resetsAt ISO-8601}
+    //   recentDays[]  {date "YYYY-MM-DD", messageCount}   <- TOKENS, legacy name
+    //   modelUsage    {modelId: {inputTokens, outputTokens,
+    //                            cacheReadInputTokens, cacheCreationInputTokens}}
+    //   todayPrompts, todaySessions, todayTotalTokens, totalPrompts,
+    //   totalSessions, activeDays, updatedAt
+
+    readonly property string agentsUsageDir:
+        (Quickshell.env("XDG_STATE_HOME") || root.homeDir + "/.local/state")
+        + "/hyprahaan/agents/usage"
+
+    // The collectors are found in the `scripts` dir that sits BESIDE this shell
+    // config, never at a fixed path. From ~/.config/taskbar that resolves to
+    // ~/.config/scripts; from ~/projects/hyprahaan/taskbar it resolves to the
+    // repo's own scripts/. So a second instance launched out of the repo
+    // exercises the repo's collectors — which is exactly what step 2 of
+    // CLAUDE.md's workflow needs — with no deploy and no path special-casing.
+    readonly property string agentsScriptDir: {
+        var dir = String(Quickshell.shellDir || "").replace(/^file:\/\//, "");
+        var cut = dir.lastIndexOf("/");
+        return cut > 0 ? dir.substring(0, cut) + "/scripts"
+                       : root.homeDir + "/.config/scripts";
+    }
+
+    property var agentIds: []            // ids discovered in the usage dir
+    property var agentCollectorIds: []   // ids the installed collectors declare
+    property var agents: []              // normalized records that have something to say
+    property int agentIndex: 0           // which one the panel is showing
+    property var agentLive: ({})         // id -> true while that CLI has a live process
+    property bool agentsBusy: false      // a collector run is in flight
+    property string agentsError: ""
+
+    readonly property var agent: root.agents.length > 0
+        ? root.agents[Math.max(0, Math.min(root.agentIndex, root.agents.length - 1))]
+        : null
+
+    // Whether there is a record to draw. NOT what puts the icon in the bar —
+    // that is agentRunning below — but what the panel's empty state turns on:
+    // an agent can be up before its first record has been collected.
+    readonly property bool agentsPresent: root.agents.length > 0
+
+    // Whether any agent CLI is live *right now*. This is what puts the module
+    // in the bar; the records only decide what the panel then draws. Read off
+    // the live map itself rather than off the records, so an agent running for
+    // the very first time — nothing on disk about it yet — still shows up.
+    readonly property bool agentRunning: {
+        for (var id in root.agentLive) if (root.agentLive[id]) return true;
+        return false;
+    }
+
+    // Who to look for. The installed COLLECTORS are the declaration of which
+    // agents this machine knows about, and they exist before any usage does —
+    // that is what lets a first-ever run be recognised. Union with the record
+    // ids so an agent whose collector was removed, but whose record is still
+    // on disk, keeps working.
+    readonly property var agentProbeIds: {
+        var seen = ({}), out = [];
+        var lists = [root.agentCollectorIds, root.agentIds];
+        for (var l = 0; l < lists.length; l++)
+            for (var i = 0; i < lists[l].length; i++) {
+                var id = lists[l][i];
+                if (id !== "" && !seen[id]) { seen[id] = true; out.push(id); }
+            }
+        return out;
+    }
+
+    // A first run has no record, so the panel would open onto nothing. Pull one
+    // as soon as an agent appears rather than waiting for the 15-minute tick.
+    // And when the last agent exits the icon leaves the bar, so the dropdown
+    // must not be left hanging off a button that is no longer there.
+    onAgentRunningChanged: {
+        if (root.agentRunning) root.agentRefresh("normal");
+        else root.agentVisible = false;
+    }
+
+    // The collectors are enumerated the same way agent-usage-update.sh does it,
+    // and must stay in step with it: skip the update script itself, strip one
+    // trailing extension so agent-usage-codex and agent-usage-codex.py both
+    // mean "codex".
+    Process {
+        id: agentCollectorScan
+        command: ["bash", "-c",
+            "S=" + root.shq(root.agentsScriptDir) + "; [ -d \"$S\" ] || exit 0; " +
+            "for f in \"$S\"/agent-usage-*; do [ -x \"$f\" ] || continue; " +
+            "b=${f##*/agent-usage-}; [ \"$b\" = update.sh ] && continue; " +
+            "echo \"${b%.[!.]*}\"; done"]
+        stdout: StdioCollector { onStreamFinished: {
+            var ids = [], lines = (this.text || "").split("\n");
+            for (var i = 0; i < lines.length; i++) {
+                var id = lines[i].trim();
+                if (id !== "") ids.push(id);
+            }
+            if (ids.join(" ") !== root.agentCollectorIds.join(" ")) root.agentCollectorIds = ids;
+        } }
+    }
+
+    // Reset countdowns need a clock the binding engine can actually see, and
+    // dayClock is already ticking at minute precision for the calendar. A
+    // countdown rendered as "3h 13m" needs nothing finer.
+    readonly property double agentNowMs: dayClock.date.getTime()
+
+    //---- discovery ---------------------------------------------------------
+    // The set of agents IS the set of records on disk. Nothing here consults a
+    // list of known agents, checks for an installed binary, or waits on a
+    // collector it was told to expect.
+    Process {
+        id: agentScanProc
+        command: ["bash", "-c",
+            "D=" + root.shq(root.agentsUsageDir) + "; [ -d \"$D\" ] || exit 0; " +
+            "for f in \"$D\"/*.json; do [ -e \"$f\" ] || continue; b=${f##*/}; echo \"${b%.json}\"; done"]
+        stdout: StdioCollector { onStreamFinished: {
+            var ids = [], lines = (this.text || "").split("\n");
+            for (var i = 0; i < lines.length; i++) {
+                var id = lines[i].trim();
+                if (id !== "") ids.push(id);
+            }
+            // Only reassign when the SET changed. Reassigning agentIds rebuilds
+            // every watcher below, and a rebuild drops each FileView and
+            // re-reads from disk — doing that on every poll would make the
+            // panel flicker for no reason.
+            if (ids.join(" ") !== root.agentIds.join(" ")) root.agentIds = ids;
+        } }
+    }
+
+    // One watcher per record. watchChanges means a collector run repopulates
+    // the panel with no polling on this side at all.
+    Instantiator {
+        id: agentWatchers
+        model: root.agentIds
+        onObjectAdded: root.rebuildAgents()
+        onObjectRemoved: root.rebuildAgents()
+        delegate: Item {
+            id: agentWatcher
+            required property string modelData
+            property var record: null
+            onRecordChanged: root.rebuildAgents()
+
+            FileView {
+                path: root.agentsUsageDir + "/" + agentWatcher.modelData + ".json"
+                watchChanges: true
+                printErrors: false
+                onFileChanged: reload()
+                onLoadFailed: agentWatcher.record = null
+                onLoaded: {
+                    // A record that will not parse is a collector bug, not a
+                    // reason to take the panel down: drop that one agent and
+                    // leave the others alone.
+                    try {
+                        var parsed = JSON.parse(text() || "");
+                        agentWatcher.record = (parsed && typeof parsed === "object") ? parsed : null;
+                    } catch (e) {
+                        console.warn("agents: ignoring unparseable record", agentWatcher.modelData, e);
+                        agentWatcher.record = null;
+                    }
+                }
+            }
+        }
+    }
+
+    function agentNum(v) { var n = Number(v); return isFinite(n) ? n : 0; }
+
+    // Oldest to newest, always. The transcript scanner already emits the week
+    // in date order, but the stats-cache fallback hands back whatever order the
+    // file happens to hold, and a synced snapshot merges several sources — so
+    // the panel sorts rather than trusting its input. ISO-8601 dates sort
+    // correctly as plain strings, which is the whole reason for that format.
+    function agentSortDays(days) {
+        if (!Array.isArray(days)) return [];
+        return days.slice().sort(function (a, b) {
+            return String(a.date || "").localeCompare(String(b.date || ""));
+        });
+    }
+
+    // A record earns a tab by having something to say. A collector for an
+    // agent that is installed but has never been used still writes its record
+    // (that is how it reports "nothing yet" rather than failing), and this is
+    // what stops such a record from putting an empty tab — and an icon — in the
+    // bar.
+    function agentHasData(r) {
+        if (!r) return false;
+        return root.agentNum(r.totalPrompts) > 0 || root.agentNum(r.totalSessions) > 0
+            || root.agentNum(r.activeDays) > 0 || root.agentNum(r.todayPrompts) > 0
+            || root.agentNum(r.todayTotalTokens) > 0
+            || (Array.isArray(r.limits) && r.limits.length > 0);
+    }
+
+    function rebuildAgents() {
+        var out = [];
+        for (var i = 0; i < agentWatchers.count; i++) {
+            var w = agentWatchers.objectAt(i);
+            if (!w || !w.record) continue;
+            var r = w.record;
+            if (!root.agentHasData(r)) continue;
+            out.push({
+                id:              String(r.id || w.modelData),
+                name:            String(r.name || r.id || w.modelData),
+                tierLabel:       String(r.tierLabel || ""),
+                usageStatusText: String(r.usageStatusText || ""),
+                authHelpText:    String(r.authHelpText || ""),
+                limits:          Array.isArray(r.limits) ? r.limits : [],
+                recentDays:      root.agentSortDays(r.recentDays),
+                modelUsage:      r.modelUsage || ({}),
+                todayPrompts:    root.agentNum(r.todayPrompts),
+                todaySessions:   root.agentNum(r.todaySessions),
+                todayTotalTokens: root.agentNum(r.todayTotalTokens),
+                totalPrompts:    root.agentNum(r.totalPrompts),
+                activeDays:      root.agentNum(r.activeDays),
+                updatedAt:       String(r.updatedAt || "")
+            });
+        }
+        // Stable order, so the tab you picked stays where it was across a
+        // refresh that rewrote the records in a different order.
+        out.sort(function (a, b) { return a.name.localeCompare(b.name); });
+        root.agents = out;
+        if (root.agentIndex >= out.length) root.agentIndex = 0;
+    }
+
+    //---- live-process probe ------------------------------------------------
+    // `pgrep -x <id>` is enough for every agent so far: claude and codex both
+    // set comm to their own name, which keeps this as generic as the rest of
+    // the module — the agent id IS the process name until a collector proves
+    // otherwise. Note the trailing `true`: with no agents the command would
+    // otherwise be an empty script, and with agents the last pgrep failing
+    // would make the whole thing exit non-zero for no reason.
+    Process {
+        id: agentLiveProc
+        command: ["bash", "-c",
+            root.agentProbeIds.map(function (id) {
+                return "pgrep -x " + root.shq(id) + " >/dev/null 2>&1 && echo " + root.shq(id);
+            }).join("; ") + (root.agentProbeIds.length > 0 ? "; true" : "true")]
+        stdout: StdioCollector { onStreamFinished: {
+            var live = {}, lines = (this.text || "").split("\n");
+            for (var i = 0; i < lines.length; i++) {
+                var id = lines[i].trim();
+                if (id !== "") live[id] = true;
+            }
+            root.agentLive = live;
+        } }
+    }
+
+    //---- regeneration ------------------------------------------------------
+    // Deliberately NOT detached. CLAUDE.md's SIGPIPE rule is about long-lived
+    // children that must outlive their Process; this is the opposite — the run
+    // is short, and its exit is the signal that the records are on disk.
+    Process {
+        id: agentUpdateProc
+        command: ["true"]
+        onExited: (code) => {
+            root.agentsBusy = false;
+            // The update script leaves the previous record in place when a
+            // collector fails, so a failure here means stale numbers, not none.
+            root.agentsError = code === 0 ? "" : "Couldn't refresh usage";
+            agentScanProc.running = true;
+        }
+    }
+
+    // kind: "normal" | "limits" (reuse the transcript scan, re-probe limits)
+    //     | "force" (bypass every cache the collector keeps)
+    function agentRefresh(kind) {
+        if (root.agentsBusy) return;
+        root.agentsBusy = true;
+        agentUpdateProc.command = ["bash", "-c",
+            root.shq(root.agentsScriptDir + "/agent-usage-update.sh")
+            + (kind === "force" ? " --force" : kind === "limits" ? " --limits-only" : "")];
+        agentUpdateProc.running = true;
+    }
+
+    // Background regeneration. 15 minutes is omarchy's default and sits well
+    // inside every window the panel draws: the 5-hour session bar can move by
+    // at most ~5% between ticks.
+    Timer { interval: 900000; running: true; repeat: true; triggeredOnStart: true
+            onTriggered: root.agentRefresh("normal") }
+
+    // While the panel is open the limits are what someone is actually watching,
+    // so re-probe those alone and reuse the transcript scan, which is the
+    // expensive half. The collector caches its probe for 15s of its own accord,
+    // so opening and shutting the panel cannot become a request per flick.
+    Timer { interval: 120000; running: root.agentVisible; repeat: true; triggeredOnStart: true
+            onTriggered: root.agentRefresh("limits") }
+
+    // A collector installed mid-session shows up within the minute; nothing has
+    // to watch the directory itself for that to work.
+    Timer { interval: 60000; running: true; repeat: true; triggeredOnStart: true
+            onTriggered: agentScanProc.running = true }
+
+    // 2s, and no longer gated on there being records: this probe is what puts
+    // the icon in the bar, so its interval is the delay between quitting an
+    // agent and the icon going away. A pgrep of one or two names is cheap
+    // enough that this is not worth being cleverer about.
+    Timer { interval: 2000; running: true; repeat: true; triggeredOnStart: true
+            onTriggered: agentLiveProc.running = true }
+
+    Timer { interval: 60000; running: true; repeat: true; triggeredOnStart: true
+            onTriggered: agentCollectorScan.running = true }
+
+    //---- derivations the panel draws from ----------------------------------
+
+    function agentFmtTokens(n) {
+        var v = root.agentNum(n);
+        if (v >= 1e9) return (v / 1e9).toFixed(1) + "B";
+        if (v >= 1e6) return (v / 1e6).toFixed(1) + "M";
+        if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+        return String(Math.round(v));
+    }
+
+    function agentModelWord(w) {
+        if (w === "gpt") return "GPT";
+        if (w === "deepseek") return "DeepSeek";
+        return w.charAt(0).toUpperCase() + w.slice(1);
+    }
+
+    // Model ids arrive hyphenated with the version split across segments
+    // ("claude-opus-4-8", "gpt-5.6-sol"). Rejoin the numeric run into one
+    // version and title-case the words around it.
+    function agentModelName(id) {
+        if (!id) return "Unknown";
+        var parts = String(id).replace(/^claude-/, "").replace(/-\d{8}$/, "").split("-");
+        var words = [], version = [];
+        for (var i = 0; i < parts.length; i++) {
+            var part = parts[i];
+            if (part === "") continue;
+            if (/^\d/.test(part)) { version.push(part); continue; }
+            if (version.length > 0) { words.push(version.join(".")); version = []; }
+            words.push(root.agentModelWord(part));
+        }
+        if (version.length > 0) words.push(version.join("."));
+        return words.length > 0 ? words.join(" ") : "Unknown";
+    }
+
+    // A collector that already knows which window a limit belongs to says so in
+    // `title`, and that beats reading it back out of the label: a model-scoped
+    // limit is titled after its model, and a name like "Opus 5 (1M context)"
+    // would parse as a one-minute window.
+    function agentLimitTitle(entry) {
+        var title = String(entry.title || "");
+        if (title !== "") return title;
+        var text = String(entry.label || "").toLowerCase();
+        if (text.indexOf("month") >= 0) return "Monthly";
+        if (text.indexOf("week") >= 0 || text.indexOf("7-day") >= 0) return "Weekly";
+        if (text.indexOf("session") >= 0 || text.indexOf("hour") >= 0) return "Session";
+        var plain = String(entry.label || "").replace(/\s*\(.*\)\s*/, "").trim();
+        return plain === "" ? "Limit" : plain;
+    }
+
+    function agentLimitRows(a) {
+        if (!a) return [];
+        var out = [], list = a.limits || [];
+        for (var i = 0; i < list.length; i++) {
+            var entry = list[i] || {};
+            var percent = Number(entry.percent);
+            if (!(percent >= 0)) continue;
+            out.push({ title: root.agentLimitTitle(entry),
+                       percent: percent,
+                       resetsAt: String(entry.resetsAt || "") });
+        }
+        return out;
+    }
+
+    // The window that decides how much room is left is the FULLEST one — that
+    // is the one that stops the next prompt, whatever its span.
+    function agentBindingLimit(a) {
+        var rows = root.agentLimitRows(a), best = null;
+        for (var i = 0; i < rows.length; i++)
+            if (!best || rows[i].percent > best.percent) best = rows[i];
+        return best;
+    }
+
+    function agentResetMs(row) {
+        if (!row || row.resetsAt === "") return -1;
+        var ms = new Date(row.resetsAt).getTime();
+        return isFinite(ms) ? ms - root.agentNowMs : -1;
+    }
+
+    function agentFmtDuration(ms) {
+        if (!(ms > 0)) return "now";
+        var minutes = Math.floor(ms / 60000);
+        var hours = Math.floor(minutes / 60);
+        var days = Math.floor(hours / 24);
+        if (days > 0) return days + "d " + (hours % 24) + "h";
+        if (hours > 0) return hours + "h " + (minutes % 60) + "m";
+        return Math.max(1, minutes) + "m";
+    }
+
+    // Local calendar date, recomputed from agentNowMs so a panel left open
+    // across midnight moves its "Today" row with the clock.
+    function agentToday() {
+        var now = new Date(root.agentNowMs);
+        return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0")
+             + "-" + String(now.getDate()).padStart(2, "0");
+    }
+
+    function agentDayLabel(date) {
+        var parsed = new Date(String(date || "") + "T00:00:00");
+        if (isNaN(parsed.getTime())) return String(date || "");
+        return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][parsed.getDay()]
+             + " " + parsed.getDate();
+    }
+
+    function agentWeekPeak(a) {
+        var days = a ? (a.recentDays || []) : [], peak = 0;
+        for (var i = 0; i < days.length; i++)
+            peak = Math.max(peak, root.agentNum(days[i].messageCount));
+        return Math.max(1, peak);
+    }
+
+    function agentModelRows(a) {
+        var byModel = a ? (a.modelUsage || {}) : ({}), rows = [];
+        for (var id in byModel) {
+            var b = byModel[id] || {};
+            var input = root.agentNum(b.inputTokens), output = root.agentNum(b.outputTokens);
+            var cacheRead = root.agentNum(b.cacheReadInputTokens);
+            var cacheWrite = root.agentNum(b.cacheCreationInputTokens);
+            // Only the total is drawn. The four classes are still summed
+            // separately because that is the only correct way to get it — a
+            // record has no total field of its own.
+            rows.push({ name: root.agentModelName(id),
+                        total: input + output + cacheRead + cacheWrite });
+        }
+        rows.sort(function (x, y) { return y.total - x.total; });
+        return rows.slice(0, 4);
+    }
+
+    // The plan you pay for, under the name of the tool it pays for. Limits get
+    // their own section; this line just says what the subscription is — or what
+    // is wrong with it, which matters more when something is.
+    function agentHeroMeta(a) {
+        if (!a) return "";
+        if (a.usageStatusText !== "") return a.usageStatusText;
+        if (a.tierLabel === "") return "Subscription";
+        return a.tierLabel;
+    }
+
+    //========================================================================//
     //  NOTIFICATION BACKEND  (replaces the swaync daemon)                    //
     //========================================================================//
     // This owns org.freedesktop.Notifications. swaync MUST be disabled or it
@@ -1419,6 +1880,23 @@ Scope {
         function volume(): void { osdVolRead.running = true; }
         function brightness(): void { osdBrightRead.running = true; }
         function mic(): void { osdMicRead.running = true; }
+    }
+
+    // `qs -p <shell> ipc call agents <fn>` — the agents panel is the one module
+    // worth driving from a keybind (omarchy's ships the same five verbs), and
+    // it is also the only way to exercise the dropdown without a mouse, which
+    // is what makes a repo instance testable per step 2 of CLAUDE.md.
+    IpcHandler {
+        target: "agents"
+        function open(): void { root.closePanels(); root.agentVisible = root.agentRunning; }
+        function close(): void { root.agentVisible = false; }
+        function toggle(): void { if (root.agentRunning) root.togglePanel("agent"); }
+        function refresh(): void { root.agentRefresh("force"); }
+        // Cycles subscriptions. A no-op with one agent, which is the common case.
+        function next(): void {
+            if (root.agents.length > 1)
+                root.agentIndex = (root.agentIndex + 1) % root.agents.length;
+        }
     }
 
     //========================================================================//
@@ -2538,7 +3016,8 @@ Scope {
             }
 
             //--------------------------------------------------------------//
-            //  RIGHT ISLAND : group/expand , bluetooth , network , battery //
+            //  RIGHT ISLAND : group/expand , agents , voxtype , bluetooth , //
+            //                 network , battery                            //
             //--------------------------------------------------------------//
             Island {
                 anchors.right: parent.right
@@ -2655,6 +3134,51 @@ Scope {
                             Behavior on color { ColorAnimation { duration: 300 } }
                         }
                     }
+                }
+
+                //=== agents : AI coding-agent usage ============================
+                // Sits left of voxtype, so the island's two "something is
+                // happening right now" glyphs end up next to each other.
+                //
+                // The module leaves the bar ENTIRELY when no agent has recorded
+                // usage — an invisible child is skipped by the RowLayout, so it
+                // costs no width either. A machine that has never run a coding
+                // agent draws nothing here and the icon arrives on its own the
+                // first time a collector finds something, which is what makes
+                // this safe to ship in a dotfiles repo's default bar.
+                //
+                // "Running", strictly: a live CLI process, not usage on
+                // record. Start `claude` in any terminal and the icon arrives
+                // within the probe's 2s; Ctrl+C back to the prompt and it
+                // leaves. The records decide what the PANEL draws, never
+                // whether the module is in the bar at all.
+                BarLabel {
+                    id: agentBtn
+                    visible: root.agentRunning
+                    text: root.g.robotOn
+
+                    // The icon is only ever on screen while an agent is up,
+                    // so presence alone carries "running" and the glyph does not
+                    // need to. Colour is left to say the one thing that is
+                    // urgent: red once the fullest window is nearly spent, at
+                    // the same 90% the panel's own meters go red at. (Not
+                    // ncAccent — on this wallpaper's palette that is #4E627D
+                    // against a #c3c7cc foreground, a tint that reads as
+                    // *disabled*.)
+                    readonly property var binding: root.agentBindingLimit(root.agent)
+                    baseColor: binding && binding.percent >= 0.9 ? root.colCritical : root.col7
+
+                    onLeftClicked: root.togglePanel("agent")
+                    // Right-click is the force refresh, matching the panel's own
+                    // refresh button, so the numbers can be pulled fresh without
+                    // opening anything.
+                    onRightClicked: root.agentRefresh("force")
+                    // Scroll cycles subscriptions when there is more than one,
+                    // the same way the panel's chips do.
+                    onScrolledUp: if (root.agents.length > 1)
+                        root.agentIndex = (root.agentIndex + 1) % root.agents.length
+                    onScrolledDown: if (root.agents.length > 1)
+                        root.agentIndex = (root.agentIndex + root.agents.length - 1) % root.agents.length
                 }
 
                 //=== voxtype : voice-to-text ==================================
@@ -4242,6 +4766,408 @@ Scope {
                             onClicked: root.audSetSource(modelData)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    //========================================================================//
+    //  AGENTS PANEL  (dropdown from the robot icon)                          //
+    //  omarchy's agents dashboard in this repo's panel language: same         //
+    //  ncBg card / ncBorder outline / SectionLabel + PanelDivider as the      //
+    //  battery, wifi, bluetooth and audio dropdowns.                          //
+    //========================================================================//
+    PanelWindow {
+        id: agentWin
+        visible: root.agentVisible
+        color: "transparent"
+        anchors { top: true; left: true; right: true; bottom: true }   // full-screen catcher
+        exclusiveZone: 0
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "quickshell-agents"
+        WlrLayershell.keyboardFocus: root.agentVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+
+        MouseArea { anchors.fill: parent; onClicked: root.agentVisible = false }
+
+        Rectangle {
+            id: agentPanel
+            // Wider than the 300px control dropdowns: this one is a dashboard,
+            // and the model rows carry a name and a token figure on one line.
+            width: 330
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.topMargin: root.panelTopMargin
+            anchors.rightMargin: 10
+            implicitHeight: agentCol.implicitHeight + 28
+            radius: 14
+            color: root.colBg
+            border.width: 2
+            border.color: root.ncBorder
+
+            MouseArea { anchors.fill: parent }      // swallow clicks (don't close)
+
+            ColumnLayout {
+                id: agentCol
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 12
+
+                // ---------- hero: mark, tool name, the plan it runs on ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    // An agent may ship its own mark at assets/<id>.svg — the
+                    // one place in the module where an agent gets to look like
+                    // itself. Nothing requires it: Image reports Error for a
+                    // file that is not there and the bar glyph takes over, so
+                    // a collector with no artwork still gets a hero.
+                    // Qt.resolvedUrl is relative to THIS file, so it follows
+                    // the shell whether it runs from the repo or ~/.config.
+                    Item {
+                        Layout.preferredWidth: root.ns(26)
+                        Layout.preferredHeight: root.ns(26)
+
+                        Image {
+                            id: agentMark
+                            anchors.fill: parent
+                            source: root.agent ? Qt.resolvedUrl("assets/" + root.agent.id + ".svg") : ""
+                            // SVGs rasterize at sourceSize, so ask for 2x and
+                            // let it scale down — at 1x the mark is mush on a
+                            // HiDPI screen.
+                            sourceSize.width: root.ns(52)
+                            sourceSize.height: root.ns(52)
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: agentMark.status !== Image.Ready
+                            text: root.g.robotOn
+                            color: root.ncText
+                            font.family: root.ncFont
+                            font.pixelSize: root.ns(24)
+                        }
+                    }
+                    ColumnLayout {
+                        spacing: 1
+                        Layout.fillWidth: true
+                        Text {
+                            // Reachable for a second or two on a first-ever run:
+                            // the icon appears with the process, the record
+                            // lands when the collector kicked off by
+                            // onAgentRunningChanged comes back.
+                            text: root.agent ? root.agent.name
+                                  : root.agentsBusy ? "Collecting usage…" : "No usage recorded yet"
+                            color: root.ncText
+                            font.family: root.ncFont
+                            font.pixelSize: root.ns(15)
+                            font.weight: Font.Medium
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        // The plan, in caps, the way the reference does it —
+                        // "MAX 20X" / "PRO". An auth or endpoint problem
+                        // replaces it, because that matters more than the tier.
+                        Text {
+                            text: root.agentHeroMeta(root.agent).toUpperCase()
+                            color: root.agent && root.agent.usageStatusText !== ""
+                                   ? root.colWarning : root.alpha(root.ncText, 0.5)
+                            font.family: root.ncFont
+                            font.pixelSize: root.ns(10)
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                    }
+                    // Spins while a collector run is in flight, so a refresh
+                    // that takes a second to come back is visibly working
+                    // rather than apparently ignored.
+                    PanelIconBtn {
+                        glyph: root.g.refresh
+                        spinning: root.agentsBusy
+                        onClicked: root.agentRefresh("force")
+                    }
+                }
+
+                // ---------- subscription switch ----------
+                // Only earns its row when there is a choice to make: with one
+                // agent the hero already names it.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    visible: root.agents.length > 1
+                    Repeater {
+                        model: root.agents
+                        delegate: PanelTextBtn {
+                            required property var modelData
+                            required property int index
+                            label: modelData.name
+                            accent: index === root.agentIndex
+                            onClicked: root.agentIndex = index
+                        }
+                    }
+                }
+
+                // ---------- auth / endpoint trouble ----------
+                // The hero line says something is wrong; this says what to do
+                // about it, and only appears when there is something to say.
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: root.agent && root.agent.usageStatusText !== ""
+                             && root.agent.authHelpText !== ""
+                    implicitHeight: agentHelp.implicitHeight + 20
+                    radius: 10
+                    color: root.alpha(root.colWarning, 0.10)
+                    border.width: 1.5
+                    border.color: root.alpha(root.colWarning, 0.35)
+                    Text {
+                        id: agentHelp
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        text: root.agent ? root.agent.authHelpText : ""
+                        color: root.alpha(root.ncText, 0.75)
+                        font.family: root.ncFont
+                        font.pixelSize: root.ns(9)
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                // ---------- limits ----------
+                PanelDivider { visible: agentLimits.visible }
+
+                ColumnLayout {
+                    id: agentLimits
+                    Layout.fillWidth: true
+                    spacing: 10
+                    readonly property var rows: root.agentLimitRows(root.agent)
+                    visible: rows.length > 0
+
+                    SectionLabel { text: "LIMITS" }
+
+                    Repeater {
+                        model: agentLimits.rows
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            readonly property bool alarming: modelData.percent >= 0.9
+                            Layout.fillWidth: true
+                            spacing: 5
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Text {
+                                    // Model-scoped windows are titled after the
+                                    // model ("Fable Weekly") and run long, so
+                                    // the title is what gives way, never the
+                                    // percentage.
+                                    text: modelData.title
+                                    color: root.ncText
+                                    font.family: root.ncFont
+                                    font.pixelSize: root.ns(12)
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                Text {
+                                    text: Math.round(modelData.percent * 100) + "%"
+                                    color: alarming ? root.colCritical : root.ncText
+                                    font.family: root.ncFont
+                                    font.pixelSize: root.ns(11)
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 6
+                                radius: 3
+                                color: root.alpha(root.col7, 0.15)
+                                Rectangle {
+                                    width: parent.width * Math.max(0, Math.min(1, modelData.percent))
+                                    height: parent.height
+                                    radius: parent.radius
+                                    color: alarming ? root.colCritical : root.ncAccent
+                                    Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                                }
+                            }
+
+                            Text {
+                                readonly property real remaining: root.agentResetMs(modelData)
+                                visible: remaining > 0
+                                text: "Resets in " + root.agentFmtDuration(remaining)
+                                color: root.alpha(root.ncText, 0.5)
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(9)
+                            }
+                        }
+                    }
+                }
+
+                // ---------- tokens by day ----------
+                PanelDivider { visible: agentDays.visible }
+
+                ColumnLayout {
+                    id: agentDays
+                    Layout.fillWidth: true
+                    spacing: 6
+                    readonly property var rows: root.agent ? (root.agent.recentDays || []) : []
+                    readonly property real peak: root.agentWeekPeak(root.agent)
+                    readonly property string today: root.agentToday()
+                    visible: rows.length > 0
+
+                    SectionLabel { text: "TOKENS BY DAY" }
+
+                    Repeater {
+                        model: agentDays.rows
+                        delegate: RowLayout {
+                            required property var modelData
+                            // By date, not by position: a stats-cache fallback
+                            // can hand back a window that stops short of today.
+                            readonly property bool isToday: String(modelData.date || "") === agentDays.today
+                            readonly property real tokens: root.agentNum(modelData.messageCount)
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            // Weekday plus day-of-month. The window is a
+                            // rolling seven days, so it starts on whatever
+                            // weekday it starts on, and a run of quiet days
+                            // ahead of two busy ones reads exactly like a
+                            // sort by size until the dates are on screen.
+                            Text {
+                                text: isToday ? "Today" : root.agentDayLabel(modelData.date)
+                                color: isToday ? root.ncText : root.alpha(root.ncText, 0.5)
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(10)
+                                font.weight: isToday ? Font.DemiBold : Font.Normal
+                                Layout.preferredWidth: root.ns(46)
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 5
+                                radius: 2.5
+                                color: root.alpha(root.col7, 0.15)
+                                Rectangle {
+                                    width: parent.width * Math.max(0, Math.min(1, tokens / agentDays.peak))
+                                    height: parent.height
+                                    radius: parent.radius
+                                    // Scaled to the busiest day of the week, so
+                                    // the peak row is always full and the rest
+                                    // read as a fraction of it.
+                                    color: isToday ? root.ncAccent : root.alpha(root.ncAccent, 0.55)
+                                    Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                                }
+                            }
+
+                            Text {
+                                text: root.agentFmtTokens(tokens)
+                                color: isToday ? root.ncText : root.alpha(root.ncText, 0.5)
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(10)
+                                font.weight: Font.DemiBold
+                                horizontalAlignment: Text.AlignRight
+                                Layout.preferredWidth: root.ns(44)
+                            }
+                        }
+                    }
+
+                    // Prompt and session counts only exist for today, so they
+                    // ride along under the week rather than taking a section of
+                    // their own.
+                    // fillWidth + wrap, both required: a Text with neither
+                    // takes its implicit width from the string and a
+                    // ColumnLayout lets it overflow the card rather than
+                    // squeezing it, which is exactly what this line did.
+                    Text {
+                        visible: root.agent && root.agent.todayPrompts > 0
+                        text: root.agent ? (root.agent.todayPrompts + " prompts, "
+                                            + root.agent.todaySessions + " sessions today  ·  "
+                                            + root.agent.activeDays + " active days") : ""
+                        color: root.alpha(root.ncText, 0.4)
+                        font.family: root.ncFont
+                        font.pixelSize: root.ns(9)
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        Layout.topMargin: 2
+                    }
+                }
+
+                // ---------- tokens by model ----------
+                PanelDivider { visible: agentModels.visible }
+
+                ColumnLayout {
+                    id: agentModels
+                    Layout.fillWidth: true
+                    spacing: 6
+                    readonly property var rows: root.agentModelRows(root.agent)
+                    visible: rows.length > 0
+
+                    SectionLabel { text: "TOKENS BY MODEL" }
+
+                    Repeater {
+                        model: agentModels.rows
+                        delegate: Rectangle {
+                            id: agentModelBox
+                            required property var modelData
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 28
+                            radius: 8
+                            color: root.alpha(root.col7, 0.06)
+
+                            // The share bar fills the row BEHIND the label
+                            // rather than stacking under it, which is what keeps
+                            // the whole dashboard on one screen. Scaled to the
+                            // heaviest model, so the top row is always full —
+                            // the same scale-to-peak the week above uses.
+                            Rectangle {
+                                anchors.left: parent.left
+                                height: parent.height
+                                radius: parent.radius
+                                width: parent.width * Math.max(0, Math.min(1,
+                                    modelData.total / Math.max(1, agentModels.rows[0].total)))
+                                color: root.alpha(root.ncAccent, 0.22)
+                                Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                            }
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 9
+                                anchors.right: agentModelTokens.left
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.name
+                                color: root.ncText
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(11)
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                id: agentModelTokens
+                                anchors.right: parent.right
+                                anchors.rightMargin: 9
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.agentFmtTokens(modelData.total)
+                                color: root.alpha(root.ncText, 0.6)
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(11)
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+                }
+
+                // ---------- footer ----------
+                Text {
+                    Layout.fillWidth: true
+                    visible: text !== ""
+                    text: root.agentsError
+                    color: root.colWarning
+                    font.family: root.ncFont
+                    font.pixelSize: root.ns(9)
+                    horizontalAlignment: Text.AlignHCenter
                 }
             }
         }
