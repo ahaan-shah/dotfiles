@@ -256,7 +256,28 @@ Scope {
     // exact number asked for (it snaps a scale it cannot divide cleanly to the
     // nearest one it can). Re-read shortly after a click so the highlighted
     // button shows what the compositor actually did, not what we requested.
-    Timer { id: dispMonReapply; interval: 400; onTriggered: dispMonRead.running = true }
+    Timer { id: dispMonReapply; interval: 400; onTriggered: {
+        dispMonRead.running = true;
+        // Same settle is where the scale gets WRITTEN DOWN. Picking a scale
+        // here was a runtime-only change: hyprland.lua reads MONITOR_SCALE out
+        // of hardware.env on every parse, so the next `hyprctl reload` or
+        // reboot silently restored the old one. Measured 2026-09-02 — a 1.8
+        // chosen in this panel had been running since Aug 31 against a profile
+        // that said 2, and one reload moved every window on the desktop.
+        //
+        // Deferred to the 400ms tick rather than fired next to the eval above
+        // for the same reason the re-read is: the script records what the
+        // compositor SETTLED ON (click 1.75, land on 1.8), and 400ms earlier
+        // that is still the old value.
+        if (root.dispPersistMon !== "") {
+            root.run(root.shq(root.sideScriptDir + "/persist-monitor-scale.sh")
+                     + " " + root.shq(root.dispPersistMon));
+            root.dispPersistMon = "";
+        }
+    } }
+    // Set by dispSetScale and nowhere else, so merely opening the panel — or
+    // any other reason to re-read monitors — never rewrites the profile.
+    property string dispPersistMon: ""
 
     // "" = follow whichever monitor is focused; otherwise the name picked in
     // the DISPLAYS list. Reset on close so the panel always opens pointing at
@@ -340,6 +361,7 @@ Scope {
         var lua = "hl.monitor({ output = '" + m.name + "', mode = '" + mode + "', " +
                   "position = '" + m.x + "x" + m.y + "', scale = " + v + " })";
         root.run("hyprctl eval " + root.shq(lua));
+        root.dispPersistMon = m.name;
         dispMonReapply.restart();
     }
 
