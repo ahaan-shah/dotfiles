@@ -64,6 +64,9 @@ glib2                     # gio launch, used by finder's app launcher
 lua54                     # hyprland.lua offline syntax check
 libqalculate              # qalc, finder's calculator mode
 brightnessctl             # F4/F5, kbd backlight, micmute LED
+python                    # the agent-usage collectors are Python (stdlib only:
+                          #   sqlite3, urllib). Pulled in by python-pywal anyway,
+                          #   but named because code here calls it directly.
 python-pywal              # the whole colour scheme
 inotify-tools             # WalColors live theme reload in all three shells
 wtype                     # voxtype types through this

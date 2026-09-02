@@ -296,8 +296,20 @@ phase_configs() {
     # source repo — where the mirror-shaped files do not exist — still gets it.
     deploy_file "$DOTDIR/mimeapps.list" "$HOME/.config/mimeapps.list" || \
         deploy_file "$SCRIPT_DIR/templates/mimeapps.list" "$HOME/.config/mimeapps.list" || true
-    deploy_file "$DOTDIR/shell/.zshrc"  "$HOME/.zshrc"  || true
-    deploy_file "$DOTDIR/shell/.bashrc" "$HOME/.bashrc" || true
+    # The shell rc files carry ABSOLUTE /home/<user>/ paths in a few aliases —
+    # they are hand-written files that live only in the mirror, so nothing has
+    # ever expanded $HOME in them. Under a different username those aliases
+    # point at a home that does not exist and fail with "no such file". This is
+    # the same rewrite the webapp .desktop files get below, and for the same
+    # reason; it is applied here rather than asked of the rc files themselves,
+    # because for a mirror-only file the LIVE copy is the source of truth and
+    # the installer does not get to edit it upstream.
+    local rc
+    for rc in .zshrc .bashrc; do
+        deploy_file "$DOTDIR/shell/$rc" "$HOME/$rc" || continue
+        [ "$DRY_RUN" = 0 ] && sed -i "s#/home/[A-Za-z0-9_.-]\+/#$HOME/#g" "$HOME/$rc"
+    done
+    ok "shell rc files repointed at $HOME"
 
     # Webapp .desktop files and their icons — the dock's ChatGPT/Claude/
     # TradingView entries point at ~/.local/share/icons/webapps.
@@ -340,11 +352,22 @@ phase_configs() {
 
     # Every launcher and script must be executable — rsync preserves the bit,
     # but a git checkout on a fresh clone may not.
+    #
+    # The agent-usage-* clause is NOT redundant with *.sh. A collector carries
+    # no extension by contract — the id is what follows agent-usage-, so
+    # agent-usage-claude and agent-usage-codex are Python files with no suffix
+    # at all — and for them the execute bit is the registration, not a
+    # convenience: agent-usage-update.sh and the taskbar's own collector scan
+    # both enumerate with `[ -x ]`. Measured on a clone with the bits stripped:
+    # update.sh exits 0, writes no record, and the agents module never appears
+    # in the bar. A silent zero, which is why it is fixed here rather than
+    # left to git.
     if [ "$DRY_RUN" = 0 ]; then
         find "$HOME/.config/scripts" "$HOME/.config"/{finder,macshell,taskbar,lockscreen} \
-             -maxdepth 1 -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
+             -maxdepth 1 \( -name '*.sh' -o -name 'agent-usage-*' \) \
+             -exec chmod +x {} + 2>/dev/null || true
     fi
-    ok "launch scripts marked executable"
+    ok "launch scripts and agent collectors marked executable"
 
     run xdg-user-dirs-update
 
@@ -1455,9 +1478,14 @@ phase_verify() {
     fi
 
     # ── no path from another machine survived ──────────────────────────
+    # The rc files are in this sweep deliberately: they are deployed by the
+    # configs phase, they are the one deployed surface that carries absolute
+    # home paths in normal use, and leaving them out is how a broken alias
+    # ships while this check reports clean.
     local foreign
     foreign="$(grep -rhoI --exclude='*.bak*' -E '/home/[A-Za-z0-9_.-]+' \
-                 "$HOME/.config"/{hypr,taskbar,macshell,finder,lockscreen,scripts} 2>/dev/null \
+                 "$HOME/.config"/{hypr,taskbar,macshell,finder,lockscreen,scripts} \
+                 "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null \
                | sort -u | grep -vx "/home/$USER" || true)"
     if [ -n "$foreign" ]; then
         bad "deployed configs reference another machine's home: $(echo "$foreign" | tr '\n' ' ')"
@@ -1489,7 +1517,8 @@ phase_verify() {
     # ── runtime dependencies the code shells out to ────────────────────
     local b
     for b in hyprctl quickshell qs socat jq fd fzf wl-copy wl-paste grim notify-send \
-             gio qalc pdftoppm brightnessctl wal inotifywait nmcli bluetoothctl; do
+             gio qalc pdftoppm brightnessctl wal inotifywait nmcli bluetoothctl \
+             python3; do
         have "$b" || bad "missing runtime dependency: $b"
     done
     chk "runtime dependency sweep finished"
@@ -1526,6 +1555,69 @@ phase_verify() {
 
     check "first-boot profile completer deployed" \
           "[ -x '$HOME/.config/scripts/complete-hardware-profile.sh' ]"
+
+    # ── the agents panel ───────────────────────────────────────────────
+    # The panel is an extension point, not a fixed feature: every executable
+    # ~/.config/scripts/agent-usage-<id> is a collector, and a tab exists
+    # because a collector wrote a record into the state dir. Nothing in
+    # shell.qml names an agent, so there is no list to check against — the
+    # only honest test is to run the writer and count what it left.
+    #
+    # Both halves of that contract fail SILENTLY. A collector without its
+    # execute bit is simply not enumerated (by update.sh or by the taskbar's
+    # own scan), and update.sh still exits 0 having written nothing; the
+    # result is a module that never appears, with no error anywhere. That is
+    # measured behaviour, not a worry, which is why this block exists.
+    local usage_dir="${XDG_STATE_HOME:-$HOME/.local/state}/hyprahaan/agents/usage"
+    local col cols=0 unexec=""
+    for col in "$HOME/.config/scripts"/agent-usage-*; do
+        [ -e "$col" ] || continue                       # nullglob is not set
+        [ "${col##*/}" = agent-usage-update.sh ] && continue
+        cols=$((cols + 1))
+        [ -x "$col" ] || unexec="$unexec ${col##*/}"
+    done
+    if [ "$cols" = 0 ]; then
+        warn "no agent-usage-* collectors installed — the agents panel will never appear"
+    elif [ -n "$unexec" ]; then
+        bad "agent collector(s) not executable, so nothing enumerates them:$unexec"
+    elif [ ! -x "$HOME/.config/scripts/agent-usage-update.sh" ]; then
+        bad "agent-usage-update.sh missing or not executable — no record ever gets written"
+    else
+        chk "$cols agent collector(s) installed and executable"
+        # End to end, and cheap: the collectors run concurrently and a fresh
+        # machine authenticates none of them, so they bail before any network
+        # probe — 0.1 s measured for both. Safe with no agent installed, too:
+        # a collector for an absent agent still writes a zeroed record, which
+        # is how it reports "nothing yet" rather than failing, and the panel
+        # gates its tabs on the counters rather than on the file existing.
+        if "$HOME/.config/scripts/agent-usage-update.sh" >/dev/null 2>&1; then
+            local recs
+            # NOTE: `find | grep -c`, never `grep -q` — see the SIGPIPE note on
+            # the font check. `|| echo 0` because grep -c exits 1 on no match.
+            recs="$(find "$usage_dir" -maxdepth 1 -name '*.json' 2>/dev/null \
+                    | grep -c . || echo 0)"
+            if [ "${recs:-0}" -gt 0 ]; then
+                chk "agent usage records written ($recs in ${usage_dir/#"$HOME"/\~})"
+            else
+                bad "the collectors ran but wrote no record to $usage_dir"
+            fi
+        else
+            # Not fatal by design: a failed collector leaves the previous
+            # record in place, so the panel shows stale numbers rather than none.
+            warn "agent-usage-update.sh returned non-zero — a collector failed; the panel will show stale data"
+        fi
+    fi
+    # The hero mark is resolved with Qt.resolvedUrl relative to shell.qml, so
+    # assets/ has to travel WITH it. Missing, the panel still works and falls
+    # back to the bar glyph — a degradation nothing else would ever report.
+    local marks
+    marks="$(find "$HOME/.config/taskbar/assets" -maxdepth 1 -name '*.svg' 2>/dev/null \
+             | grep -c . || echo 0)"
+    if [ "${marks:-0}" -gt 0 ]; then
+        chk "taskbar agent marks deployed ($marks svg)"
+    else
+        warn "~/.config/taskbar/assets holds no agent mark — the panel hero falls back to the bar glyph"
+    fi
 
     # ── default applications ───────────────────────────────────────────
     # mimeapps.list is what makes "open this file" pick the right app. A

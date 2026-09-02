@@ -30,7 +30,7 @@ that needs it, and those phases can be skipped with `--no-root`.
 |---|---|
 | `preflight` | Arch check, network check, hardware detection report, confirm |
 | `packages` | Every manifest in `packages/`, GPU userspace matched to the actual vendor, then the four AUR packages (bootstrapping `yay` first) |
-| `configs` | Deploys config directories into `~/.config`, backing up anything it overwrites |
+| `configs` | Deploys config directories into `~/.config`, backing up anything it overwrites. Marks the launchers **and the extensionless agent collectors** executable |
 | `hardware` | Detects this machine and writes `~/.config/scripts/hardware.env` |
 | `nvidia` | Only where there is an NVIDIA dGPU: PRIME offload, or a documented refusal |
 | `apps` | voxtype model + config, Spotify Wayland flag, battery cap preference, login shell |
@@ -42,7 +42,7 @@ that needs it, and those phases can be skipped with `--no-root`.
 | `plugins` | **Builds** `hyprbars` via `hyprpm` and deliberately leaves it **disabled**. Never fatal — `hyprland.lua` gates its hyprbars block, so an absent plugin means no title bars and nothing else |
 | `hibernation` | Opt-in. Swap file, `resume=` cmdline, resume hook — the only phase that edits your bootloader |
 | `fingerprint` | Offers to enrol fingers, if a reader is detected. Interactive by nature |
-| `verify` | Asserts the result, including that `hyprland.lua` actually parses |
+| `verify` | Asserts the result, including that `hyprland.lua` actually parses and that the agent collectors really write a record |
 
 ## Packages
 
@@ -163,6 +163,52 @@ empty until your first login fills it in. Both forms are fully working configs.
 
 It is **excluded from the dotfiles backup on purpose** — committing this
 laptop's touchpad name would hand the next fresh install the wrong hardware.
+
+## The agents panel
+
+The taskbar's seventh dropdown reports the plan, rate limits and token history
+of whichever AI coding agent is running. It is an **extension point, not a
+feature with a list**: nothing in `shell.qml` names an agent. Every executable
+`~/.config/scripts/agent-usage-<id>` is a collector, it prints one JSON record
+to stdout, `agent-usage-update.sh` writes that to
+`~/.local/state/hyprahaan/agents/usage/<id>.json`, and the panel draws whatever
+is in that directory. Adding an agent is adding one file.
+
+Two ship: `agent-usage-claude` and `agent-usage-codex`, both Python, both
+adapted from omarchy (MIT). The installer's part in this is small and entirely
+about not breaking the contract:
+
+- **`packages`** installs `python` and `jq`. `python` was previously implicit —
+  `python-pywal` pulls it in — and is now named, because code in this repo calls
+  it directly.
+- **`configs`** deploys the collectors with the rest of `scripts/`, and
+  `taskbar/assets/` alongside `shell.qml` (the panel hero resolves its mark with
+  `Qt.resolvedUrl`, so the directory has to travel *with* the QML or the hero
+  silently falls back to the bar glyph). It then marks every `agent-usage-*`
+  executable — **not** covered by the old `*.sh` sweep, because a collector
+  carries no extension by contract: the id is whatever follows `agent-usage-`.
+- **`verify`** runs the writer for real and counts the records it left.
+
+That last pair is worth stating plainly, because the failure is invisible. The
+execute bit is not cosmetic here — it is the registration. Both
+`agent-usage-update.sh` and the taskbar's own collector scan enumerate with
+`[ -x ]`. Measured on a clone with the bits stripped: `update.sh` **exits 0**,
+writes nothing, and the agents module simply never appears in the bar, with no
+error in any log. Nothing else in the install would have caught it.
+
+**Nothing is enabled by the installer, and nothing needs to be.** There is no
+timer and no unit: the taskbar refreshes the records itself on a 15-minute
+timer and probes for a live agent process every 2 s. Installing a CLI does
+nothing on its own either — a collector that knows how to read it has to exist.
+Both shipped collectors are safe on a machine where that agent is absent: they
+exit 0 having written a zeroed record, which is how they report "nothing yet"
+rather than failing, and the panel gates its tabs on the counters, so an unused
+agent puts no empty tab in the bar. Measured at ~0.1 s for both, concurrently,
+with nothing authenticated — which is why `verify` can afford to run them.
+
+The records live outside both the repo and `~/.config` on purpose. They carry
+token counts and plan tier, and `~/.config/scripts` is mirrored to a **public**
+repo.
 
 ## Wifi, Bluetooth and the firewall
 
