@@ -3031,8 +3031,29 @@ Scope {
                     id: expandGroup
                     implicitHeight: expandInner.implicitHeight
                     implicitWidth: expandInner.implicitWidth
-                    property bool expanded: grpHover.hovered
-                    HoverHandler { id: grpHover }
+                    // Raw `expanded: grpHover.hovered` was too twitchy to use:
+                    // collapsed, the group's hit area is only the  handle, so
+                    // a few px of cursor drift on the way over to the volume
+                    // icon un-hovered it and slammed the 600ms animation shut
+                    // mid-reveal. Un-hover now only ARMS a 1s timer, and the
+                    // drawer counts as expanded for as long as that timer runs,
+                    // so a brief overshoot never collapses it. Re-entering
+                    // disarms the timer (below), which is what makes the grace
+                    // period a buffer rather than a 1s cap on every reveal.
+                    //
+                    // Also pinned open while a panel launched from inside the
+                    // drawer is up: clicking the volume icon moves the pointer
+                    // down onto the panel, which is outside the group, so the
+                    // drawer used to collapse out from under the panel it had
+                    // just opened. Brightness has no panel yet — when it gets
+                    // one, OR its visible flag in here too.
+                    property bool expanded: grpHover.hovered || collapseDelay.running
+                                            || root.audVisible
+                    HoverHandler {
+                        id: grpHover
+                        onHoveredChanged: hovered ? collapseDelay.stop() : collapseDelay.restart()
+                    }
+                    Timer { id: collapseDelay; interval: 1000 }
 
                     RowLayout {
                         id: expandInner
@@ -3058,8 +3079,6 @@ Scope {
                                     id: volWidget
                                     property string icon: ""
                                     text: icon
-                                    tip: volTip
-                                    property string volTip: ""
                                     // click -> audio panel ; right-click -> mute ; scroll -> volume
                                     // (wiremix moved to the panel's gear button)
                                     onLeftClicked:   root.togglePanel("aud")
@@ -3078,8 +3097,6 @@ Scope {
                                                 var p = (this.text || "").trim().split("|");
                                                 var muted = p[1] === "1";
                                                 volWidget.icon = muted ? "\uf026" : "\uf028";   //  /
-                                                volWidget.volTip = muted ? "Muted"
-                                                    : ("Volume: " + Math.min(100, parseInt(p[0]) || 0) + "%");
                                             }
                                         }
                                     }
@@ -3087,27 +3104,12 @@ Scope {
                                             onTriggered: volProc.running = true }
                                 }
 
-                                // custom/brightness (format is literal 󰃠; tooltip from brightness.sh)
+                                // custom/brightness (format is literal 󰃠)
                                 BarLabel {
                                     id: brightness
                                     text: "󰃠"
-                                    tip: brTip
-                                    property string brTip: ""
                                     onScrolledUp:   root.run("brightnessctl set +5%")
                                     onScrolledDown: root.run("brightnessctl set 5%-")
-
-                                    // read brightness inline (no external brightness.sh dependency)
-                                    Process {
-                                        id: brProc
-                                        command: ["bash", "-c", "echo $(( $(brightnessctl get) * 100 / $(brightnessctl max) ))"]
-                                        stdout: StdioCollector {
-                                            onStreamFinished: {
-                                                brightness.brTip = "Brightness: " + (parseInt((this.text || "").trim()) || 0) + "%";
-                                            }
-                                        }
-                                    }
-                                    Timer { interval: 1000; running: true; repeat: true; triggeredOnStart: true
-                                            onTriggered: brProc.running = true }
                                 }
 
                                 // custom/endpoint : the subtle "|" divider

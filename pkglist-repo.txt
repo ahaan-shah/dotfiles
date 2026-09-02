@@ -50,6 +50,7 @@ hyprland
 hyprpaper
 hyprpicker
 hyprshot
+hyprsunset
 ifuse
 impala
 imv
