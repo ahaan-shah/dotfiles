@@ -19,8 +19,11 @@
 # not this one. The AUR list is deliberately four packages; install anything
 # else afterwards with ~/.config/scripts/pkg-aur-install.sh.
 #
-# NVIDIA is deliberately out of scope: not every machine has one, and getting
-# hybrid graphics wrong costs a black screen. See install/README.md.
+# NVIDIA is set up only where the machine actually has an NVIDIA discrete GPU,
+# and only in one shape: the iGPU draws the desktop, the dGPU renders nothing
+# until `prime-run` asks it to. Where the machine does not fit that shape the
+# phase refuses rather than guesses — getting hybrid graphics wrong costs a
+# black screen, not an error message. See install/README.md.
 
 set -euo pipefail
 
@@ -34,7 +37,7 @@ ONLY=""
 SKIP=""
 LOGFILE="/tmp/hyprahaan-install-$(date +%Y%m%d-%H%M%S).log"
 
-ALL_PHASES="preflight packages configs hardware apps usersystemd system network virt theming plugins hibernation fingerprint verify"
+ALL_PHASES="preflight packages configs hardware nvidia apps usersystemd system network virt theming plugins hibernation fingerprint verify"
 
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
@@ -327,6 +330,14 @@ phase_configs() {
     run rm -f "$HOME/.config/hypr/hyprland.lua.bak-preNvidia"
     run rm -f "$HOME/.config/hypr/conf.d/voxtype-submap.conf"
 
+    # Scripts that were merged into another script. deploy_scripts uses rsync
+    # WITHOUT --delete (an install must never eat files it does not own), so a
+    # superseded script would otherwise sit in ~/.config/scripts forever, still
+    # executable and still findable — and hyprbars-minimize.sh in particular was
+    # a live keybind target until 2026-09-02. Both are now hyprbars.sh.
+    run rm -f "$HOME/.config/scripts/hyprbars-minimize.sh"
+    run rm -f "$HOME/.config/scripts/toggle-hyprbars.sh"
+
     # Every launcher and script must be executable — rsync preserves the bit,
     # but a git checkout on a fresh clone may not.
     if [ "$DRY_RUN" = 0 ]; then
@@ -372,7 +383,302 @@ phase_hardware() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 5 · APPS  (per-application config that is not just a directory copy)
+# 5 · NVIDIA — hybrid graphics: the iGPU draws, the dGPU offloads
+# ═══════════════════════════════════════════════════════════════════════
+# Runs AFTER configs and hardware, deliberately. hyprland.lua's iGPU pin has to
+# be deployed, and hardware.env has to name the iGPU, BEFORE a driver exists
+# that could take the display. That ordering is the entire safety argument: with
+# the pin already in place, a broken NVIDIA install degrades to "offload does
+# not work" and never to a black screen, because eDP stays on i915 either way.
+#
+# The model this implements, and the only one it implements:
+#
+#   the iGPU draws every pixel, always. The dGPU renders nothing until a
+#   command asks for it by name (`prime-run <cmd>`), and drops back to D3cold
+#   by itself a few seconds after that command exits.
+#
+# It writes no module parameters and enables no units. On an Ampere-or-later
+# notebook with the open modules the defaults are already right, and three
+# pieces of standard wiki advice are actively wrong here — packages/90-nvidia.txt
+# records which three and why. What this phase does instead is: refuse where the
+# machine does not match the model, install, then CHECK what the packages
+# placed. Nothing here edits hyprland.lua, mkinitcpio.conf or the bootloader.
+
+# nvidia_intree_ko — is there an nvidia kernel module in a path the mkinitcpio
+# `kms` hook globs (kernel/drivers/gpu/drm/)? That hook is the only thing that
+# would pull one into the initramfs, and we do not want early KMS for a card
+# that is supposed to stay asleep. Prints the offending path, or nothing.
+#
+# This replaces the obvious test. `lsinitcpio -l <img> | grep -ci nvidia` reads
+# 663 on this laptop and means nothing at all: those are nouveau's firmware
+# blobs from linux-firmware-nvidia (214 MB of them — it is why the UKI here is
+# 147 MB), not modules. Count modules, and count them where they live.
+nvidia_intree_ko() {
+    find /usr/lib/modules -path '*/kernel/drivers/gpu/drm/*' -name 'nvidia*.ko*' \
+         2>/dev/null | head -1
+}
+
+phase_nvidia() {
+    phase "NVIDIA"
+
+    # ── is there anything here to do? ──────────────────────────────────
+    if [ -z "${HW_DGPU_PCI:-}" ]; then
+        skip "no discrete GPU on this machine — nothing to set up"
+        return 0
+    fi
+    if [ "${HW_DGPU_VENDOR:-}" != nvidia ]; then
+        skip "discrete GPU is ${HW_DGPU_VENDOR:-unknown} (${HW_DGPU_NAME:-?}), not NVIDIA"
+        info "mesa already drives it and DRI_PRIME=1 is the offload switch there,"
+        info "so there is nothing vendor-specific left for this installer to do."
+        return 0
+    fi
+
+    info "discrete   : ${HW_DGPU_NAME:-?}  (${HW_DGPU_PCI}, device ${HW_DGPU_DEVID:-?})"
+    info "integrated : ${HW_IGPU_PCI:-<none — see below>}"
+
+    # ── refusals, in the order they matter ─────────────────────────────
+    # A MUX in discrete mode wires the internal panel straight to the dGPU. The
+    # iGPU then has no outputs, so pinning Hyprland to it is a guaranteed black
+    # screen. Nothing here ever writes the MUX back: flipping it from a running
+    # session is a reboot into the unknown, and it is a firmware setting.
+    if [ -n "${HW_GPU_MUX:-}" ] && [ "${HW_GPU_MUX}" != 1 ]; then
+        warn "the GPU MUX reads ${HW_GPU_MUX} (discrete / \"Ultimate\"), not 1 (hybrid)."
+        warn "The panel is wired to the dGPU, so it draws the desktop and never"
+        warn "sleeps — the opposite of what this setup is for. Set the MUX back to"
+        warn "hybrid in the firmware and re-run this phase."
+        skip "NVIDIA phase skipped (MUX not in hybrid mode)"
+        return 0
+    fi
+
+    if [ -z "${HW_IGPU_PCI:-}" ]; then
+        warn "no integrated GPU owns the internal panel, so there is nothing to pin"
+        warn "Hyprland to and no fallback if the driver misbehaves."
+        warn "This installer only knows the hybrid model. An NVIDIA-only machine"
+        warn "needs a different configuration — session-wide GBM_BACKEND and"
+        warn "__GLX_VENDOR_LIBRARY_NAME, nvidia_drm.modeset — which nothing in"
+        warn "this repo has ever run, so it is not going to be guessed at here."
+        skip "NVIDIA phase skipped (no integrated GPU)"
+        return 0
+    fi
+
+    # The open kernel modules need GSP firmware: Turing (RTX 20 / GTX 16) or
+    # newer. Older cards are not a smaller version of this setup, they are a
+    # different one — see the comment in dgpu_supports_nvidia_open().
+    if ! dgpu_supports_nvidia_open "${HW_DGPU_DEVID:-}"; then
+        warn "device ID ${HW_DGPU_DEVID:-?} is pre-Turing, and the open kernel modules"
+        warn "need GSP firmware (Turing / RTX 20 / GTX 16 and newer)."
+        warn "The proprietary 'nvidia' driver would drive it, but there VRAM does"
+        warn "not survive suspend unless nvidia-suspend/-resume/-hibernate are"
+        warn "enabled — and those run nvidia-sleep.sh, which does 'chvt 63' before"
+        warn "every suspend. Putting a VT switch in the middle of this desktop's"
+        warn "ext_session_lock_v1 lock path is the one failure this repo will not"
+        warn "design in, so it is not automated."
+        info "By hand, if you want it anyway:"
+        info "    sudo pacman -Syu nvidia nvidia-utils nvidia-prime"
+        info "and then do not suspend with an offloaded application running."
+        skip "NVIDIA phase skipped (pre-Turing dGPU)"
+        return 0
+    fi
+
+    if [ "${HW_SECUREBOOT:-0}" = 1 ]; then
+        warn "Secure Boot is enforcing. nvidia-open is an out-of-tree module and"
+        warn "nothing here signs it, so the kernel will refuse to load it and the"
+        warn "dGPU simply stays dark. The desktop is unaffected either way — it"
+        warn "never leaves the iGPU — but offload will not work until it is signed"
+        warn "or Secure Boot is turned off."
+        ask_yn "Install anyway?" n || { skip "NVIDIA phase skipped (Secure Boot)"; return 0; }
+    fi
+
+    # ── the black-screen regression guard ──────────────────────────────
+    # AQ_DRM_DEVICES is a COLON-SEPARATED list (aquamarine parses it with
+    # CVarList(..., ':', ...)), and a PCI by-path name is full of colons:
+    # "/dev/dri/by-path/pci-0000:00:02.0-card" is shredded into three fragments,
+    # aquamarine finds no GPU, and Hyprland aborts at startup with
+    #     drm: Found no gpus to use, cannot continue
+    # which is a black screen and a TTY recovery. That is exactly what happened
+    # the first time this was set up here. It is only fatal once a driver exists
+    # for the dGPU, which is what the next command installs — so it is checked
+    # here, before, and it stops the phase rather than warning.
+    local hl="$HOME/.config/hypr/hyprland.lua"
+    if [ ! -f "$hl" ]; then
+        warn "$hl is not deployed yet — run the configs phase first, so the iGPU"
+        warn "pin is in place before a driver exists that could take the display."
+        skip "NVIDIA phase skipped (configs not deployed)"
+        return 0
+    fi
+    if [ "$(grep -c 'AQ_DRM_DEVICES.*by-path' "$hl" || true)" -gt 0 ]; then
+        die "$hl passes a by-path name to AQ_DRM_DEVICES. That variable is
+  colon-separated and a by-path name contains colons, so Hyprland would find no
+  GPU and abort at startup once the NVIDIA driver is loaded. Deploy the current
+  hypr/hyprland.lua, which resolves the PCI address to a plain /dev/dri/cardN."
+    fi
+    ok "the deployed hyprland.lua pins by resolved cardN, not by by-path name"
+
+    local node
+    node=$(readlink -f "/dev/dri/by-path/pci-${HW_IGPU_PCI}-card" 2>/dev/null || true)
+    if [ -n "$node" ]; then
+        info "iGPU is $node right now. hyprland.lua re-resolves that at parse time,"
+        info "which is what absorbs the renumbering this driver install causes —"
+        info "cardN ordering is probe-order dependent and it WILL move."
+    fi
+
+    # Installing the driver rebuilds the initramfs. The image on this laptop is
+    # 147 MB, so a small ESP is a real failure mode: the rebuild half-writes and
+    # the machine does not boot.
+    local bootfree
+    bootfree=$(df -Pm /boot 2>/dev/null | awk 'NR==2{print $4}')
+    if [ -n "${bootfree:-}" ] && [ "$bootfree" -lt 300 ]; then
+        warn "/boot has ${bootfree} MB free and this install rebuilds the initramfs."
+        warn "That image is 147 MB on this hardware. Free some space first."
+        ask_yn "Continue anyway?" n || { skip "NVIDIA phase skipped (low /boot space)"; return 0; }
+    fi
+
+    # ── say what will happen, then do it ───────────────────────────────
+    printf '\n'
+    info "This phase will:"
+    info "  · pacman -Syu the packages in packages/90-nvidia.txt (a FULL upgrade)"
+    info "  · check the nouveau blacklist and the suspend-notifier options that"
+    info "    nvidia-utils ships, and write a fallback drop-in only if absent"
+    info "  · make sure nvidia-suspend/-resume/-hibernate and nvidia-powerd stay"
+    info "    disabled — 90-nvidia.txt records why all four are hazards here"
+    info "  · check that no nvidia module can reach the initramfs"
+    info "It does not touch hyprland.lua, mkinitcpio.conf or the bootloader."
+    printf '\n'
+    ask_yn "Set up NVIDIA PRIME offload now?" y || { skip "NVIDIA phase skipped by user"; return 0; }
+
+    local kind pkg pkgs=()
+    while read -r kind pkg; do pkgs+=("$pkg"); done < <(read_manifest "$SCRIPT_DIR/packages/90-nvidia.txt")
+    [ "${#pkgs[@]}" -gt 0 ] || die "packages/90-nvidia.txt lists no packages"
+
+    # A full -Syu, not the -S every other phase uses. nvidia-open is a PREBUILT
+    # module with a hard dependency on one exact kernel: installing it after a
+    # bare -Sy can leave the kernel and the module out of step, and a kernel
+    # with no NVIDIA module is a machine that boots to no offload at best. The
+    # pair must always move together. This is the one real cost of choosing a
+    # prebuilt module over -dkms, and it is cheap as long as nothing ever
+    # partial-syncs.
+    info "installing: ${pkgs[*]}"
+    run sudo pacman -Syu --needed --noconfirm "${pkgs[@]}"
+
+    # 32-bit userspace, but only where multilib is actually on. The thing that
+    # breaks without it is Steam, silently, with a GL error at launch — and a
+    # machine with no multilib has nothing that could load it.
+    if [ "$(pacman-conf --repo-list 2>/dev/null | grep -cx multilib || true)" -gt 0 ]; then
+        info "multilib is enabled — installing the matching 32-bit userspace"
+        pac_install lib32-nvidia-utils
+    else
+        skip "multilib not enabled — lib32-nvidia-utils skipped (Steam would want it)"
+    fi
+
+    # ── what the packages placed ───────────────────────────────────────
+    # nvidia-utils ships both of these. They are CHECKED, not written: a future
+    # packaging change then shows up here as a warning instead of later as
+    # mystery behaviour, and this installer does not own files pacman owns.
+    if grep -rqs '^blacklist nouveau' /usr/lib/modprobe.d /etc/modprobe.d; then
+        ok "nouveau is blacklisted (shipped in nvidia-utils.conf)"
+    else
+        warn "no nouveau blacklist anywhere in modprobe.d — nouveau may bind the"
+        warn "card before nvidia can, and offload will silently use zink instead."
+    fi
+
+    if grep -rqs 'NVreg_UseKernelSuspendNotifiers=1' /usr/lib/modprobe.d /etc/modprobe.d; then
+        ok "kernel suspend notifiers on — VRAM preservation is automatic"
+    else
+        warn "NVreg_UseKernelSuspendNotifiers is not set anywhere. With the open"
+        warn "modules that is what makes VRAM survive suspend; writing a drop-in."
+        run_sh "sudo tee /etc/modprobe.d/zz-hyprahaan-nvidia.conf >/dev/null <<'MODEOF'
+# Written by install.sh because nvidia-utils did not ship nvidia-sleep.conf.
+#
+# With the OPEN kernel modules, video memory preservation across suspend is
+# handled automatically as long as the kernel suspend notifiers are enabled;
+# NVreg_PreserveVideoMemoryAllocations is for the proprietary module and is
+# deliberately NOT set here. The save file must not land on tmpfs — that is
+# the RAM being saved — so /var/tmp, never /tmp.
+options nvidia NVreg_UseKernelSuspendNotifiers=1
+options nvidia NVreg_TemporaryFilePath=/var/tmp
+MODEOF"
+        ok "/etc/modprobe.d/zz-hyprahaan-nvidia.conf written"
+    fi
+
+    # ── the four units that must stay off ──────────────────────────────
+    # nvidia-suspend, -resume and -hibernate all run nvidia-sleep.sh, which does
+    # `chvt 63` before every suspend and switches back on resume. With the open
+    # modules they buy nothing, and they put a VT switch in the middle of the one
+    # path on this machine that can strand you at a permanently locked screen.
+    # nvidia-powerd is a second arbitrator on the package power budget: harmless
+    # in itself, but it confounds any power investigation, so it stays off until
+    # enabling it is a deliberate experiment.
+    local u state
+    for u in nvidia-suspend nvidia-resume nvidia-hibernate nvidia-powerd; do
+        state=$(systemctl is-enabled "$u.service" 2>/dev/null || true)
+        case "$state" in
+            enabled|enabled-runtime)
+                warn "$u.service is enabled — disabling it"
+                run sudo systemctl disable "$u.service" ;;
+            "") skip "$u.service: not present" ;;
+            *)  ok "$u.service: $state" ;;
+        esac
+    done
+
+    # ── the initramfs must stay clean ──────────────────────────────────
+    # Measured here: the open modules install to extramodules/, which the kms
+    # hook cannot see (it globs the kernel tree's drivers/gpu/drm/), so no
+    # nvidia module lands in the image. nouveau.ko DOES land — autodetect finds
+    # the card — but the modconf hook copies modprobe.d in alongside it, so the
+    # blacklist applies at early boot too and nouveau never binds.
+    case "$(grep -E '^MODULES=' /etc/mkinitcpio.conf 2>/dev/null | head -1)" in
+        *nvidia*)
+            warn "mkinitcpio MODULES= contains nvidia. That is early KMS for a card"
+            warn "that should stay asleep, and it bloats an already large image."
+            warn "Remove it and re-run mkinitcpio -P." ;;
+        *)  ok "mkinitcpio MODULES= has no nvidia entry (no early KMS)" ;;
+    esac
+    local intree
+    intree=$(nvidia_intree_ko)
+    if [ -n "$intree" ]; then
+        warn "an nvidia module sits in a path the kms hook globs:"
+        warn "  $intree"
+        warn "it will be pulled into the initramfs. Look at the image before"
+        warn "changing anything — dropping 'kms' from HOOKS is the usual fix, but"
+        warn "that is not a change to make on a guess."
+    else
+        ok "no nvidia module in a kms-hook path — the initramfs stays clean"
+    fi
+
+    # ── what to check after the reboot ─────────────────────────────────
+    printf '\n'
+    printf '  %sNothing above is live until you reboot.%s Then, in order:\n\n' "$C_B" "$C_RST"
+    cat <<GATES
+    lsmod | grep -E 'nvidia|nouveau'      # nvidia* present, nouveau ABSENT
+    cat /sys/bus/pci/devices/$HW_DGPU_PCI/power/runtime_status   # suspended
+    cat /sys/bus/pci/devices/$HW_DGPU_PCI/power_state            # D3cold
+    prime-run glxinfo -B | grep 'OpenGL renderer'                # names the dGPU
+
+  The middle two are the gate that decides whether this was worth doing. If the
+  card does not go back to sleep on an idle desktop, roll the whole thing back
+  rather than tuning it — fine-grained RTD3 is supposed to work by default on an
+  Ampere-or-later notebook, and if it does not, something is wrong that module
+  parameters will not fix. The reversal is one command, and the nouveau
+  blacklist lives inside the package, so removing it restores exactly today:
+
+    sudo pacman -R ${pkgs[*]} && sudo reboot
+
+  Give it a minute first: udev runs nvidia-modprobe on device add, so the stack
+  initialises at boot and the card sits awake briefly before settling. And note
+  that nvidia-smi is not a free query — it WAKES the GPU. Run it once if you
+  want, then re-check runtime_status and confirm it goes back down.
+
+  Day to day: prime-run <command>. For a launcher entry, copy the .desktop into
+  ~/.local/share/applications/ and prefix Exec= with prime-run. Anything spawned
+  from a Quickshell Process still needs the detach form
+  (setsid ... </dev/null >/dev/null 2>&1 &) — more so offloaded, because the
+  NVIDIA stack writes more to stderr at startup than mesa does.
+GATES
+    _log_raw "nvidia phase complete"
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# 6 · APPS  (per-application config that is not just a directory copy)
 # ═══════════════════════════════════════════════════════════════════════
 phase_apps() {
     phase "Application config"
@@ -450,7 +756,7 @@ phase_apps() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 6 · USER SYSTEMD
+# 7 · USER SYSTEMD
 # ═══════════════════════════════════════════════════════════════════════
 phase_usersystemd() {
     phase "User systemd units"
@@ -480,7 +786,7 @@ phase_usersystemd() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 7 · SYSTEM  (root: /etc files, groups, system services)
+# 8 · SYSTEM  (root: /etc files, groups, system services)
 # ═══════════════════════════════════════════════════════════════════════
 enable_unit() {
     local u="$1"
@@ -600,7 +906,7 @@ phase_system() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 8 · NETWORK — wifi, bluetooth, firewall
+# 9 · NETWORK — wifi, bluetooth, firewall
 # ═══════════════════════════════════════════════════════════════════════
 phase_network() {
     phase "Wifi, Bluetooth and firewall"
@@ -687,7 +993,7 @@ phase_network() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 9 · VIRTUALISATION — QEMU/KVM via libvirt
+# 10 · VIRTUALISATION — QEMU/KVM via libvirt
 # ═══════════════════════════════════════════════════════════════════════
 # Goal: after this phase, opening virt-manager and pointing it at a downloaded
 # ISO just works — no group juggling, no "network 'default' is not active", no
@@ -794,7 +1100,7 @@ phase_virt() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 10 · THEMING
+# 11 · THEMING
 # ═══════════════════════════════════════════════════════════════════════
 phase_theming() {
     phase "Theming"
@@ -870,34 +1176,108 @@ HP
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 11 · HYPRLAND PLUGINS
+# 12 · HYPRLAND PLUGINS
 # ═══════════════════════════════════════════════════════════════════════
+# hyprpm_has <plugin>      — is the plugin known to hyprpm at all?
+# hyprpm_enabled <plugin>   — is it marked enabled?
+#
+# Two things make the obvious one-liner wrong, and both bit the version of this
+# phase that shipped before 2026-09-02:
+#
+#   1. hyprpm COLOURS its output. The bytes are `enabled: \e[31mfalse`, so a
+#      literal `grep 'enabled: true'` can never match even when it is enabled —
+#      the success branch was dead code and every clean install warned that
+#      hyprbars had failed. Strip ANSI first.
+#   2. `hyprpm list | grep -q` is the repo's oldest trap: grep -q exits on the
+#      first match, hyprpm dies of SIGPIPE, and pipefail turns a successful
+#      check into a failure. awk reads all of its input.
+#
+# Same awk predicate as scripts/hyprbars.sh, deliberately — one definition of
+# "is hyprbars enabled" that both the installer and the runtime toggle agree on.
+hyprpm_strip() { sed 's/\x1b\[[0-9;]*m//g'; }
+
+hyprpm_has() {
+    [ "$(hyprpm list 2>/dev/null | hyprpm_strip | grep -c "Plugin $1\$")" -gt 0 ]
+}
+
+hyprpm_enabled() {
+    hyprpm list 2>/dev/null | hyprpm_strip | awk -v p="$1" '
+        $0 ~ ("Plugin " p "$") { hit = 1; next }
+        hit && /enabled:/      { if ($0 ~ /true/) found = 1; hit = 0 }
+        END { exit !found }
+    '
+}
+
+# hyprpm_so <plugin> — the built shared object, or nothing. This is the real
+# precondition for scripts/hyprbars.sh: hyprpm knowing about a plugin is not the
+# same as having compiled it, and the toggle loads the .so directly.
+# Same lookup the script uses, including -print -quit rather than `| head -1`.
+hyprpm_so() {
+    find "/var/cache/hyprpm/$USER" -name "$1.so" -print -quit 2>/dev/null
+}
+
 phase_plugins() {
     phase "Hyprland plugins (hyprbars)"
     have hyprpm || { skip "hyprpm not available"; return 0; }
 
-    # hyprbars draws the title bar buttons hyprland.lua configures. A failure
-    # here must not fail the install: Hyprland runs fine without it, the config
-    # block is simply inert.
+    # hyprbars draws the title bar buttons hyprland.lua configures. It is BUILT
+    # here and deliberately left DISABLED.
+    #
+    # That is a choice, not an oversight: this desktop's default is no title
+    # bars, and turning them on is a decision made per session with
+    # scripts/hyprbars.sh — which loads the built .so through `hyprctl plugin
+    # load`, needs no password, and takes effect immediately. Leaving hyprpm's
+    # own enable flag off means `hyprpm reload` in the startup hook loads
+    # nothing, so a fresh login comes up bare.
+    #
+    # Building it anyway is the point: `hyprbars.sh on` can only work if the .so
+    # exists, and compiling it needs hyprpm, root, and the Hyprland headers —
+    # everything this phase already has and a keybind does not.
+    #
+    # A failure here must not fail the install. Since 2026-09-02 hyprland.lua
+    # gates its whole hyprbars block on the plugin actually being loaded, so an
+    # absent plugin really is inert — no title bars and nothing else. That gate
+    # was not always there: before it, `hl.plugin.hyprbars.add_button(...)`
+    # raised, aborting the config parse and dropping every bind after it, and
+    # Hyprland fell back to emergency mode with three. See hypr/hyprland.lua.
     if [ "$DRY_RUN" = 1 ]; then
-        printf '  %sDRY%s hyprpm update && hyprpm add hyprland-plugins && hyprpm enable hyprbars\n' "$C_DIM" "$C_RST"
+        printf '  %sDRY%s hyprpm update && hyprpm add hyprland-plugins   %s(built, left disabled)%s\n' \
+               "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
         return 0
     fi
     {
         hyprpm update || true
-        hyprpm list 2>/dev/null | grep -q hyprbars || hyprpm add https://github.com/hyprwm/hyprland-plugins || true
-        hyprpm enable hyprbars || true
+        hyprpm_has hyprbars || hyprpm add https://github.com/hyprwm/hyprland-plugins || true
     } || true
-    if hyprpm list 2>/dev/null | grep -A1 'Plugin hyprbars' | grep -q 'enabled: true'; then
-        ok "hyprbars enabled"
+
+    # Assert the default rather than trusting it: some hyprpm versions enable
+    # what they add. This is the only step here that needs root, and it is a
+    # no-op on the ordinary path.
+    if hyprpm_enabled hyprbars; then
+        hyprpm disable hyprbars >/dev/null 2>&1 || true
+    fi
+
+    local so; so="$(hyprpm_so hyprbars)"
+    if [ -n "$so" ] && ! hyprpm_enabled hyprbars; then
+        ok "hyprbars built and left disabled — the default"
+        info "  bars on, this session:  ~/.config/scripts/hyprbars.sh on"
+        info "  ...and at every login:  ~/.config/scripts/hyprbars.sh on --persist"
+    elif [ -n "$so" ]; then
+        warn "hyprbars is built but still marked enabled, and disabling it failed."
+        warn "It will load at your next login. Turn it off with:"
+        warn "  ~/.config/scripts/hyprbars.sh off --persist"
     else
-        warn "hyprbars is not enabled — window title bars will be missing."
-        warn "Retry after your first Hyprland login:  hyprpm update && hyprpm enable hyprbars"
+        warn "hyprbars was not built — the title bars cannot be turned on yet."
+        warn "Not fatal: hyprland.lua parses cleanly either way and nothing else"
+        warn "depends on it. hyprpm compiles against the Hyprland headers, which"
+        warn "is the usual thing to fail on a first install from a bare TTY."
+        warn "Retry after your first Hyprland login:"
+        warn "  $SCRIPT_DIR/install.sh --only plugins"
     fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 12 · HIBERNATION  (opt-in — this one edits the bootloader)
+# 13 · HIBERNATION  (opt-in — this one edits the bootloader)
 # ═══════════════════════════════════════════════════════════════════════
 phase_hibernation() {
     phase "Hibernation"
@@ -947,7 +1327,7 @@ phase_hibernation() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 13 · FINGERPRINT — enrolment, if there is a reader
+# 14 · FINGERPRINT — enrolment, if there is a reader
 # ═══════════════════════════════════════════════════════════════════════
 # Runs late on purpose: it is the one phase that needs the user to physically
 # touch the sensor, several times per finger, so everything that can be done
@@ -1043,7 +1423,7 @@ phase_fingerprint() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 14 · VERIFY
+# 15 · VERIFY
 # ═══════════════════════════════════════════════════════════════════════
 V_PASS=0; V_FAIL=0
 chk()  { V_PASS=$((V_PASS+1)); ok "$1"; }
@@ -1208,6 +1588,73 @@ phase_verify() {
         fi
     fi
 
+    # ── NVIDIA offload ─────────────────────────────────────────────────
+    # Only where the phase actually ran. Everything here reads state that only
+    # exists after a reboot, so on the first pass — installer, then reboot — the
+    # module checks are expected to fail and say so rather than look like faults.
+    if [ "${HW_DGPU_VENDOR:-}" = nvidia ] && have prime-run; then
+        # NOTE: `lsmod | grep -c`, never `grep -q`: grep -q exits on the first
+        # match, lsmod dies of SIGPIPE and pipefail reports a false failure.
+        if [ "$(lsmod | grep -c '^nvidia ')" -gt 0 ]; then
+            chk "nvidia module loaded"
+            check "nouveau is not loaded" "[ \"\$(lsmod | grep -c '^nouveau ')\" = 0 ]"
+        else
+            warn "the nvidia module is not loaded — expected until you reboot"
+        fi
+
+        check "prime-run available" "have prime-run"
+        local nu
+        for nu in nvidia-suspend nvidia-resume nvidia-hibernate nvidia-powerd; do
+            check "$nu.service is not enabled" \
+                  "[ \"\$(systemctl is-enabled $nu.service 2>/dev/null || true)\" != enabled ]"
+        done
+
+        # The gate the whole thing turns on: an idle dGPU must be asleep.
+        local rs="/sys/bus/pci/devices/${HW_DGPU_PCI}/power/runtime_status"
+        local ps="/sys/bus/pci/devices/${HW_DGPU_PCI}/power_state"
+        if [ -r "$rs" ]; then
+            if [ "$(cat "$rs" 2>/dev/null)" = suspended ]; then
+                chk "dGPU is runtime-suspended ($(cat "$ps" 2>/dev/null || echo '?'))"
+            else
+                warn "dGPU runtime_status is '$(cat "$rs" 2>/dev/null)', expected 'suspended'"
+                warn "on an idle desktop. Anything that touched the card — nvidia-smi"
+                warn "included — wakes it for ~20s, so re-check before calling it a fault."
+            fi
+        fi
+
+        # And the compositor must hold none of the dGPU's KMS nodes. This is the
+        # pin doing its job: AQ_DRM_DEVICES decides which cardN aquamarine opens
+        # as a backend, so a dGPU cardN in Hyprland's fd table means the pin did
+        # not take and the desktop can end up driven by the dGPU.
+        #
+        # KMS nodes only, deliberately. Measured here: Hyprland holds card1 and
+        # renderD128 (both iGPU) and ONE fd on the dGPU's renderD129, with the
+        # card sitting in D3cold at the same time. A render node fd is the
+        # dma-buf/PRIME import path being enumerated, not the compositor
+        # rendering — a card that is powered off is not drawing anything. Only
+        # the cardN is load-bearing, so only the cardN fails this check.
+        local hp n held="" rendered=""
+        hp=$(pgrep -x Hyprland 2>/dev/null | head -1 || true)
+        if [ -n "$hp" ] && [ -d "/sys/bus/pci/devices/${HW_DGPU_PCI}/drm" ]; then
+            for n in $(ls "/sys/bus/pci/devices/${HW_DGPU_PCI}/drm" 2>/dev/null || true); do
+                [ "$(ls -l "/proc/$hp/fd" 2>/dev/null | grep -c "/dev/dri/$n\$")" -gt 0 ] || continue
+                case "$n" in
+                    card[0-9]*)    held="$held $n" ;;
+                    renderD[0-9]*) rendered="$rendered $n" ;;
+                esac
+            done
+            if [ -z "$held" ]; then
+                chk "Hyprland holds no KMS node of the dGPU — the iGPU pin is taking"
+                [ -n "$rendered" ] && \
+                    info "(it does hold$rendered, the dGPU render node: that is the PRIME"
+                [ -n "$rendered" ] && \
+                    info " import path, and is expected while the card stays suspended)"
+            else
+                bad "Hyprland has the dGPU's KMS node(s) open:$held — the iGPU pin is not taking"
+            fi
+        fi
+    fi
+
     # ── systemd ────────────────────────────────────────────────────────
     if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
         check "battery-threshold.timer enabled" "systemctl --user is-enabled battery-threshold.timer"
@@ -1238,13 +1685,19 @@ main() {
         esac
         # Any single phase still needs the hardware facts in scope.
         [ "$ONLY" = preflight ] || detect_all
-        case "$ONLY" in system|network|virt|hibernation|packages) sudo_prime ;; esac
+        # plugins is in this list because hyprpm shells out to sudo itself —
+        # it writes to root-owned /var/cache/hyprpm. In a full run the preflight
+        # prime covers it, but `--only plugins` skipped priming and hyprpm's own
+        # prompt then had no tty to read from, so `hyprpm enable` failed silently
+        # and the phase reported the plugin as not enabled. Measured 2026-09-02.
+        case "$ONLY" in system|network|virt|hibernation|packages|nvidia|plugins) sudo_prime ;; esac
     fi
 
     want_phase preflight   && phase_preflight
     want_phase packages    && phase_packages
     want_phase configs     && phase_configs
     want_phase hardware    && phase_hardware
+    want_phase nvidia      && phase_nvidia
     want_phase apps        && phase_apps
     want_phase usersystemd && phase_usersystemd
     want_phase system      && phase_system

@@ -32,13 +32,14 @@ that needs it, and those phases can be skipped with `--no-root`.
 | `packages` | Every manifest in `packages/`, GPU userspace matched to the actual vendor, then the four AUR packages (bootstrapping `yay` first) |
 | `configs` | Deploys config directories into `~/.config`, backing up anything it overwrites |
 | `hardware` | Detects this machine and writes `~/.config/scripts/hardware.env` |
+| `nvidia` | Only where there is an NVIDIA dGPU: PRIME offload, or a documented refusal |
 | `apps` | voxtype model + config, Spotify Wayland flag, battery cap preference, login shell |
 | `usersystemd` | User units, enables the battery watchdog timer and voxtype |
 | `system` | `/etc` rules, group membership, system services, greetd |
 | `network` | Wifi (NetworkManager + iwd), Bluetooth, and the firewall with the LocalSend exception |
 | `virt` | QEMU/KVM via libvirt: qemu.conf, the `libvirt` group, the modular daemons, and the default NAT network |
 | `theming` | pywal templates, primes the colour scheme, generates `hyprpaper.conf`, GTK/cursor |
-| `plugins` | Builds and enables `hyprbars` via `hyprpm` |
+| `plugins` | **Builds** `hyprbars` via `hyprpm` and deliberately leaves it **disabled**. Never fatal — `hyprland.lua` gates its hyprbars block, so an absent plugin means no title bars and nothing else |
 | `hibernation` | Opt-in. Swap file, `resume=` cmdline, resume hook — the only phase that edits your bootloader |
 | `fingerprint` | Offers to enrol fingers, if a reader is detected. Interactive by nature |
 | `verify` | Asserts the result, including that `hyprland.lua` actually parses |
@@ -57,7 +58,7 @@ manifest in `packages/` is installed:
 | `40-apps.txt` | The applications. Deliberately excludes `r`, `steam`, `discord` |
 | `50-aur.txt` | Exactly four: `bibata-cursor-theme`, `voxtype`, `localsend-bin`, `neofetch` |
 | `60-virt.txt` | QEMU/libvirt — installed only when the CPU reports VT-x/AMD-V |
-| `90-nvidia.txt` | Reference only. Never installed; see the NVIDIA note at the bottom |
+| `90-nvidia.txt` | `nvidia-open`, `nvidia-utils`, `nvidia-prime` — only when the `nvidia` phase decides the machine fits |
 
 The AUR list is short on purpose: an AUR build is slow and can fail, and which
 browser or music player you want is a personal choice. Everything else — Zen,
@@ -141,7 +142,15 @@ KBD_BACKLIGHT_LED="asus::kbd_backlight"
 MICMUTE_LED="platform::micmute"
 TOUCHPAD_DEVICE="asup1204:00-093a:2642-touchpad"
 IGPU_PCI="0000:00:02.0"
+DGPU_PCI="0000:01:00.0"
+DGPU_VENDOR="nvidia"
 ```
+
+`IGPU_PCI` is the GPU that owns the internal panel — detected from the connected
+eDP/LVDS connector, not from "first Intel or AMD card found", because on a hybrid
+laptop both GPUs expose connectors. Empty is a valid answer and means *do not
+pin*. The two `DGPU_` lines are recorded for the installer and for scripts;
+nothing in the running desktop reads them.
 
 `hyprland.lua` parses it; `toggle-touchpad.sh`, `kbdbacklight_toggle.sh`,
 `micmute-led.sh`, `apply-battery-threshold.sh` and the taskbar's battery reader
@@ -211,22 +220,102 @@ sudo ~/.config/scripts/setup-hibernation.sh             # do it
 
 It takes effect on the next reboot. Re-running is a no-op.
 
-## No NVIDIA here, deliberately
+## NVIDIA
 
-Not every machine has one, and pinning the compositor to the wrong GPU is a
-black screen and a TTY recovery, not a warning. `install/packages/90-nvidia.txt`
-lists what this laptop uses, but nothing calls it. The hybrid-graphics notes in
-the top-level `CLAUDE.md` are the real procedure — read them before installing
-a driver, particularly the part about `AQ_DRM_DEVICES` being colon-separated.
+The `nvidia` phase runs only where detection finds an NVIDIA discrete GPU, and
+it sets up exactly one thing:
 
-The GPU pin in `hyprland.lua` is safe regardless: it resolves a PCI address to a
-plain `/dev/dri/cardN`, and if that fails for any reason it leaves the variable
-**unset**, which is just the ordinary unpinned behaviour.
+> the iGPU draws every pixel, always. The dGPU renders nothing until a command
+> asks for it by name — `prime-run <cmd>` — and drops back to D3cold by itself a
+> few seconds after that command exits.
+
+It runs **after** `configs` and `hardware` on purpose. The iGPU pin has to be
+deployed, and `hardware.env` has to name the iGPU, before a driver exists that
+could take the display. That ordering is the whole safety argument: with the pin
+already in place, a broken NVIDIA install degrades to "offload doesn't work" and
+never to a black screen, because eDP stays on the iGPU either way.
+
+### Title bars
+
+`hyprbars` draws the traffic-light buttons on each window. **A fresh install
+comes up without them.** The `plugins` phase builds the plugin but leaves
+hyprpm's enable flag off, so `hyprpm reload` in the startup hook loads nothing
+and your first login is bare. Turning them on is a decision you make afterwards:
+
+```sh
+~/.config/scripts/hyprbars.sh on                 # this session
+~/.config/scripts/hyprbars.sh on --persist       # ...and at every login
+~/.config/scripts/hyprbars.sh toggle
+~/.config/scripts/hyprbars.sh status
+```
+
+Building it during the install is still the point: `hyprbars.sh on` can only
+work if the `.so` exists, and compiling it needs `hyprpm`, root and the Hyprland
+headers — everything the installer already has and a keybind does not.
+
+It uses `hyprctl plugin load/unload`, not `hyprpm enable/disable`: hyprpm writes
+to root-owned `/var/cache/hyprpm/` and so prompts for a password, which is fine
+in a terminal and useless from a keybind. `--persist` is the opt-in that does
+ask. The same script's `minimize` subcommand is what the yellow button calls.
+
+**Why the phase is not fatal.** `hyprland.lua` gates its whole hyprbars block on
+the plugin actually being loaded. Before that gate existed, an absent plugin made
+`hl.plugin.hyprbars.add_button(...)` raise, which aborted the config parse and
+dropped every bind defined after it — Hyprland fell back to emergency mode with
+three binds. Measured 2026-09-02. If you ever see `SUPER+Q`/`R`/`M` as your only
+working keys, that is what happened; `hyprctl configerrors` names the line.
 
 ## What it will not do
 
-- Touch your bootloader, kernel, fstab or partitions.
-- Install NVIDIA drivers.
+It refuses, loudly and with the reason, rather than guessing:
+
+| | |
+|---|---|
+| dGPU is AMD or Intel | Nothing to do — mesa drives it and `DRI_PRIME=1` is the switch |
+| MUX not in hybrid mode | The panel is wired to the dGPU; pinning to the iGPU is a black screen |
+| No integrated GPU at all | This repo has never run an NVIDIA-primary session and will not guess one |
+| Pre-Turing card | `nvidia-open` needs GSP firmware. The proprietary driver needs the sleep services, and those do `chvt 63` before every suspend — straight at the lockscreen |
+| Secure Boot enforcing | An unsigned out-of-tree module will not load. Warns, then asks |
+| `/boot` under 300 MB free | The install rebuilds the initramfs; the image here is 147 MB |
+| `hyprland.lua` pins by-path | **Hard stop.** See below — this is the black screen that actually happened |
+
+It writes no module parameters and enables no units. On an Ampere-or-later
+notebook with the open modules the defaults are already right, and three pieces
+of standard advice are actively wrong here; `packages/90-nvidia.txt` records
+which three and why. What it does after installing is *check* what the packages
+placed: the nouveau blacklist, the suspend-notifier options, that all four
+NVIDIA units are still disabled, and that no NVIDIA module can reach the
+initramfs.
+
+### The one that bit us
+
+`AQ_DRM_DEVICES` is a **colon-separated list**, and a PCI by-path name is full of
+colons. Passing `/dev/dri/by-path/pci-0000:00:02.0-card` shreds it into three
+fragments, aquamarine finds no GPU, and Hyprland aborts at startup with
+`drm: Found no gpus to use, cannot continue` — a black screen and a TTY
+recovery. The phase greps the deployed `hyprland.lua` for that shape and stops
+before installing anything if it finds it.
+
+The pin in `hyprland.lua` is safe otherwise: it resolves the PCI address to a
+plain `/dev/dri/cardN` **at parse time**, which is also what absorbs the card
+renumbering the driver install causes (`nouveau` held `card1` here; `nvidia`
+holds `card0` now). If it cannot resolve, it leaves the variable **unset**,
+which is just the ordinary unpinned behaviour.
+
+### Day to day
+
+`prime-run <command>`. For a launcher entry, copy the `.desktop` into
+`~/.local/share/applications/` and prefix `Exec=` with `prime-run`. Rolling the
+whole thing back is `sudo pacman -R nvidia-open nvidia-utils nvidia-prime` and a
+reboot — the nouveau blacklist lives inside the package, so removing it restores
+the previous setup exactly.
+
+## What it will not do
+
+- Touch your bootloader, kernel, fstab or partitions — except `hibernation`,
+  which asks first and shows you the exact edit.
+- Install an NVIDIA driver on a machine that does not fit the hybrid-offload
+  model above, or write any NVIDIA module parameter or unit of its own.
 - Restore documents. It is a desktop installer, not a backup restore.
 
 ## If something goes wrong

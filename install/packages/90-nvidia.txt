@@ -1,25 +1,58 @@
-# NVIDIA — NOT INSTALLED BY THIS SCRIPT. Nothing reads this file.
+# NVIDIA — installed by the `nvidia` phase, and ONLY where install.sh has
+# detected an NVIDIA discrete GPU that fits the model this desktop is built
+# around: the iGPU draws every pixel, the dGPU renders nothing until `prime-run`
+# asks it to, and it is back in D3cold seconds after that command exits.
 #
-# It is kept as a record of what this particular laptop uses, because getting
-# hybrid graphics wrong costs a black screen and a TTY recovery rather than an
-# error message. Read the "Hybrid graphics" section of the top-level CLAUDE.md
-# before installing any of it. Three points that are easy to get wrong:
+# The phase refuses rather than guesses on a machine that does not fit — MUX in
+# discrete mode, no iGPU at all, or a pre-Turing card the open modules cannot
+# drive. Getting hybrid graphics wrong costs a black screen and a TTY recovery,
+# not an error message, so "install nothing" is always the safer branch.
+#
+# ── Four things that are easy to get wrong ─────────────────────────────
 #
 #  1. AQ_DRM_DEVICES is a COLON-SEPARATED list. A PCI by-path name contains
 #     colons, so passing one shreds it into fragments, aquamarine finds no GPU
-#     and Hyprland aborts at startup. Pass a plain /dev/dri/cardN.
+#     and Hyprland aborts at startup:
+#         drm: Failed to canonicalize path /dev/dri/by-path/pci-0000
+#         drm: Found no gpus to use, cannot continue
+#     This is not theoretical — it is the black screen this laptop hit on the
+#     first attempt, and the reason install.sh checks the deployed hyprland.lua
+#     for a by-path pin BEFORE it installs a driver. Pass a plain /dev/dri/cardN.
 #  2. Card numbering is probe-order dependent and DOES change when a driver is
-#     installed — never hardcode cardN. hyprland.lua resolves it from the PCI
-#     address at parse time for exactly this reason.
+#     installed — never hardcode cardN. It moved here: nouveau held card1 and
+#     i915 card2; today nvidia is card0 and i915 is card1. hyprland.lua resolves
+#     the number from the PCI address at parse time for exactly this reason.
 #  3. Do NOT enable nvidia-suspend / nvidia-resume / nvidia-hibernate. They run
 #     nvidia-sleep.sh, which does `chvt 63` before every suspend — pointed at an
 #     ext_session_lock_v1 lockscreen that risks an unrecoverable locked session.
 #     VRAM survives a full power-off without them.
+#  4. Do NOT put the offload variables (__NV_PRIME_RENDER_OFFLOAD,
+#     __GLX_VENDOR_LIBRARY_NAME, GBM_BACKEND) in hyprland.lua or /etc/environment.
+#     Session-wide, they aim the whole compositor at the dGPU. They belong inside
+#     prime-run, per application, and nowhere else.
 #
-# Prebuilt, not -dkms: one stock kernel here, and a prebuilt module has no
-# compile step that can fail mid-upgrade and leave the machine without one.
-# The cost is that `linux` and `nvidia-open` must always move together —
-# never partial-upgrade.
+# ── Three pieces of standard advice that are wrong for this setup ──────
+#
+#  · NVreg_DynamicPowerManagement=0x02 is pre-Ampere folklore. Fine-grained
+#    runtime D3 is already the default on a supported Ampere-or-newer notebook.
+#  · NVreg_PreserveVideoMemoryAllocations=1 is for the PROPRIETARY module. With
+#    the open modules preservation is automatic given
+#    NVreg_UseKernelSuspendNotifiers=1, which Arch ships enabled in
+#    /usr/lib/modprobe.d/nvidia-sleep.conf along with TemporaryFilePath=/var/tmp.
+#  · The nvidia sleep services are the wiki's advice and are point 3 above.
+#
+# The install phase enables none of these and writes no module parameters. It
+# installs, then checks what the packages placed, then tells you what to verify
+# after the reboot.
+#
+# ── Why prebuilt and not -dkms ─────────────────────────────────────────
+# One stock kernel here, and a prebuilt module has no compile step that can fail
+# mid-upgrade and leave the machine without one. The cost is that `linux` and
+# `nvidia-open` must always move together, which is why the phase runs a full
+# -Syu rather than the plain -S the other phases use. Never partial-upgrade.
+#
+# lib32-nvidia-utils is NOT listed here: the phase adds it separately, and only
+# where multilib is actually enabled. Steam is the thing that breaks without it.
 nvidia-open
 nvidia-utils
 nvidia-prime

@@ -353,7 +353,37 @@ hl.animation({ leaf = "specialWorkspaceOut",enabled = true, speed = 6, bezier = 
 --
 -- Per the hyprbars README:
 --   options -> hl.config({ plugin = { hyprbars = { ... } } })
---   buttons -> hl.plugin.hyprbars.add_button({ ... }) one per button
+--   buttons -> hyprbars.add_button({ ... }) one per button
+--
+-- ...but ONLY when the plugin is actually loaded. Everything hyprbars is
+-- gated on that, because `hyprpm disable hyprbars` otherwise takes the whole
+-- session down. Measured 2026-09-02 with the plugin disabled:
+--
+--   * hl.plugin is ALWAYS a table; hl.plugin.hyprbars is nil.
+--   * hl.config{ plugin = { hyprbars = ... } } does NOT raise. It records one
+--     `unknown config key 'plugin.hyprbars.<key>'` per key — 15 of them, all
+--     against the hl.config line — and they go straight to the error overlay.
+--   * hl.plugin.hyprbars.add_button(...) DOES raise:
+--     "attempt to index a nil value (field 'hyprbars')". That aborts the parse
+--     where it stands, so NOTHING after it is registered. Hyprland then trips
+--     EMERGENCY MODE: all 67 binds gone, replaced by its own SUPER+Q (terminal)
+--     / SUPER+R (hyprland-run) / SUPER+M (exit). Measured: `hyprctl binds`
+--     went from 67 to 3.
+--
+-- So the gate wraps the options too, not just the buttons: the buttons are
+-- what kills the session, but the options are what fills the overlay.
+--
+-- The gate is equally correct when hyprbars IS enabled. hyprpm loads plugins
+-- from the startup hook — i.e. AFTER this file is first parsed — so on that
+-- first pass hl.plugin.hyprbars is nil and the block is skipped in silence;
+-- loading the plugin makes Hyprland re-parse, and the block applies then.
+--
+-- `hl.plugin and ...` rather than a bare index: same fail-safe reasoning as the
+-- GPU block at the top of this file. A missing namespace must degrade to "no
+-- bars", never to a config that cannot finish parsing.
+local hyprbars = hl.plugin and hl.plugin.hyprbars
+if hyprbars then
+
 hl.config({
     plugin = {
         hyprbars = {
@@ -396,27 +426,29 @@ hl.config({
 -- `dispatchname arg1 arg2` string. The old-style commands here
 -- (`hyprctl dispatch killactive`, `... resizeactive exact ...`) would now
 -- fail to parse as Lua and silently no-op — quoted as 'hl.dsp...(...)' below.
-hl.plugin.hyprbars.add_button({
+hyprbars.add_button({
     bg_color = "rgb(ff5f57)",
     fg_color = "rgb(ffffff)",
     size     = 12,
     icon     = "",
     action   = "hyprctl dispatch 'hl.dsp.window.close()'",
 })
-hl.plugin.hyprbars.add_button({
+hyprbars.add_button({
     bg_color = "rgb(febb2e)",
     fg_color = "rgb(ffffff)",
     size     = 12,
     icon     = "",
-    action   = "~/.config/scripts/hyprbars-minimize.sh",
+    action   = "~/.config/scripts/hyprbars.sh minimize",
 })
-hl.plugin.hyprbars.add_button({
+hyprbars.add_button({
     bg_color = "rgb(28c840)",
     fg_color = "rgb(ffffff)",
     size     = 12,
     icon     = "",
     action   = "hyprctl dispatch 'hl.dsp.window.resize({ x = 1425, y = 733 })' && hyprctl dispatch 'hl.dsp.window.move({ x = 7, y = 69 })'",
 })
+
+end  -- if hyprbars
 
 -- hymission had an empty block in the original — no options to set, so
 -- there is simply nothing to emit here. (Do NOT call hl.plugin.hymission;

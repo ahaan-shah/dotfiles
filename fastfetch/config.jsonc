@@ -1,108 +1,79 @@
+// fastfetch — the hyprahaan "about" panel.
+//
+// Straight port of the Omarchy about screen: three ruled sections with a ┌│└
+// spine down the left of each block, keys padded so every value lands in the
+// same column. Logo is the stock Arch bit-flag instead of Omarchy's.
+//
+// Rules are pre-measured to 58 columns. Change a section title and you must
+// re-balance $1..$3 so its header stays exactly as wide as the $4 closer.
+//
+// Icons are the literal glyphs fastfetch itself defaults to — do not retype
+// them as \uXXXX escapes, the astral-plane ones need surrogate pairs and a
+// wrong pair silently renders a different icon.
 {
-    "logo": {
-    "color": {
-            "1": "cyan",
-            "2": "cyan"
-        },
-            "padding": {
-                "top": 1
-            }
-        },
-    "display": {
-        "separator": "   ",
-        "color": {
-            "separator": "1" // Bold
-        },
-        "constants": [
-            "───────────────────────────"
-        ],
-        "key": {
-            "type": "both",
-            "paddingLeft": 4
-        }
-    },
-    "modules": [
-        {
-            "type": "title",
-            "format": "                              {user-name-colored}{at-symbol-colored}{host-name-colored}"
-        },
-        "break",
-        {
-            "type": "custom",
-            "format": "┌{$1} {#1}System Information{#} {$1}┐"
-        },
-        "break",
-        {
-            "key": "OS           ",
-            "keyColor": "cyan",
-            "type": "os"
-        },
-        {
-            "key": "Machine      ",
-            "keyColor": "cyan",
-            "type": "host"
-        },
-        {
-            "key": "Kernel       ",
-            "keyColor": "cyan",
-            "type": "kernel"
-        },
-        {
-            "key": "Uptime       ",
-            "keyColor": "cyan",
-            "type": "uptime"
-        },
-        {
-            "key": "Resolution   ",
-            "keyColor": "cyan",
-            "type": "display",
-            "compactType": "original-with-refresh-rate"
-        },
-        {
-            "key": "WM           ",
-            "keyColor": "cyan",
-            "type": "wm"
-        },
-        {
-            "key": "DE           ",
-            "keyColor": "cyan",
-            "type": "de"
-        },
-        {
-            "key": "Shell        ",
-            "keyColor": "cyan",
-            "type": "shell"
-        },
-        {
-            "key": "Terminal     ",
-            "keyColor": "cyan",
-            "type": "terminal"
-        },
-        {
-            "key": "CPU          ",
-            "keyColor": "cyan",
-            "type": "cpu"
-        },
-        {
-            "key": "GPU          ",
-            "keyColor": "cyan",
-            "type": "gpu"
-        },
-        {
-            "key": "Memory       ",
-            "keyColor": "cyan",
-            "type": "memory"
-        },
-        "break",
-        {
-            "type": "custom",
-            "format": "└{$1}────────────────────{$1}┘"
-        },
-        "break",
-        {
-            "type": "colors",
-            "paddingLeft": 34,
-            "symbol": "circle"
-        }
-    ]
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+
+  // Solid half-block Arch mark, 40x20 — the builtin "arch" is line-art shading
+  // and reads thin next to these panels.
+  // Regenerate: rsvg-convert -w 1024 /usr/share/pixmaps/archlinux-logo.svg,
+  // fold the alpha onto its own mirror (the SVG bbox is a hair off-centre),
+  // then sample cols x rows*2 into full/upper/lower blocks. Every line carries
+  // its own $1 because fastfetch resets the logo colour per line.
+  //
+  // top:3 vertically centres 20 logo rows against the 27 rows of panel to the
+  // right (7 rows of slack, 3 above / 4 below). fastfetch has no centre option,
+  // so this is hand-computed — re-derive it if you add or drop a module row.
+  "logo": {
+    "type": "file",
+    "source": "~/.config/fastfetch/ascii/arch-solid.txt",
+    "color": { "1": "cyan" },
+    "padding": { "top": 3, "left": 2, "right": 12 }
+  },
+
+  "display": {
+    // One space: where a row has a label at all it lives inside "key".
+    "separator": " ",
+    "constants": [ "────────────────────────", "─────────────────", "──────────────────", "──────────────────────────────────────────────────────────" ]
+  },
+
+  "modules": [
+    { "type": "custom", "format": "{#90}{$1}{#1;36} Hardware {#90}{$1}{#}" },
+    { "type": "host", "key": "{#90}┌{#} 󰌢 PC:", "keyColor": "cyan" },
+    { "type": "cpu", "key": "{#90}│{#} ", "keyColor": "cyan" },
+    { "type": "gpu", "key": "{#90}│{#} 󰾲", "keyColor": "cyan" },
+    { "type": "display", "key": "{#90}│{#} 󰍹", "keyColor": "cyan" },
+    { "type": "disk", "key": "{#90}│{#} ", "keyColor": "cyan", "folders": "/" },
+    { "type": "memory", "key": "{#90}│{#} ", "keyColor": "cyan" },
+    { "type": "swap", "key": "{#90}└{#} 󰓡", "keyColor": "cyan" },
+    { "type": "custom", "format": "{#90}{$4}{#}" },
+    "break",
+
+    { "type": "custom", "format": "{#90}{$1}{#1;36} Software {#90}{$1}{#}" },
+    { "type": "os", "key": "{#90}┌{#}  OS:", "keyColor": "cyan" },
+    { "type": "shell", "key": "{#90}│{#} ", "keyColor": "cyan" },
+    { "type": "kernel", "key": "{#90}│{#} ", "keyColor": "cyan" },
+    { "type": "wm", "key": "{#90}│{#} ", "keyColor": "cyan" },
+    { "type": "terminal", "key": "{#90}│{#} ", "keyColor": "cyan" },
+    { "type": "packages", "key": "{#90}│{#} 󰏖", "keyColor": "cyan" },
+    // Theme = the pywal palette, which on this box is named for the wallpaper
+    // it was generated from. The dots are terminal palette slots 1-6, so they
+    // follow the live colours without reading ~/.cache/wal at all.
+    { "type": "command", "key": "{#90}│{#} 󰏘", "keyColor": "cyan",
+      "text": "w=$(sed -n 's/^ *path *= *//p' \"$HOME/.config/hypr/hyprpaper.conf\" | head -1); w=${w##*/}; w=${w%.*}; [ -n \"$w\" ] || w=pywal; printf '%s' \"$w\"; for i in 1 2 3 4 5 6; do printf '\\033[38;5;%dm ●' $i; done; printf '\\033[0m'" },
+    { "type": "terminalfont", "key": "{#90}└{#} ", "keyColor": "cyan" },
+    { "type": "custom", "format": "{#90}{$4}{#}" },
+    "break",
+
+    { "type": "custom", "format": "{#90}{$2}{#1;36} Age / Uptime / Update {#90}{$3}{#}" },
+    // %W is the root inode's birth time; ext4 and btrfs both carry it. If a
+    // filesystem does not it prints 0, so fall back to pacman.log line 1.
+    // Both seds use [^]]* — a greedy .* swallows the second bracketed field
+    // on the log line and date then refuses the string.
+    { "type": "command", "key": "{#90}┌{#} 󰃭 OS Age:", "keyColor": "magenta",
+      "text": "b=$(stat -c %W /); [ \"$b\" -gt 0 ] 2>/dev/null || b=$(date -d \"$(sed -n '1s/^\\[\\([^]]*\\)\\].*/\\1/p' /var/log/pacman.log)\" +%s); echo $(( ( $(date +%s) - b ) / 86400 )) days" },
+    { "type": "uptime", "key": "{#90}│{#}  Uptime:", "keyColor": "magenta" },
+    { "type": "command", "key": "{#90}└{#} 󰚰 Update:", "keyColor": "magenta",
+      "text": "d=$(grep -a 'starting full system upgrade' /var/log/pacman.log | tail -1 | sed 's/^\\[\\([^]]*\\)\\].*/\\1/'); [ -n \"$d\" ] && date -d \"$d\" '+%A, %B %-d %Y at %H:%M' || echo never" },
+    { "type": "custom", "format": "{#90}{$4}{#}" }
+  ]
 }
