@@ -229,9 +229,167 @@ Scope {
 
 
     //========================================================================//
+    //  DISPLAY  (brightness / night light / scale / monitors)                //
+    //========================================================================//
+    // Backing state for the dropdown behind the bar's brightness icon.
+    property bool dispVisible: false
+
+    // Hyprland's own monitor list, polled while the panel is open. Quickshell
+    // exposes Hyprland.monitors, but the fields this panel needs — mode,
+    // refresh rate, position, per-monitor scale — live on the raw IPC object,
+    // so parsing `hyprctl -j monitors` is both simpler and complete. Polling
+    // covers hotplug for free: a display plugged in while the panel is open
+    // appears within one tick, and one unplugged disappears the same way.
+    property var dispMonitors: []
+    Process {
+        id: dispMonRead
+        command: ["hyprctl", "-j", "monitors"]
+        stdout: StdioCollector { onStreamFinished: {
+            // A half-written read parses as nothing; keep the last good list
+            // rather than blanking the panel for a tick.
+            try { root.dispMonitors = JSON.parse(this.text || "[]"); } catch (e) { }
+        } }
+    }
+    Timer { interval: 2000; running: root.dispVisible; repeat: true; triggeredOnStart: true
+            onTriggered: dispMonRead.running = true }
+    // A scale change lands asynchronously, and Hyprland may not honour the
+    // exact number asked for (it snaps a scale it cannot divide cleanly to the
+    // nearest one it can). Re-read shortly after a click so the highlighted
+    // button shows what the compositor actually did, not what we requested.
+    Timer { id: dispMonReapply; interval: 400; onTriggered: dispMonRead.running = true }
+
+    // "" = follow whichever monitor is focused; otherwise the name picked in
+    // the DISPLAYS list. Reset on close so the panel always opens pointing at
+    // the display the user is actually looking at.
+    property string dispTarget: ""
+    onDispVisibleChanged: if (!root.dispVisible) root.dispTarget = "";
+    readonly property var dispMon: {
+        var ms = root.dispMonitors;
+        for (var i = 0; i < ms.length; i++) if (ms[i].name === root.dispTarget) return ms[i];
+        for (var j = 0; j < ms.length; j++) if (ms[j].focused) return ms[j];
+        return ms.length > 0 ? ms[0] : null;
+    }
+    // The internal panel is the one brightnessctl actually drives; everything
+    // else is a cable away. Matches the connector names Hyprland reports for
+    // built-in outputs (eDP on laptops, LVDS on older ones, DSI on tablets).
+    function dispIsInternal(m) { return !!m && /^(eDP|LVDS|DSI)/i.test(m.name); }
+
+    // Scales Hyprland will take without rounding. It demands a logical size
+    // that is a whole number of pixels and silently snaps anything else to the
+    // nearest divisor it can find, so the usual 1–3x ladder is filtered against
+    // the monitor's own resolution instead of being offered blind. On this
+    // laptop's 2880x1620 that drops 1.75x (1645.7px wide) and leaves six
+    // buttons; on a 1920x1080 external it drops the same one.
+    function dispScaleOptions(m) {
+        if (!m) return [];
+        var cands = [1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+        var out = [];
+        for (var i = 0; i < cands.length; i++) {
+            var w = m.width / cands[i], h = m.height / cands[i];
+            if (Math.abs(w - Math.round(w)) < 0.001 && Math.abs(h - Math.round(h)) < 0.001)
+                out.push(cands[i]);
+        }
+        // Whatever the display is on right now always gets a button, even when
+        // it is not one of ours — otherwise a monitor scaled from a config file
+        // would show a row with nothing selected in it.
+        var cur = Number(m.scale);
+        var have = out.some(function (v) { return Math.abs(v - cur) < 0.01; });
+        if (!have && cur > 0) {
+            out.push(Math.round(cur * 100) / 100);
+            out.sort(function (a, b) { return a - b; });
+        }
+        return out;
+    }
+    function dispScaleLabel(v) { return (Math.round(v * 100) / 100) + "x"; }
+
+    // `hyprctl keyword` is gone since 0.55 — the live-config entry point is
+    // `hyprctl eval` running the same Lua hyprland.lua uses. Mode and position
+    // are handed back verbatim rather than left out: hl.monitor fills anything
+    // missing with its own catch-alls ("preferred"/"auto"), which would quietly
+    // re-pick the mode as a side effect of a scale click. Verified live on
+    // eDP-1: 2 → 1.5 → 2 changed and restored the scale with the mode intact.
+    function dispSetScale(m, v) {
+        if (!m) return;
+        var mode = m.width + "x" + m.height + "@" + Number(m.refreshRate).toFixed(2);
+        var lua = "hl.monitor({ output = '" + m.name + "', mode = '" + mode + "', " +
+                  "position = '" + m.x + "x" + m.y + "', scale = " + v + " })";
+        root.run("hyprctl eval " + root.shq(lua));
+        dispMonReapply.restart();
+    }
+
+    // ---- night light (hyprsunset) ----------------------------------------
+    // scripts/nightlight.sh owns the daemon; see its header for why "on" is
+    // defined as "hyprsunset is running" rather than anything the daemon
+    // reports about itself. This side only mirrors that state.
+    property bool nlOn: false
+    property int  nlTemp: 4000
+    readonly property int nlMinTemp: 2500        // warmest the slider goes
+    readonly property int nlMaxTemp: 6500        // daylight — no warmth at all
+    // The slider runs in warmth (0–100), not kelvin: in kelvin the fill would
+    // EMPTY as the screen got warmer, which reads backwards under a label that
+    // says WARMTH.
+    function nlPct(k)    { return (root.nlMaxTemp - k) * 100 / (root.nlMaxTemp - root.nlMinTemp); }
+    function nlKelvin(p) { return Math.round(root.nlMaxTemp - p * (root.nlMaxTemp - root.nlMinTemp) / 100); }
+    readonly property string nlScript: root.sideScriptDir + "/nightlight.sh"
+
+    Process {
+        id: nlRead
+        command: [root.nlScript, "status"]
+        stdout: StdioCollector { onStreamFinished: {
+            var p = (this.text || "").trim().split("|");
+            if (p.length < 2) return;
+            root.nlOn = p[0] === "on";
+            // Same guard as brightRead: the state file still holds the old
+            // temperature until the queued write lands.
+            if (root.nlPending >= 0) return;
+            var k = parseInt(p[1]); if (!isNaN(k)) root.nlTemp = k;
+        } }
+    }
+    Timer { interval: 2000; running: root.dispVisible; repeat: true; triggeredOnStart: true
+            onTriggered: nlRead.running = true }
+    // Same optimistic-update-then-confirm shape as the battery cap buttons: the
+    // toggle flips immediately, and this re-read corrects it if the daemon
+    // refused to start.
+    Timer { id: nlReadSoon; interval: 500; onTriggered: nlRead.running = true }
+
+    function nlSetEnabled(on) {
+        root.nlOn = on;
+        root.run(root.shq(root.nlScript) + (on ? " on" : " off"));
+        nlReadSoon.restart();
+    }
+    // Deliberately NOT `nlSetEnabled(!nlOn)`: nlOn is only polled while the
+    // panel is open, so a keybind fired with the panel closed would be deciding
+    // from a stale flag. The script reads the live daemon instead.
+    function nlToggle() {
+        root.run(root.shq(root.nlScript) + " toggle");
+        nlReadSoon.restart();
+    }
+    // Dragging the warmth slider never turns the filter on: it stores the
+    // temperature, and the script pushes it to the daemon only if one is
+    // already running.
+    //
+    // Coalesced exactly like the brightness write above, and for a stronger
+    // reason: every move event here forked bash AND hyprctl, which is far too
+    // much to run at mouse-frame rate.
+    property int nlPending: -1
+    Timer {
+        interval: 60; repeat: true; running: root.nlPending >= 0
+        onTriggered: {
+            root.run(root.shq(root.nlScript) + " set " + root.nlPending);
+            root.nlPending = -1;
+        }
+    }
+    function nlSetTemp(k) {
+        if (k === root.nlTemp) return;
+        root.nlTemp = k;
+        root.nlPending = k;
+    }
+
+    //========================================================================//
     //  PANEL MUTUAL EXCLUSION                                                //
-    //  Every dropdown (control center, calendar, battery, wifi, bluetooth,   //
-    //  audio) is its own PanelWindow; only one may be open at a time.        //
+    //  Every dropdown (control center, calendar, battery, display, wifi,     //
+    //  bluetooth, audio) is its own PanelWindow; only one may be open at a   //
+    //  time.                                                                 //
     //========================================================================//
     property bool netVisible: false
     property bool btVisible:  false
@@ -241,13 +399,14 @@ Scope {
     function closePanels() {
         root.ccVisible = false; root.calVisible = false; root.batVisible = false;
         root.netVisible = false; root.btVisible = false; root.audVisible = false;
-        root.agentVisible = false;
+        root.agentVisible = false; root.dispVisible = false;
     }
     function panelOpen(which) {
         return which === "cc"  ? root.ccVisible  : which === "cal" ? root.calVisible
              : which === "bat" ? root.batVisible : which === "net" ? root.netVisible
              : which === "bt"  ? root.btVisible  : which === "aud" ? root.audVisible
-             : which === "agent" ? root.agentVisible : false;
+             : which === "agent" ? root.agentVisible
+             : which === "disp" ? root.dispVisible : false;
     }
     function togglePanel(which) {
         var wasOpen = root.panelOpen(which);
@@ -260,6 +419,7 @@ Scope {
         else if (which === "bt")  root.btVisible  = true;
         else if (which === "aud") root.audVisible = true;
         else if (which === "agent") root.agentVisible = true;
+        else if (which === "disp") root.dispVisible = true;
     }
 
     //========================================================================//
@@ -794,7 +954,9 @@ Scope {
         loading:  String.fromCodePoint(0xf0772),
         robot:    String.fromCodePoint(0xf16a3),   // md-robot_outline (agents, idle)
         robotOn:  String.fromCodePoint(0xf06a9),   // md-robot         (agents, live)
-        refresh:  String.fromCodePoint(0xf0450)    // md-refresh
+        refresh:  String.fromCodePoint(0xf0450),   // md-refresh
+        monitor:  String.fromCodePoint(0xf0379),   // md-monitor (external display)
+        check:    String.fromCodePoint(0xf012c)    // md-check   (selected display)
     })
 
     function wifiIcon(sig) {
@@ -1186,6 +1348,19 @@ Scope {
     function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a); }
     function run(cmd) { Quickshell.execDetached(["sh", "-c", cmd]); }
 
+    // The `scripts` dir that sits BESIDE this shell config, never a fixed path.
+    // From ~/.config/taskbar that resolves to ~/.config/scripts; from
+    // ~/projects/hyprahaan/taskbar it resolves to the repo's own scripts/. So a
+    // second instance launched out of the repo exercises the repo's scripts —
+    // exactly what step 2 of CLAUDE.md's workflow needs — with no deploy and no
+    // path special-casing.
+    readonly property string sideScriptDir: {
+        var dir = String(Quickshell.shellDir || "").replace(/^file:\/\//, "");
+        var cut = dir.lastIndexOf("/");
+        return cut > 0 ? dir.substring(0, cut) + "/scripts"
+                       : root.homeDir + "/.config/scripts";
+    }
+
     // Launches `cmd` pinned to whichever workspace is focused right now, via
     // Hyprland's exec_cmd window-rule (PID-tracked at spawn time) rather than
     // relying on it landing on "whatever's active when the window maps" —
@@ -1247,18 +1422,9 @@ Scope {
         (Quickshell.env("XDG_STATE_HOME") || root.homeDir + "/.local/state")
         + "/hyprahaan/agents/usage"
 
-    // The collectors are found in the `scripts` dir that sits BESIDE this shell
-    // config, never at a fixed path. From ~/.config/taskbar that resolves to
-    // ~/.config/scripts; from ~/projects/hyprahaan/taskbar it resolves to the
-    // repo's own scripts/. So a second instance launched out of the repo
-    // exercises the repo's collectors — which is exactly what step 2 of
-    // CLAUDE.md's workflow needs — with no deploy and no path special-casing.
-    readonly property string agentsScriptDir: {
-        var dir = String(Quickshell.shellDir || "").replace(/^file:\/\//, "");
-        var cut = dir.lastIndexOf("/");
-        return cut > 0 ? dir.substring(0, cut) + "/scripts"
-                       : root.homeDir + "/.config/scripts";
-    }
+    // The collectors live beside this shell config — see sideScriptDir, which
+    // is what makes a repo-path instance run the repo's own collectors.
+    readonly property string agentsScriptDir: root.sideScriptDir
 
     property var agentIds: []            // ids discovered in the usage dir
     property var agentCollectorIds: []   // ids the installed collectors declare
@@ -1824,11 +1990,53 @@ Scope {
         id: brightRead
         command: ["bash", "-c", "echo $(( $(brightnessctl get) * 100 / $(brightnessctl max) ))"]
         stdout: StdioCollector { onStreamFinished: {
+            // Never fight a drag. While a write is queued the device still
+            // reads the OLD value, and assigning it here would pull the
+            // number backwards under the moving handle — which is what made
+            // the readout look like it was skipping values.
+            if (root.brightPending >= 0) return;
             var v = parseInt((this.text || "").trim()); if (!isNaN(v)) root.brightPercent = v; } }
+    }
+
+    // ---- slider writes: optimistic value, coalesced command ---------------
+    // A drag emits a move event per mouse frame and each one forked a shell —
+    // ~100 `brightnessctl` invocations a second, arriving out of order, with
+    // the displayed percentage only refreshed by the 500 ms poll behind them.
+    // The handle moved smoothly and the number lagged in chunks, which reads
+    // as an imprecise slider. The audio panel feels exact because Pipewire
+    // updates its number in-process on the same frame as the drag.
+    //
+    // So: set the value immediately (the repo's optimistic-UI convention, same
+    // as the charge cap) and let this timer flush at most one command per
+    // tick. Clearing pending stops the timer, so the value the drag ENDS on is
+    // always the one written — a plain throttle would drop it.
+    property int brightPending: -1
+    Timer {
+        interval: 40; repeat: true; running: root.brightPending >= 0
+        onTriggered: {
+            root.run("brightnessctl set " + root.brightPending + "%");
+            root.brightPending = -1;
+        }
+    }
+    function setBrightness(pct) {
+        pct = Math.max(1, Math.min(100, Math.round(pct)));
+        // ~3px of travel per percent, so most move events in a drag land on the
+        // percent the backlight is already at. Dropping those is most of what
+        // keeps the queue short.
+        if (pct === root.brightPercent) return;
+        root.brightPercent = pct;
+        root.brightPending = pct;
     }
     Timer {
         interval: 500; repeat: true; running: root.ccVisible; triggeredOnStart: true
         onTriggered: { volRead.running = true; brightRead.running = true; }
+    }
+    // The display panel wants the same backlight reading and none of the volume
+    // half, so it gets its own timer rather than making the control center's
+    // pactl round-trip run for a panel with no volume control on it.
+    Timer {
+        interval: 500; repeat: true; running: root.dispVisible; triggeredOnStart: true
+        onTriggered: brightRead.running = true
     }
 
     //========================================================================//
@@ -1873,6 +2081,24 @@ Scope {
             root.osdMuted = (this.text || "").trim() === "1";
             root.osdPresent("mic");
         } }
+    }
+
+    // Same reasoning as the agents handler below: the display dropdown is
+    // otherwise mouse-only, and a repo-path instance has to be exercisable
+    // without deploying (CLAUDE.md step 2). `qs -p <shell> ipc call display
+    // toggle` is how this panel was verified before it ever reached ~/.config.
+    IpcHandler {
+        target: "display"
+        function open(): void { root.closePanels(); root.dispVisible = true; }
+        function close(): void { root.dispVisible = false; }
+        function toggle(): void { root.togglePanel("disp"); }
+        // Picks the display the SCALE row acts on; "" hands it back to whichever
+        // monitor is focused.
+        function select(name: string): void { root.dispTarget = name; }
+        // Flips the blue-light filter. Bound to nothing by default; it exists
+        // because the toggle is otherwise mouse-only, and it is the obvious
+        // thing to put on a keybind later.
+        function nightlight(): void { root.nlToggle(); }
     }
 
     IpcHandler {
@@ -2322,11 +2548,23 @@ Scope {
         MouseArea { anchors.fill: parent; onClicked: ptb.clicked() }
     }
 
-    // "KNOWN NETWORKS" / "OUTPUT" / "PAIRED" — the small all-caps section caption.
+    // "KNOWN NETWORKS" / "OUTPUT" / "PAIRED" — the small all-caps section
+    // caption, and the value readout that sits opposite it.
+    //
+    // The size lives HERE, not on the call sites, which used to repeat a
+    // literal `font.pixelSize: 14` thirteen times over. ns(11) is 12px at the
+    // current ncScale — the size Ahaan settled on — and writing it through ns()
+    // keeps it moving with the panel text knob instead of pinning it to a raw
+    // pixel count.
+    //
+    // Every panel that has captions uses this and nothing overrides it, the
+    // agents panel included. The control center is untouched by any of it: it
+    // has no SectionLabel at all, its headings are plain Text with their own
+    // sizes.
     component SectionLabel: Text {
         color: root.alpha(root.ncText, 0.5)
         font.family: root.ncFont
-        font.pixelSize: root.ns(8)
+        font.pixelSize: root.ns(11)
         font.weight: Font.DemiBold
     }
 
@@ -3045,10 +3283,10 @@ Scope {
                     // drawer is up: clicking the volume icon moves the pointer
                     // down onto the panel, which is outside the group, so the
                     // drawer used to collapse out from under the panel it had
-                    // just opened. Brightness has no panel yet — when it gets
-                    // one, OR its visible flag in here too.
+                    // just opened. Both drawer icons now own a panel, so both
+                    // visible flags pin the drawer open.
                     property bool expanded: grpHover.hovered || collapseDelay.running
-                                            || root.audVisible
+                                            || root.audVisible || root.dispVisible
                     HoverHandler {
                         id: grpHover
                         onHoveredChanged: hovered ? collapseDelay.stop() : collapseDelay.restart()
@@ -3105,9 +3343,11 @@ Scope {
                                 }
 
                                 // custom/brightness (format is literal 󰃠)
+                                // click -> display panel ; scroll -> backlight
                                 BarLabel {
                                     id: brightness
                                     text: "󰃠"
+                                    onLeftClicked:  root.togglePanel("disp")
                                     onScrolledUp:   root.run("brightnessctl set +5%")
                                     onScrolledDown: root.run("brightnessctl set 5%-")
                                 }
@@ -3971,7 +4211,7 @@ Scope {
                             target: root
                             function onBrightPercentChanged() { if (!brightSlider.pressed) brightSlider.value = root.brightPercent; }
                         }
-                        onMoved: root.run("brightnessctl set " + Math.round(value) + "%")
+                        onMoved: root.setBrightness(value)
                     }
                 }
             }
@@ -4259,6 +4499,221 @@ Scope {
     }
 
     //========================================================================//
+    //  DISPLAY PANEL  (dropdown from the brightness icon — same chrome as    //
+    //  the battery/audio dropdowns: opaque colBg card, ncBorder outline)     //
+    //========================================================================//
+    PanelWindow {
+        id: dispWin
+        visible: root.dispVisible
+        color: "transparent"
+        anchors { top: true; left: true; right: true; bottom: true }   // full-screen catcher
+        exclusiveZone: 0
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "quickshell-display"
+        WlrLayershell.keyboardFocus: root.dispVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+
+        MouseArea { anchors.fill: parent; onClicked: root.dispVisible = false }
+
+        Rectangle {
+            id: dispPanel
+            width: 340
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.topMargin: root.panelTopMargin
+            anchors.rightMargin: 10
+            implicitHeight: dispColLayout.implicitHeight + 28
+            radius: 14
+            color: root.colBg          // fully opaque, same as the other dropdowns
+            border.width: 2
+            border.color: root.ncBorder
+
+            MouseArea { anchors.fill: parent }      // swallow clicks (don't close)
+
+            ColumnLayout {
+                id: dispColLayout
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 12
+
+                // ---------- header ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Text {
+                        text: root.g.monitor
+                        color: root.ncText
+                        font.family: root.ncFont
+                        font.pixelSize: root.ns(22)
+                    }
+                    Text {
+                        text: "Display"
+                        color: root.ncText
+                        font.family: root.ncFont
+                        font.pixelSize: root.ns(13)
+                        font.weight: Font.Medium
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+
+                // ---------- brightness ----------
+                // Panel-level, not per-display: brightnessctl only ever drives
+                // the internal backlight, and an external monitor would need
+                // ddcutil, which is not installed on this machine. Selecting a
+                // second display below therefore does NOT re-point this slider —
+                // it would silently keep changing the laptop panel either way.
+                RowLayout {
+                    Layout.fillWidth: true
+                    SectionLabel { text: "BRIGHTNESS" }
+                    Item { Layout.fillWidth: true }
+                    SectionLabel { text: root.brightPercent + "%"; color: root.ncText }
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 34
+                    radius: 10
+                    color: root.alpha(root.col7, 0.05)
+                    border.width: 1.5
+                    border.color: root.alpha(root.ncText, 0.32)
+                    ThemedSlider {
+                        id: dispBrightSlider
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        // 1 rather than 0: brightnessctl will happily take the
+                        // backlight to a black screen with no way back from this
+                        // panel, since the panel is on that screen.
+                        from: 1; to: 100
+                        Component.onCompleted: value = root.brightPercent
+                        Connections {
+                            target: root
+                            function onBrightPercentChanged() {
+                                if (!dispBrightSlider.pressed) dispBrightSlider.value = root.brightPercent;
+                            }
+                        }
+                        onMoved: root.setBrightness(value)
+                    }
+                }
+
+                // ---------- night light ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    SectionLabel { text: "NIGHT LIGHT" }
+                    Item { Layout.fillWidth: true }
+                    // No kelvin readout here on purpose: the number moved 40K
+                    // per 1% of slider travel, so it read as a value that
+                    // skipped rather than one you were setting. The slider
+                    // position is the whole control.
+                    ThemedToggle {
+                        checked: root.nlOn
+                        onToggled: (v) => root.nlSetEnabled(v)
+                    }
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 34
+                    radius: 10
+                    color: root.alpha(root.col7, 0.05)
+                    border.width: 1.5
+                    border.color: root.alpha(root.ncText, 0.32)
+                    // Dimmed, not disabled, while the filter is off: the warmth
+                    // is still worth setting before switching it on, and the
+                    // script stores it without starting the daemon.
+                    opacity: root.nlOn ? 1 : 0.5
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
+                    ThemedSlider {
+                        id: nlSlider
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        from: 0; to: 100
+                        Component.onCompleted: value = root.nlPct(root.nlTemp)
+                        Connections {
+                            target: root
+                            function onNlTempChanged() {
+                                if (!nlSlider.pressed) nlSlider.value = root.nlPct(root.nlTemp);
+                            }
+                        }
+                        onMoved: root.nlSetTemp(root.nlKelvin(value))
+                    }
+                }
+
+                // ---------- scale ----------
+                SectionLabel { text: "SCALE" }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Repeater {
+                        model: root.dispScaleOptions(root.dispMon)
+                        delegate: Rectangle {
+                            id: scaleBox
+                            required property var modelData
+                            property bool active: !!root.dispMon
+                                                  && Math.abs(Number(root.dispMon.scale) - modelData) < 0.01
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 34
+                            radius: 10
+                            color: active ? root.ncAccent
+                                   : (scaleHover.hovered ? root.alpha(root.ncAccent, 0.18) : root.alpha(root.col7, 0.08))
+                            border.width: 1.5
+                            border.color: root.alpha(root.ncText, 0.9)
+                            HoverHandler { id: scaleHover }
+                            Text {
+                                anchors.centerIn: parent
+                                text: root.dispScaleLabel(scaleBox.modelData)
+                                color: scaleBox.active ? root.contrastText(root.ncAccent) : root.ncText
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(10)
+                                font.weight: scaleBox.active ? Font.DemiBold : Font.Normal
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: root.dispSetScale(root.dispMon, scaleBox.modelData)
+                            }
+                        }
+                    }
+                }
+
+                // ---------- displays ----------
+                SectionLabel { text: "DISPLAYS" }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Repeater {
+                        model: root.dispMonitors
+                        delegate: PanelRow {
+                            required property var modelData
+                            // Laptop glyph for the built-in panel, monitor glyph
+                            // for anything on a cable — the same is-internal test
+                            // the brightness note above depends on.
+                            glyph: root.dispIsInternal(modelData) ? root.g.laptop : root.g.monitor
+                            label: modelData.name + (modelData.focused ? " · focused" : "")
+                            sub: modelData.width + "×" + modelData.height
+                                 + " · " + Math.round(modelData.refreshRate) + "Hz"
+                                 + " · " + root.dispScaleLabel(Number(modelData.scale))
+                            // Selection drives the SCALE row above, so the check
+                            // marks the display those buttons will act on — which
+                            // is the focused one until the user picks another.
+                            active: !!root.dispMon && root.dispMon.name === modelData.name
+                            trailGlyph: (!!root.dispMon && root.dispMon.name === modelData.name) ? root.g.check : ""
+                            onClicked: root.dispTarget = modelData.name
+                        }
+                    }
+                    // Only reachable in the blink before the first poll returns,
+                    // or if hyprctl is not answering at all.
+                    Text {
+                        visible: root.dispMonitors.length === 0
+                        text: "No displays reported"
+                        color: root.alpha(root.ncText, 0.5)
+                        font.family: root.ncFont
+                        font.pixelSize: root.ns(10)
+                    }
+                }
+            }
+        }
+    }
+
+    //========================================================================//
     //  WI-FI PANEL  (dropdown from the network icon)                         //
     //========================================================================//
     PanelWindow {
@@ -4387,7 +4842,7 @@ Scope {
                         width: parent.width
                         spacing: 6
 
-                        SectionLabel { text: "KNOWN NETWORKS"; font.pixelSize: 14; visible: root.wifiKnown.length > 0 }
+                        SectionLabel { text: "KNOWN NETWORKS"; visible: root.wifiKnown.length > 0 }
                         Repeater {
                             model: root.wifiKnown
                             delegate: WifiNetworkRow {
@@ -4400,7 +4855,7 @@ Scope {
                             Layout.fillWidth: true
                             Layout.topMargin: root.wifiKnown.length > 0 ? 6 : 0
                             spacing: 8
-                            SectionLabel { text: "UNKNOWN NETWORKS"; font.pixelSize: 14 }
+                            SectionLabel { text: "UNKNOWN NETWORKS" }
                             Item { Layout.fillWidth: true }
                             PanelIconBtn {
                                 glyph: root.g.radar
@@ -4535,7 +4990,7 @@ Scope {
                         width: parent.width
                         spacing: 6
 
-                        SectionLabel { text: "PAIRED"; font.pixelSize: 14; visible: root.btPaired.length > 0 }
+                        SectionLabel { text: "PAIRED"; visible: root.btPaired.length > 0 }
                         Repeater {
                             model: root.btPaired
                             delegate: BtDeviceRow {
@@ -4548,7 +5003,7 @@ Scope {
                             Layout.fillWidth: true
                             Layout.topMargin: root.btPaired.length > 0 ? 6 : 0
                             spacing: 8
-                            SectionLabel { text: "AVAILABLE"; font.pixelSize: 14 }
+                            SectionLabel { text: "AVAILABLE" }
                             Item { Layout.fillWidth: true }
                             // Manual scan — discovery is off unless asked for.
                             PanelIconBtn {
@@ -4655,9 +5110,9 @@ Scope {
                 // ---------- OUTPUT ----------
                 RowLayout {
                     Layout.fillWidth: true
-                    SectionLabel { text: "OUTPUT"; font.pixelSize: 14 }
+                    SectionLabel { text: "OUTPUT" }
                     Item { Layout.fillWidth: true }
-                    SectionLabel { text: root.audVol + "%"; font.pixelSize: 14; color: root.ncText }
+                    SectionLabel { text: root.audVol + "%"; color: root.ncText }
                 }
                 Rectangle {
                     Layout.fillWidth: true
@@ -4702,7 +5157,7 @@ Scope {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
-                    SectionLabel { text: "INPUT"; font.pixelSize: 14 }
+                    SectionLabel { text: "INPUT" }
                     Item { Layout.fillWidth: true }
                     // Without this the only sign of a muted mic is the dimmed
                     // slider, with no way to fix it from here — and this
@@ -4714,7 +5169,7 @@ Scope {
                         onClicked: if (root.audSource && root.audSource.audio)
                                        root.audSource.audio.muted = !root.audSource.audio.muted
                     }
-                    SectionLabel { text: root.audMicVol + "%"; font.pixelSize: 14; color: root.ncText }
+                    SectionLabel { text: root.audMicVol + "%"; color: root.ncText }
                 }
                 Rectangle {
                     Layout.fillWidth: true
