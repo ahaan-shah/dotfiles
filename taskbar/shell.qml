@@ -3368,11 +3368,18 @@ Scope {
                                             onTriggered: volProc.running = true }
                                 }
 
-                                // custom/brightness (format is literal 󰃠)
+                                // custom/brightness -> the display panel.
+                                // The glyph is the panel's own monitor icon
+                                // rather than waybar's sun: the item opens
+                                // DISPLAY, and brightness is one row of it.
+                                // Via root.g, not a pasted literal — these
+                                // Material codepoints are outside the BMP and
+                                // a pasted surrogate pair gets mangled by sed,
+                                // heredocs and diff viewers.
                                 // click -> display panel ; scroll -> backlight
                                 BarLabel {
                                     id: brightness
-                                    text: "󰃠"
+                                    text: root.g.monitor
                                     onLeftClicked:  root.togglePanel("disp")
                                     onScrolledUp:   root.run("brightnessctl set +5%")
                                     onScrolledDown: root.run("brightnessctl set 5%-")
