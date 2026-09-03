@@ -5,6 +5,7 @@
 #   on | off | toggle [--persist]   load/unload the plugin in this session
 #   status                          what is loaded now, and what happens at login
 #   minimize                        the yellow button: hide/restore the active window
+#   zoom                            SUPER+D: fill the screen, bar- and scale-aware
 #
 # Merged from toggle-hyprbars.sh and hyprbars-minimize.sh, which were two halves
 # of the same feature: one turns the bars on, the other is wired to a button
@@ -198,6 +199,64 @@ minimize() {
     fi
 }
 
+# ── zoom ──────────────────────────────────────────────────────────────────
+# SUPER+D: fill the usable screen without going fullscreen.
+#
+# The geometry depends on whether the title bars are loaded, which is why it
+# lives here and not as two literal numbers in hyprland.lua. A hyprbar adds its
+# own height above the window, so geometry placed for a bare desktop pushes the
+# window up under the taskbar the moment the bars come back:
+#
+#   bars off :  1425x753 at 7,51
+#   bars on  :  1425x733 at 7,69     (20px shorter, 18px lower)
+#
+# The bind cannot make this choice itself. hyprland.lua is parsed when the
+# config loads, while the plugin is loaded and unloaded underneath it at
+# runtime by this very script — so the decision has to happen at keypress time,
+# which means in the thing the keypress runs.
+#
+# is_loaded is the right question rather than is_enabled: what matters is
+# whether a bar is being drawn on the window right now, not what hyprpm intends
+# to do at the next login.
+# The geometry is a FRACTION of the monitor, not the pixel numbers it used to
+# be, so SUPER+D fills the screen the same way at any resolution or scale. The
+# fractions are the pixels it was tuned at over the 1440x810 logical screen
+# this panel gives at scale 2, and each one rounds back to that exact pixel
+# value there.
+#
+# Computed here rather than handed to Hyprland as the "(monitor_w*0.99)"
+# expression the window RULES use: measured 2026-09-03, the dispatchers do not
+# accept those strings. `hl.dsp.window.resize({ x = '(monitor_w*0.5)' })`
+# silently no-ops — the window kept the size its rule had given it — so a bind
+# has to arrive with numbers already in hand.
+#
+# LOGICAL pixels, which is width/scale: window geometry is in the same space
+# `hyprctl clients` reports, not the physical mode. The focused monitor, so
+# this still does the right thing with a second display attached — the active
+# window is on the monitor that has focus.
+zoom() {
+    local mons w h x y mw mh h_f y_f
+    mons="$(hyprctl monitors -j 2>/dev/null)" || die "hyprctl unavailable"
+    read -r mw mh < <(printf '%s' "$mons" | jq -r '
+        ([.[] | select(.disabled | not)] | (map(select(.focused)) + .)[0])
+        | "\(.width / .scale | round) \(.height / .scale | round)"')
+    [ -n "${mw:-}" ] && [ "${mw:-0}" -gt 0 ] || die "could not read monitor size"
+
+    if is_loaded; then h_f=0.905 y_f=0.085
+    else               h_f=0.93 y_f=0.063
+    fi
+    # awk, not $(( )): bash has no floating point.
+    w=$(awk -v m="$mw" 'BEGIN{ printf "%d", m*0.9896 + 0.5 }')
+    x=$(awk -v m="$mw" 'BEGIN{ printf "%d", m*0.005 + 0.5 }')
+    h=$(awk -v m="$mh" -v f="$h_f" 'BEGIN{ printf "%d", m*f + 0.5 }')
+    y=$(awk -v m="$mh" -v f="$y_f" 'BEGIN{ printf "%d", m*f + 0.5 }')
+
+    # `hyprctl dispatch` takes a Lua expression since 0.55 — the old positional
+    # form (`resizeactive exact W H`) parses as nothing and silently no-ops.
+    hyprctl dispatch "hl.dsp.window.resize({ x = $w, y = $h })" >/dev/null
+    hyprctl dispatch "hl.dsp.window.move({ x = $x, y = $y })" >/dev/null
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────
 # No default command on purpose: a bare `hyprbars.sh` used to mean "toggle the
 # whole plugin", which is a surprising thing to get from a typo now that this
@@ -210,9 +269,10 @@ case "${1:-}" in
     toggle)   if is_loaded; then set_plugin off "$PERSIST"; else set_plugin on "$PERSIST"; fi ;;
     status)   report ;;
     minimize) minimize ;;
+    zoom)     zoom ;;
     *)
         echo "usage: $(basename "$0") {on|off|toggle|status} [--persist]" >&2
-        echo "       $(basename "$0") minimize" >&2
+        echo "       $(basename "$0") {minimize|zoom}" >&2
         exit 2
         ;;
 esac

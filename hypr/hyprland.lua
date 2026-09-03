@@ -502,10 +502,11 @@ hl.bind(mainMod .. " + W", hl.dsp.window.float({ action = "toggle" }))
 -- Native dispatch calls instead of shelling out to `hyprctl dispatch` with
 -- the old positional syntax (`resizeactive exact W H`), which no longer
 -- parses under 0.55's `hyprctl dispatch 'hl.dsp...(...)'` calling convention.
-hl.bind(mainMod .. " + D", function()
-    hl.dispatch(hl.dsp.window.resize({ x = 1425, y = 733 }))
-    hl.dispatch(hl.dsp.window.move({ x = 7, y = 69 }))
-end)
+-- Geometry moved into hyprbars.sh: it differs by whether the title bars are
+-- loaded (a bar pushes the window down under the taskbar otherwise), and that
+-- is a runtime fact this file cannot see — it is parsed once, while the plugin
+-- is loaded and unloaded underneath it. See the zoom() comment in that script.
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("~/.config/scripts/hyprbars.sh zoom"))
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
 
 -- Move focus with mainMod + arrow keys.
@@ -663,6 +664,39 @@ hl.bind("SUPER + G", hl.dsp.exec_cmd("nautilus \"" .. studyDir .. "\""))
 -- `match:class` / `match:title` become a `match = { class=..., title=... }`
 -- table; the action keys (float, size, move, center, ...) sit alongside it.
 
+-- SIZES AND POSITIONS ARE RELATIVE TO THE MONITOR, never raw pixels: a rule
+-- written in pixels is tuned to one panel at one scale, and the same rule opens
+-- windows wider than the screen on a smaller one. `size` and `move` take
+-- Hyprland's expression strings, "(monitor_w*<fraction>)" and
+-- "(monitor_h*<fraction>)", where monitor_w/monitor_h are the LOGICAL size --
+-- the same space `hyprctl clients` reports, so a scale change moves them.
+--
+-- Measured 2026-09-03 on 0.56.2, by adding rules to the live session with
+-- `hyprctl eval` and reading geometry back from `hyprctl clients -j`:
+--
+--   * The expression is re-evaluated PER WINDOW, not baked in at parse time.
+--     One rule of monitor_w*0.5 gave 720 at scale 2 (logical 1440) and 800 at
+--     scale 1.8 (logical 1600) with no reload in between. That is the whole
+--     point: changing scale in the taskbar's display panel re-lays-out every
+--     window opened afterwards, with nothing else to keep in sync.
+--   * The result is ROUNDED, not truncated: monitor_w*0.65972 is 949.9968 and
+--     lands on 950. So the fractions below carry only as many decimals as it
+--     takes to round-trip to the pixel value each rule was tuned at.
+--   * Parentheses are optional and mixing forms is allowed ({"(monitor_w*0.5)",
+--     300} works), but every rule here is written the same way on purpose.
+--   * "50%", "50% 50%" and {0.5, 0.5} all FAIL, and fail silently -- 20x20 or
+--     0x0, no parse error and no log line. The percentage syntax from the old
+--     hyprlang config did not survive the move to Lua. Don't retry it.
+--
+-- The fractions were derived from the pixel values these rules were tuned at,
+-- against a 1440x810 logical screen (this panel, 2880x1620 at scale 2), and
+-- every one round-trips exactly there -- so the layout is unchanged on this
+-- machine and proportional everywhere else.
+--
+-- The DISPATCHERS do not take these expressions -- hl.dsp.window.resize with a
+-- "(monitor_w*0.5)" string silently no-ops. That is why SUPER+D's geometry is
+-- computed in scripts/hyprbars.sh instead of written here.
+
 -- Remember the size you manually resized for floating windows (per class + title)
 hl.window_rule({
     name  = "remember-float-size",
@@ -687,7 +721,7 @@ globalFloatRule = hl.window_rule({
     name   = "global-float",
     match  = { class = ".*" },
     float  = true,
-    size   = {950, 550}, -- default size; percentages are reliable across monitors
+    size   = {"(monitor_w*0.66)", "(monitor_h*0.679)"}, -- default size, relative to the monitor
     center = true,
 })
 
@@ -695,7 +729,7 @@ globalFloatRule = hl.window_rule({
 hl.window_rule({
     name   = "kitty-float",
     match  = { class = "^(kitty)$" },
-    size   = {750, 430},
+    size   = {"(monitor_w*0.521)", "(monitor_h*0.531)"},
     center = true,
 })
 
@@ -703,16 +737,16 @@ hl.window_rule({
 hl.window_rule({
     name  = "browsers-float",
     match = { class = "^(librewolf|brave-browser|chromium)$" },
-    size  = {1250, 660},
-    move  = {95, 72},
+    size  = {"(monitor_w*0.868)", "(monitor_h*0.815)"},
+    move  = {"(monitor_w*0.066)", "(monitor_h*0.089)"},
 })
 
 -- Zen Browser
 hl.window_rule({
     name   = "zen-float",
     match  = { class = "^(zen)$" },
-    size   = {1125, 640},
-    move   = {42, 85},
+    size   = {"(monitor_w*0.781)", "(monitor_h*0.79)"},
+    move   = {"(monitor_w*0.029)", "(monitor_h*0.105)"},
 })
 
 -- Kitty-based tools
@@ -720,7 +754,7 @@ hl.window_rule({
     name   = "kitty-tools-float",
     match  = { class = "^(kitty)$", title = "^(bluetui|impala|pulsemixer|wiremix|calcurse)$" },
     center = true,
-    size   = {870, 500},
+    size   = {"(monitor_w*0.604)", "(monitor_h*0.617)"},
 })
 
 -- Btop
@@ -728,14 +762,14 @@ hl.window_rule({
     name   = "btop-float",
     match  = { class = "^(kitty)$", title = "^(btop)$" },
     center = true,
-    size   = {970, 550},
+    size   = {"(monitor_w*0.6736)", "(monitor_h*0.679)"},
 })
 
 -- MPV
 hl.window_rule({
     name   = "mpv-float",
     match  = { class = "^(mpv)$" },
-    size   = {800, 450},
+    size   = {"(monitor_w*0.5556)", "(monitor_h*0.556)"},
     center = true,
 })
 
@@ -744,30 +778,30 @@ hl.window_rule({
     name   = "zathura-float",
     match  = { class = "^(org.pwmt.zathura)$" },
     center = true,
-    size   = {870, 650},
+    size   = {"(monitor_w*0.604)", "(monitor_h*0.802)"},
 })
 
 -- Calculator
 hl.window_rule({
     name  = "calc-float",
     match = { class = "^(org.gnome.Calculator)$" },
-    size  = {380, 615},
-    move  = {986, 103},
+    size  = {"(monitor_w*0.264)", "(monitor_h*0.759)"},
+    move  = {"(monitor_w*0.685)", "(monitor_h*0.127)"},
 })
 
 -- Calendar
 hl.window_rule({
     name  = "calendar-float",
     match = { class = "^(org.gnome.Calendar)$" },
-    size  = {620, 600},
-    move  = {10, 75},
+    size  = {"(monitor_w*0.4306)", "(monitor_h*0.741)"},
+    move  = {"(monitor_w*0.007)", "(monitor_h*0.093)"},
 })
 
 -- imv
 hl.window_rule({
     name   = "imv-float",
     match  = { class = "^(imv)$" },
-    size   = {700, 400},
+    size   = {"(monitor_w*0.486)", "(monitor_h*0.494)"},
     center = true,
 })
 
@@ -793,24 +827,24 @@ hl.window_rule({
 hl.window_rule({
     name  = "nautilus-float",
     match = { class = "^(org.gnome.Nautilus)$" },
-    size  = {850, 490},
-    move  = {483, 123},
+    size  = {"(monitor_w*0.59)", "(monitor_h*0.605)"},
+    move  = {"(monitor_w*0.3354)", "(monitor_h*0.152)"},
 })
 
 -- Evince Docs
 hl.window_rule({
     name  = "evince-float",
     match = { class = "^(org.gnome.Evince)$" },
-    size  = {800, 670},
-    move  = {630, 75},
+    size  = {"(monitor_w*0.5556)", "(monitor_h*0.827)"},
+    move  = {"(monitor_w*0.4375)", "(monitor_h*0.093)"},
 })
 
 -- Papers Docs
 hl.window_rule({
     name  = "papers-float",
     match = { class = "^(org.gnome.Papers)$" },
-    size  = {800, 670},
-    move  = {630, 75},
+    size  = {"(monitor_w*0.5556)", "(monitor_h*0.827)"},
+    move  = {"(monitor_w*0.4375)", "(monitor_h*0.093)"},
 })
 
 -- Camera
@@ -818,7 +852,7 @@ hl.window_rule({
     name   = "camera-float",
     match  = { class = "^(org.gnome.Snapshot)$" },
     center = true,
-    size   = {740, 420},
+    size   = {"(monitor_w*0.514)", "(monitor_h*0.519)"},
 })
 
 -- Spotify
@@ -828,8 +862,8 @@ hl.window_rule({
 hl.window_rule({
     name  = "spotify-float",
     match = { class = "^([Ss]potify)$" },
-    size  = {1200, 670},
-    move  = {10, 75},
+    size  = {"(monitor_w*0.833)", "(monitor_h*0.827)"},
+    move  = {"(monitor_w*0.007)", "(monitor_h*0.093)"},
     float = true,
 })
 
@@ -837,31 +871,31 @@ hl.window_rule({
 hl.window_rule({
     name  = "codium-float",
     match = { class = "^(codium)$" },
-    size  = {1150, 650},
-    move  = {118, 88},
+    size  = {"(monitor_w*0.7986)", "(monitor_h*0.802)"},
+    move  = {"(monitor_w*0.082)", "(monitor_h*0.109)"},
 })
 
 -- TRW
 hl.window_rule({
     name  = "TRW-float",
     match = { class = "^(chrome-app.jointherealworld.com__checklist-Default)$" },
-    size  = {1425, 725},
-    move  = {7, 77},
+    size  = {"(monitor_w*0.9896)", "(monitor_h*0.895)"},
+    move  = {"(monitor_w*0.005)", "(monitor_h*0.095)"},
 })
 
 -- Tradingview
 hl.window_rule({
     name  = "tradingview-float",
     match = { class = "^(chrome-www.tradingview.com__chart_lCRrEItS_-Default)$" },
-    size  = {1425, 725},
-    move  = {7, 77},
+    size  = {"(monitor_w*0.9896)", "(monitor_h*0.895)"},
+    move  = {"(monitor_w*0.005)", "(monitor_h*0.095)"},
 })
 
 -- Instagram
 hl.window_rule({
     name   = "instagram-float",
     match  = { class = "^(chrome-www.instagram.com__-Default)$" },
-    size   = {950, 550},
+    size   = {"(monitor_w*0.66)", "(monitor_h*0.679)"},
     center = true,
 })
 
@@ -869,15 +903,15 @@ hl.window_rule({
 hl.window_rule({
     name  = "whatsapp-float",
     match = { class = "^(chrome-web.whatsapp.com__-Default)$" },
-    size  = {1200, 670},
-    move  = {6, 75},
+    size  = {"(monitor_w*0.833)", "(monitor_h*0.827)"},
+    move  = {"(monitor_w*0.004)", "(monitor_h*0.093)"},
 })
 
 -- Chatgpt
 hl.window_rule({
     name   = "chatgpt-float",
     match  = { class = "^(chrome-chat.openai.com__-Default)$" },
-    size   = {910, 550},
+    size   = {"(monitor_w*0.632)", "(monitor_h*0.679)"},
     center = true,
 })
 
@@ -885,7 +919,7 @@ hl.window_rule({
 hl.window_rule({
     name   = "grok-float",
     match  = { class = "^(chrome-grok.com__-Default)$" },
-    size   = {910, 550},
+    size   = {"(monitor_w*0.632)", "(monitor_h*0.679)"},
     center = true,
 })
 
@@ -893,7 +927,7 @@ hl.window_rule({
 hl.window_rule({
     name   = "claude-float",
     match  = { class = "^(chrome-claude.ai__new-Default)$" },
-    size   = {910, 550},
+    size   = {"(monitor_w*0.632)", "(monitor_h*0.679)"},
     center = true,
 })
 
@@ -901,22 +935,22 @@ hl.window_rule({
 hl.window_rule({
     name  = "coursera-float",
     match = { class = "^(chrome-www.coursera.org__-Default)$" },
-    size  = {1425, 725},
-    move  = {7, 77},
+    size  = {"(monitor_w*0.9896)", "(monitor_h*0.895)"},
+    move  = {"(monitor_w*0.005)", "(monitor_h*0.095)"},
 })
 
 -- Prime Video
 hl.window_rule({
     name  = "primevideo-float",
     match = { class = "^(chrome-www.primevideo.com__region_eu_storefront-Default)$" },
-    size  = {1190, 625},
-    move  = {78, 95},
+    size  = {"(monitor_w*0.8264)", "(monitor_h*0.772)"},
+    move  = {"(monitor_w*0.054)", "(monitor_h*0.117)"},
 })
 
 -- Youtube
 hl.window_rule({
     name   = "youtube-float",
     match  = { class = "^(brave-www.youtube.com__-Default)$" },
-    size   = {1200, 650},
+    size   = {"(monitor_w*0.833)", "(monitor_h*0.802)"},
     center = true,
 })
