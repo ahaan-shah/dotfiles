@@ -40,8 +40,12 @@ Scope {
     // Quickshell.env is synchronous, so this needs no deferral.
     property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
 
-    // ---- fonts (JetBrainsMono Nerd Font Propo; was CodeNewRoman) -------------
-    readonly property string fontFamily: "JetBrainsMono Nerd Font Propo"
+    // ---- fonts (was a hardcoded JetBrainsMono Nerd Font Propo; CodeNewRoman
+    //      before that) ------------------------------------------------------
+    // UiConfig.fontFamily — the family chosen in finder's settings menu
+    // (Settings -> Fonts), read live from ~/.config/scripts/ui.conf. Falls
+    // back to JetBrainsMono Nerd Font Propo when nothing has been chosen.
+    readonly property string fontFamily: UiConfig.fontFamily
     readonly property int fontSize: 15
 
     // ---- pywal palette (parsed from ~/.cache/wal/colors-waybar.css) -----------
@@ -63,7 +67,7 @@ Scope {
     readonly property color ncBgStrong: alpha(colBg, 0.95)
     readonly property color ncAccent: col9
     readonly property color ncBorder: alpha(col7, 0.8)
-    readonly property string ncFont: "JetBrainsMono Nerd Font Propo"
+    readonly property string ncFont: UiConfig.fontFamily
 
     //=====================================================================//
     //  PANEL TEXT SIZE  —  change this one number                         //
@@ -5731,7 +5735,7 @@ Scope {
                     Text {                               // image { color:@color7 }
                         text: pill.icon
                         color: root.col7
-                        font.family: "JetBrainsMono Nerd Font Propo"
+                        font.family: UiConfig.fontFamily
                         font.pixelSize: 21
                     }
 
@@ -5755,7 +5759,7 @@ Scope {
                         text: root.osdMode === "mic" ? (root.osdMuted ? "Muted" : "On")
                                                      : (root.osdValue + "%")
                         color: root.col7
-                        font.family: "JetBrainsMono Nerd Font Propo"
+                        font.family: UiConfig.fontFamily
                         font.pixelSize: 15
                         font.weight: Font.Medium
                     }

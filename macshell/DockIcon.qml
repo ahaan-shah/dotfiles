@@ -13,6 +13,14 @@ Item {
     property string command:     ""
     property bool   separator:   false
     property string windowClass: ""
+    // Whether this slot survives the app being quit. Only right-click reads it,
+    // to decide which way the toggle goes; nothing about the icon is drawn
+    // differently, exactly as on macOS.
+    property bool   isPinned:    false
+
+    // Right-click. Handled by the parent Dock, which owns the pin store and the
+    // slot order the store is written from.
+    signal pinToggleRequested()
 
     // magnification state fed by parent Dock
     property real dockHoverX: -1          // mouse X in dock-row coords, –1 = no hover
@@ -126,7 +134,7 @@ Item {
                     anchors.centerIn: parent
                     text:       root.appName.length > 0 ? root.appName[0].toUpperCase() : "?"
                     color:      "white"
-                    font.family:     "JetBrainsMono Nerd Font Propo"
+                    font.family:     UiConfig.fontFamily
                     font.pixelSize:  parent.width * 0.45
                     font.weight:     Font.Medium
                 }
@@ -191,10 +199,20 @@ Item {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
-        acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+        acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
 
         onClicked: mouse => {
             if (root.separator) return
+
+            if (mouse.button === Qt.RightButton) {
+                // Pin an app that is only in the dock because it is open, or
+                // unpin one that is here permanently. No context menu: the dock
+                // is a masked layer-shell strip 68px tall, so a popup would
+                // have to be a whole second surface with its own input region
+                // for one item's worth of choice.
+                root.pinToggleRequested()
+                return
+            }
 
             if (mouse.button === Qt.MiddleButton) {
                 // Middle-click: always launch a fresh instance

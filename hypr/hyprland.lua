@@ -50,11 +50,11 @@ local color2 = colors.color2 or "rgb(6a6b69)" -- only used in a comment original
 -- Every lookup below falls back to a value that WORKS ON UNKNOWN HARDWARE
 -- rather than to this laptop's specifics — a missing env file must degrade to a
 -- usable desktop, never to a black screen.
-local function read_hw_env()
+local function read_env_file(name)
     local t = {}
     local home = os.getenv("HOME")
     if not home then return t end
-    local f = io.open(home .. "/.config/scripts/hardware.env", "r")
+    local f = io.open(home .. "/.config/scripts/" .. name, "r")
     if not f then return t end
     for line in f:lines() do
         local k, v = line:match('^%s*([A-Z_][A-Z0-9_]*)%s*=%s*"(.-)"%s*$')
@@ -64,7 +64,19 @@ local function read_hw_env()
     return t
 end
 
-local hw = read_hw_env()
+local hw = read_env_file("hardware.env")
+
+-- ui.conf holds the preferences the user CHOSE; hardware.env holds what this
+-- machine IS. Same KEY="value" shape, same parser, deliberately separate files:
+-- `install.sh --only hardware` rewrites hardware.env wholesale and would erase
+-- a font choice stored in it.
+--
+-- Written by scripts/ui-prefs.sh, which is what finder's settings menu drives
+-- (SUPER+Return). Every lookup below falls back to the value this config
+-- hardcoded before the settings menu existed, because a machine that has never
+-- opened it has no ui.conf at all — and note these are read at CONFIG-PARSE
+-- time, so ui-prefs.sh runs `hyprctl reload` after changing one.
+local ui = read_env_file("ui.conf")
 
 -- Hyprland wants a number for a numeric scale but the string "auto" for the
 -- automatic mode, so pass through only what is genuinely numeric.
@@ -196,8 +208,13 @@ hl.config({
 -- user manually exported it (a per-shell `export` never reaches Quickshell/
 -- other GUI children, since they're spawned by Hyprland, not a login shell)
 hl.env("XDG_DATA_DIRS", "/var/lib/flatpak/exports/share:" .. os.getenv("HOME") .. "/.local/share/flatpak/exports/share:/usr/local/share:/usr/share")
-hl.env("TERMINAL", "kitty")
-hl.env("EDITOR", "vim")
+hl.env("TERMINAL", ui.DEFAULT_TERMINAL or "kitty")
+hl.env("EDITOR", ui.DEFAULT_EDITOR or "vim")
+-- BROWSER was never set here. It is now, so that a terminal program asking the
+-- environment which browser to open agrees with the one picked in
+-- Settings -> Defaults -> Browser (and with xdg-settings, which ui-prefs.sh
+-- points at the same choice).
+hl.env("BROWSER", ui.DEFAULT_BROWSER or "zen-browser")
 
 -- toolkit-specific scale
 -- GDK_SCALE only accepts an INTEGER. Setting it to 2 on a 1x display makes
@@ -222,7 +239,7 @@ hl.env("XCURSOR_SIZE", "28")
 -- MY DEFAULT PROGRAMS
 ------------------------------------------------------------------
 -- Old hyprlang used $variables. In Lua these are just local variables.
-local terminal    = "kitty"
+local terminal    = ui.DEFAULT_TERMINAL or "kitty"
 local fileManager = "nautilus --new-window"
 
 
@@ -402,7 +419,7 @@ hl.config({
             },
 
             bar_text_size    = 10,
-            bar_text_font    = "JetBrainsMono Nerd Font Propo",
+            bar_text_font    = ui.UI_FONT or "JetBrainsMono Nerd Font Propo",
             bar_text_align   = "center",
             bar_title_enabled = false,
 
@@ -489,15 +506,21 @@ end
 -- $mainMod = SUPER  →  a local. Key combos are single strings joined with " + ".
 local mainMod = "SUPER"
 
+-- desc: Opens the terminal
 hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
+-- desc: Opens the file manager
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 -- finder/ replaces walker (native Quickshell reimplementation); toggled via
 -- its persistent IPC socket, same convention as macshell's switcher socat bind below.
+-- desc: Opens the app launcher
 hl.bind("ALT + S", hl.dsp.exec_cmd("echo \"open:default\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 -- File Search (finder/, filesearch mode — restricted to non-hidden files
 -- under $HOME via fd's own defaults, see FileSearch.qml)
+-- desc: Opens file search
 hl.bind("ALT + F", hl.dsp.exec_cmd("echo \"open:filesearch\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
+-- desc: Closes the focused window
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
+-- desc: Toggles floating on the focused window
 hl.bind(mainMod .. " + W", hl.dsp.window.float({ action = "toggle" }))
 -- Native dispatch calls instead of shelling out to `hyprctl dispatch` with
 -- the old positional syntax (`resizeactive exact W H`), which no longer
@@ -506,24 +529,30 @@ hl.bind(mainMod .. " + W", hl.dsp.window.float({ action = "toggle" }))
 -- loaded (a bar pushes the window down under the taskbar otherwise), and that
 -- is a runtime fact this file cannot see — it is parsed once, while the plugin
 -- is loaded and unloaded underneath it. See the zoom() comment in that script.
+-- desc: Fills the screen with the focused window
 hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("~/.config/scripts/hyprbars.sh zoom"))
+-- desc: Toggles fullscreen
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
 
 -- Move focus with mainMod + arrow keys.
 -- The original ran two dispatchers per key (movefocus + bringactivetotop).
 -- A Lua function lets one bind fire several dispatchers in order.
+-- desc: Moves focus left
 hl.bind("SUPER + Left", function()
     hl.dispatch(hl.dsp.focus({ direction = "left" }))
     hl.dispatch(hl.dsp.window.bring_to_top())
 end)
+-- desc: Moves focus right
 hl.bind("SUPER + Right", function()
     hl.dispatch(hl.dsp.focus({ direction = "right" }))
     hl.dispatch(hl.dsp.window.bring_to_top())
 end)
+-- desc: Moves focus up
 hl.bind("SUPER + Up", function()
     hl.dispatch(hl.dsp.focus({ direction = "up" }))
     hl.dispatch(hl.dsp.window.bring_to_top())
 end)
+-- desc: Moves focus down
 hl.bind("SUPER + Down", function()
     hl.dispatch(hl.dsp.focus({ direction = "down" }))
     hl.dispatch(hl.dsp.window.bring_to_top())
@@ -533,31 +562,43 @@ end)
 -- A loop replaces the 20 repetitive bind lines. key 0 maps to workspace 10.
 for i = 1, 10 do
     local key = i % 10 -- 10 -> "0"
+    -- desc: Switches to workspace
     hl.bind(mainMod .. " + " .. key,         hl.dsp.focus({ workspace = i }))
+    -- desc: Moves the window to workspace
     hl.bind(mainMod .. " + SHIFT + " .. key, hl.dsp.window.move({ workspace = i }))
 end
 
 -- Special workspace (scratchpad)
+-- desc: Toggles the scratchpad workspace
 hl.bind(mainMod .. " + S",         hl.dsp.workspace.toggle_special("magic"))
+-- desc: Moves the window to the scratchpad
 hl.bind(mainMod .. " + SHIFT + S", hl.dsp.window.move({ workspace = "special:magic" }))
 
 -- movetoworkspacesilent -> window.move({ workspace, follow = false }) natively,
 -- instead of shelling out to `hyprctl dispatch` with the old dispatcher name.
+-- desc: Sends the window to the scratchpad without following it
 hl.bind("SUPER + X", hl.dsp.window.move({ workspace = "special:magic", follow = false }))
 
 -- Scroll through workspaces with mainMod + scroll
+-- desc: Next workspace
 hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
+-- desc: Previous workspace
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
 
 -- Macswitcher
+-- desc: Next window in the switcher
 hl.bind("ALT + Tab",         hl.dsp.exec_cmd("echo \"next\"    | socat - UNIX-CONNECT:/tmp/macswitcher.sock"))
+-- desc: Previous window in the switcher
 hl.bind("ALT + SHIFT + Tab", hl.dsp.exec_cmd("echo \"prev\"    | socat - UNIX-CONNECT:/tmp/macswitcher.sock"))
 -- bindrt = release + transparent (r + t)
+-- desc: Confirms the switcher selection
 hl.bind("ALT + Alt_L",       hl.dsp.exec_cmd("echo \"confirm\" | socat - UNIX-CONNECT:/tmp/macswitcher.sock"), { release = true, transparent = true })
 
 -- Move/resize windows with mainMod + LMB/RMB and dragging
 -- bindm = mouse bind ({ mouse = true })
+-- desc: Drags the window with the mouse
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
+-- desc: Resizes the window with the mouse
 hl.bind(mainMod .. " + R",         hl.dsp.window.resize(), { mouse = true })
 -- SUPER + A removed: it ran ~/.config/scripts/hymission-fix.sh, which does
 -- not exist (never written), and the hymission plugin is not loaded either —
@@ -565,6 +606,7 @@ hl.bind(mainMod .. " + R",         hl.dsp.window.resize(), { mouse = true })
 
 -- Toggle Layout (the old plugin:xtd:throwunfocused bind on this same key
 -- in the .conf is dead/superseded — SUPER + T is toggle-layout only)
+-- desc: Toggles floating and tiling for every window
 hl.bind("SUPER + T", hl.dsp.exec_cmd("~/.config/scripts/toggle-layout.sh"))
 
 ------------------------------------------------------------------
@@ -572,15 +614,21 @@ hl.bind("SUPER + T", hl.dsp.exec_cmd("~/.config/scripts/toggle-layout.sh"))
 ------------------------------------------------------------------
 
 -- Volume
+-- desc: Mutes and unmutes the volume
 hl.bind("F1", hl.dsp.exec_cmd("pactl set-sink-mute @DEFAULT_SINK@ toggle && qs -p ~/.config/taskbar ipc call osd volume"))
+-- desc: Lowers the volume
 hl.bind("F2", hl.dsp.exec_cmd("pactl set-sink-volume @DEFAULT_SINK@ -5% && qs -p ~/.config/taskbar ipc call osd volume"), { repeating = true })
+-- desc: Raises the volume
 hl.bind("F3", hl.dsp.exec_cmd("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ && qs -p ~/.config/taskbar ipc call osd volume"), { repeating = true })
 
 -- Brightness
+-- desc: Lowers the screen brightness
 hl.bind("F4", hl.dsp.exec_cmd("brightnessctl set 10%- && qs -p ~/.config/taskbar ipc call osd brightness"), { repeating = true })
+-- desc: Raises the screen brightness
 hl.bind("F5", hl.dsp.exec_cmd("brightnessctl set +10% && qs -p ~/.config/taskbar ipc call osd brightness"), { repeating = true })
 
 -- Keyboard backlight (unchanged)
+-- desc: Toggles the keyboard backlight
 hl.bind("F7", hl.dsp.exec_cmd("~/.config/scripts/kbdbacklight_toggle.sh"))
 
 -- Mic mute (with OSD + keyboard LED sync). bindel = repeating + locked.
@@ -588,12 +636,14 @@ hl.bind("F7", hl.dsp.exec_cmd("~/.config/scripts/kbdbacklight_toggle.sh"))
 -- the kernel's own audio-micmute LED trigger drives the keyboard's mic LED
 -- with the opposite polarity (lit = muted) from what's wanted (lit = on) —
 -- see scripts/micmute-led.sh for the full story.
+-- desc: Mutes and unmutes the microphone
 hl.bind("F9", hl.dsp.exec_cmd("~/.config/scripts/micmute-led.sh toggle"), { repeating = true, locked = true })
 
 ------------------------------------------------------------------
 -- Random Tools
 ------------------------------------------------------------------
 -- Emoji Picker (finder/, emoji mode)
+-- desc: Opens the emoji picker
 hl.bind("SUPER + period", hl.dsp.exec_cmd("echo \"open:emoji\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
 -- Voice-to-text (voxtype, push-to-talk). Hold to record, release to transcribe
@@ -604,38 +654,58 @@ hl.bind("SUPER + period", hl.dsp.exec_cmd("echo \"open:emoji\" | socat - UNIX-CO
 --
 -- The daemon must be running (`systemctl --user enable --now voxtype`) or both
 -- binds are silent no-ops: `record start/stop` just signal an existing daemon.
+-- desc: Starts voice typing (hold to record)
 hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record start"))
+-- desc: Stops voice typing and transcribes
 hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record stop"), { release = true })
 
 -- Btop
+-- desc: Opens btop
 hl.bind("F12", hl.dsp.exec_cmd("kitty --title btop -e zsh -i -c btop"))
 
 -- Screenshot Utilities
+-- desc: Screenshots a region
 hl.bind("F11",         hl.dsp.exec_cmd("hyprshot -m region -o ~/Pictures/Screenshots"))
+-- desc: Screenshots the focused window
 hl.bind("ALT + Print", hl.dsp.exec_cmd("hyprshot -m window -o ~/Pictures/Screenshots"))
+-- desc: Screenshots the whole screen
 hl.bind("Print",       hl.dsp.exec_cmd("hyprshot -m active -m output -o ~/Pictures/Screenshots"))
 
 -- Colorpicker
+-- desc: Picks a colour from the screen
 hl.bind("ALT + C", hl.dsp.exec_cmd("hyprpicker -a"))
 
 -- Clipboard (finder/, clipboard mode)
+-- desc: Opens clipboard history
 hl.bind("SUPER + V", hl.dsp.exec_cmd("echo \"open:clipboard\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
+-- Settings (finder/, settings mode). Install/remove/update, monitors,
+-- keybindings, titlebar, default apps, font, icon theme and GTK theme —
+-- see finder/Settings.qml for the tree and scripts/ui-prefs.sh for what
+-- each choice actually does.
+-- desc: Opens settings
+hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd("echo \"open:settings\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
+
 -- Power Menu (finder/, powermenu mode)
+-- desc: Opens the power menu
 hl.bind(mainMod .. " + Escape", hl.dsp.exec_cmd("echo \"open:powermenu\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
 -- Idle Inhibitor
+-- desc: Toggles the idle inhibitor (Always Awake)
 hl.bind(mainMod .. " + I", hl.dsp.exec_cmd("~/.config/scripts/idle-inhibitor.sh"))
 
 -- Toggle all Quickshell shells (macshell/taskbar/finder): kills
 -- them if any are alive, relaunches them if all are dead. Deliberately
 -- excludes lockscreen/ — see toggle-shells.sh for why.
+-- desc: Restarts the bar, dock and launcher
 hl.bind(mainMod .. " + K", hl.dsp.exec_cmd("~/.config/scripts/toggle-shells.sh"))
 
 -- Power Profiles (finder/, powerprofiles mode)
+-- desc: Opens power profiles
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("echo \"open:powerprofiles\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
 -- Toggle Touchpad
+-- desc: Toggles the touchpad
 hl.bind("F6", hl.dsp.exec_cmd("~/.config/scripts/toggle-touchpad.sh"))
 
 -- LockScreen — replaced by the Quickshell lockscreen/ app (1:1 visual port
@@ -645,15 +715,18 @@ hl.bind("F6", hl.dsp.exec_cmd("~/.config/scripts/toggle-touchpad.sh"))
 -- it must guard against double-launch without ever pkill-ing an existing
 -- instance (killing a live WlSessionLock process leaves the compositor
 -- permanently locked with nothing listening) — see that script's comment.
+-- desc: Locks the screen
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh"))
 
 -- Wallpaper Picker (finder/, wallpaper mode)
+-- desc: Opens the wallpaper picker
 hl.bind("ALT + W", hl.dsp.exec_cmd("echo \"open:wallpaper\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
 -- Study
 -- Personal shortcut: edit studyDir (or drop this bind) on a machine where
 -- that folder does not exist. Nothing else depends on it.
 local studyDir = os.getenv("HOME") .. "/college/year-4/sleep deprivv project"
+-- desc: Opens the study folder
 hl.bind("SUPER + G", hl.dsp.exec_cmd("nautilus \"" .. studyDir .. "\""))
 
 
@@ -755,6 +828,41 @@ hl.window_rule({
     match  = { class = "^(kitty)$", title = "^(bluetui|impala|pulsemixer|wiremix|calcurse)$" },
     center = true,
     size   = {"(monitor_w*0.604)", "(monitor_h*0.617)"},
+})
+
+-- Settings-menu tools. Everything the settings menu cannot do inside finder —
+-- an fzf picker with a preview pane, the web-app form, a sudo prompt — gets a
+-- terminal, and kitty-float's 0.521 x 0.531 is too small to split a preview
+-- pane inside. Matched on the titles finder/Settings.qml spawns them with.
+hl.window_rule({
+    name   = "settings-tools-float",
+    match  = { class = "^(kitty)$",
+               title = "^(pkg-install|pkg-aur-install|pkg-remove|system-update|webapp-install|webapp-remove|hyprbars-persist)$" },
+    center = true,
+    size   = {"(monitor_w*0.72)", "(monitor_h*0.75)"},
+})
+
+-- About (fastfetch, via the settings menu).
+--
+-- Sized to the CONTENT, which is 26 rows by 112 columns (measured:
+-- `fastfetch --pipe | wc -l` and `| wc -L`, ANSI stripped). Cell size measured
+-- the only way that is honest — by asking a real kitty. A kitty floated by the
+-- kitty-float rule above comes up 750 x 430 logical px and reports 81 x 20 from
+-- `stty size`, and its padding is 5 either side, so a cell is (750-10)/81 =
+-- 9.14 px wide and (430-10)/20 = 21 px tall. 114 cols x 28 rows (content plus
+-- the "press any key" line and a margin) is then 1052 x 598, which over this
+-- panel's 1440 x 810 logical size is the two fractions below.
+--
+-- Fractions rather than pixels for the same reason all 41 rules above use them:
+-- they are re-evaluated per window, so this stays right at another resolution
+-- or scale. It does NOT follow a font change — the cell size is a property of
+-- the font kitty is drawing with, so picking a much wider font under
+-- Settings -> Fonts would want these numbers re-measured.
+hl.window_rule({
+    name   = "about-float",
+    match  = { class = "^(kitty)$", title = "^(about)$" },
+    center = true,
+    size   = {"(monitor_w*0.7361)", "(monitor_h*0.7407)"},
 })
 
 -- Btop

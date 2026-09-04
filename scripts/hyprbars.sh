@@ -3,6 +3,7 @@
 # hyprbars.sh <command> — everything to do with the hyprbars title bars.
 #
 #   on | off | toggle [--persist]   load/unload the plugin in this session
+#   persist                         make the CURRENT state the one used at login
 #   status                          what is loaded now, and what happens at login
 #   minimize                        the yellow button: hide/restore the active window
 #   zoom                            SUPER+D: fill the screen, bar- and scale-aware
@@ -267,11 +268,18 @@ PERSIST=0
 case "${1:-}" in
     on|off)   set_plugin "$1" "$PERSIST" ;;
     toggle)   if is_loaded; then set_plugin off "$PERSIST"; else set_plugin on "$PERSIST"; fi ;;
+    # persist with no direction: take whatever is loaded RIGHT NOW and make the
+    # next login agree with it. This is what the settings menu calls, because
+    # the menu has already turned the bars on or off in this session and the
+    # only remaining question is whether that survives a reboot. Needs a
+    # password (hyprpm writes to root-owned /var/cache/hyprpm), which is why the
+    # menu gives it a terminal and the on/off rows do not get one.
+    persist)  persist "$(is_loaded && echo on || echo off)"; report ;;
     status)   report ;;
     minimize) minimize ;;
     zoom)     zoom ;;
     *)
-        echo "usage: $(basename "$0") {on|off|toggle|status} [--persist]" >&2
+        echo "usage: $(basename "$0") {on|off|toggle|status|persist} [--persist]" >&2
         echo "       $(basename "$0") {minimize|zoom}" >&2
         exit 2
         ;;

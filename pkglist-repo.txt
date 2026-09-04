@@ -4,6 +4,7 @@ base-devel
 bluetui
 bluez
 bluez-utils
+breeze-icons
 brightnessctl
 btop
 calibre
@@ -30,6 +31,7 @@ fprintd
 fuzzel
 fzf
 gcc-fortran
+ghostty
 git
 gnome-calculator
 gnome-calendar
@@ -88,6 +90,7 @@ nvidia-utils
 nwg-displays
 obs-studio
 obsidian
+obsidian-icon-theme
 otf-codenewroman-nerd
 otf-monaspace-nerd
 papers

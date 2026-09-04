@@ -98,77 +98,221 @@ Item {
     }
 
     // ── Home-relative paths ──────────────────────────────
-    // DockModel's ListElements cannot evaluate JS, so any icon living under the
-    // user's home is written there as "~/..." and expanded here instead. Only a
+    // A pin's icon living under the user's home is stored with a leading "~/"
+    // and expanded here — DockModel.qml's ListElements cannot evaluate JS, so
+    // the seed could never spell out a real path, and the store inherits the
+    // same convention so a hand-edit reads the same in both files. Only a
     // leading "~/" is treated specially; absolute paths pass through untouched.
     readonly property string homeDir: Quickshell.env("HOME") || ""
-    function _expandHome(path) {
-        if (typeof path !== "string" || path.substring(0, 2) !== "~/") return path
-        return root.homeDir + path.substring(1)
+    // A pin's `icon` is a name, a ~/-relative file, an absolute file, or an
+    // already-resolved URL — see the header of DockPins.qml. A NAME goes
+    // through the shared theme index, so pinned icons follow Settings -> Icons
+    // instead of being frozen to whatever theme was current when they were
+    // pinned.
+    function _resolveDockIcon(v) {
+        if (typeof v !== "string" || v === "") return v
+        if (v.substring(0, 2) === "~/") return root.homeDir + v.substring(1)
+        if (v.charAt(0) === "/")        return v
+        // Already a URL — "file://…" or "image://icon/…". A pin created by
+        // right-clicking a window whose class has no .desktop entry carries one
+        // of these, and feeding it back through resolveIconPath() below would
+        // produce "image://icon/image://icon/foo" and a blank tile.
+        if (v.indexOf("://") > 0)       return v
+        // resolveIconPath falls back to image://icon/<name> when the theme has
+        // no such icon, which is a working last resort rather than a blank tile.
+        return DesktopEntryCache.resolveIconPath(v)
     }
 
     // ── Stable state ──────────────────────────────────────────────
-    property var _unpinnedOrder: []
+    // ONE ordered list of dock slots, pinned and unpinned together, keyed by
+    // window class. This was two lists — the pinned block from DockModel, then
+    // whatever was open — which was fine while the pinned block could not
+    // change, and is exactly wrong now that it can: promoting a running app out
+    // of the second list would land it at the END of the first, hopping the
+    // icon left over every unpinned one before it, at the moment the user is
+    // pointing at it. With one list a right-click only flips `isPinned` on a
+    // slot that is already in place, so an app pins where the pointer is.
+    // Order survives a restart because the store is written back in this same
+    // order — see DockPins.setPins().
+    property var _slotOrder: []
     property var dynamicApps:    []  // written atomically by _rebuild(), never a binding
 
     // ── Rebuild the model ─────────────────────────────────────────
-    // Called by Connections whenever windowList changes.
+    // Called by Connections whenever the window list, the pin store or the
+    // icon index changes.
     // Keeping all mutation here (never inside a binding expression)
     // prevents QML's binding engine from cascading re-evaluations that
     // corrupt the Repeater model and terminate open apps.
     function _rebuild() {
-        const pinned = []
-        for (let i = 0; i < dockModel.count; i++) {
-            pinned.push({
-                name:        dockModel.get(i).name,
-                icon:        root._expandHome(dockModel.get(i).icon),
-                command:     dockModel.get(i).command,
-                windowClass: dockModel.get(i).windowClass,
-                separator:   dockModel.get(i).separator,
+        // Nothing until the pin store has actually been read. Both sources here
+        // are async, and whichever lands first sets the slot order: with the
+        // window list arriving first, every open app took a slot BEFORE the
+        // pins existed and the pinned block came up shuffled into compositor
+        // order — measured, on a dock that should have opened kitty-first and
+        // opened Files-first instead. An empty dock for the few ms a `cat`
+        // takes is the correct thing to draw.
+        if (!DockPins.ready) return
+
+        const byKey = ({})
+
+        // 1. The pinned slots, in the store's order.
+        const pinEntries = []
+        const pins = DockPins.pins
+        for (let i = 0; i < pins.length; i++) {
+            const p   = pins[i]
+            const key = DockPins.keyFor(p, i)
+            if (byKey[key]) continue      // a duplicated class in a hand-edited
+                                          // file would otherwise claim two slots
+            const e = {
+                key:         key,
+                name:        p.name,
+                icon:        root._resolveDockIcon(p.icon),
+                // What goes back to the store when the list is rewritten. The
+                // resolved path must not: writing that back would freeze this
+                // pin to today's icon theme.
+                rawIcon:     p.icon,
+                rawCommand:  p.command,
+                command:     p.command,
+                windowClass: p.windowClass,
+                separator:   p.separator === true,
                 isPinned:    true
-            })
+            }
+            byKey[key] = e
+            pinEntries.push(e)
         }
 
         const coveredClasses = new Set()
-        pinned.forEach(p => {
+        pinEntries.forEach(p => {
             if (p.windowClass && p.windowClass !== "")
                 coveredClasses.add(p.windowClass.toLowerCase())
         })
 
-        const currentlyOpen = new Set()
-        const windowByClass = {}
+        // 2. Open windows no pin already accounts for.
+        const openEntries = []
         WindowTracker.windowList.forEach(w => {
             if (!w.class || w.class === "") return
+            if (byKey[w.class]) return
             let covered = false
             coveredClasses.forEach(c => {
                 if (w.class.includes(c) || c.includes(w.class)) covered = true
             })
-            if (!covered) {
-                currentlyOpen.add(w.class)
-                if (!windowByClass[w.class]) windowByClass[w.class] = w
-            }
-        })
-
-        const order = root._unpinnedOrder.slice()
-        currentlyOpen.forEach(cls => {
-            if (!order.includes(cls)) order.push(cls)
-        })
-        const pruned = order.filter(cls => currentlyOpen.has(cls))
-        root._unpinnedOrder = pruned
-
-        const extra = pruned.map(cls => {
-            const w = windowByClass[cls]
-            return {
-                name:        w.initialTitle || w.title || cls,
+            if (covered) return
+            const e = {
+                key:         w.class,
+                name:        w.initialTitle || w.title || w.class,
                 icon:        root.resolveIcon(w),
+                rawIcon:     "",
+                rawCommand:  "",
                 command:     "",
-                windowClass: cls,
+                windowClass: w.class,
                 separator:   false,
                 isPinned:    false
             }
+            byKey[w.class] = e
+            openEntries.push(e)
         })
 
-        root.dynamicApps = pinned.concat(extra)
+        // 3. Order: keep every slot exactly where it already was, drop the ones
+        //    that are gone, append what is new — pins first (they carry their
+        //    own stored order into an empty list at startup), then windows in
+        //    the order the compositor reports them.
+        const seen  = new Set()
+        const order = []
+        const take  = k => {
+            if (!byKey[k] || seen.has(k)) return
+            seen.add(k)
+            order.push(k)
+        }
+        root._slotOrder.forEach(take)
+        pinEntries.forEach(e  => take(e.key))
+        openEntries.forEach(e => take(e.key))
+
+        root._slotOrder  = order
+        root.dynamicApps = order.map(k => byKey[k])
+    }
+
+    // ── Pinning ───────────────────────────────────────────────────
+    // Right-click toggles. The whole pin list is rewritten from the CURRENT
+    // dock order rather than patched, because that order is the only record of
+    // where the pins sit relative to each other — see _slotOrder above.
+    function togglePin(key) {
+        const slots = root.dynamicApps
+        let target = null
+        for (let i = 0; i < slots.length; i++)
+            if (slots[i].key === key) target = slots[i]
+        if (!target || target.separator) return
+
+        const next = []
+        let added = null
+        slots.forEach(e => {
+            if (e.key === key) {
+                if (!target.isPinned) {
+                    added = root._pinRecord(e)
+                    next.push(added)
+                }
+                return                       // pinned + right-clicked = unpin,
+                                             // so it is simply not carried over
+            }
+            if (e.isPinned) next.push(root._pinRecord(e))
+        })
+        DockPins.setPins(next)
+
+        // The name the DOCK will show from now on, which for a newly pinned app
+        // is the .desktop entry's ("Spotify") and not the window title it was
+        // carrying a moment ago ("Spotify Premium").
+        root._toast(added ? "Pinned " + added.name + " to the dock"
+                          : "Removed " + target.name + " from the dock")
+    }
+
+    // A slot as it is stored. Pinned slots round-trip what they came in with;
+    // an unpinned one has to be turned into something that can still be
+    // launched after the app is quit, which is what the .desktop entry is for.
+    function _pinRecord(e) {
+        if (e.isPinned) {
+            return {
+                name:        e.name,
+                icon:        e.rawIcon,
+                command:     e.rawCommand,
+                windowClass: e.windowClass,
+                separator:   e.separator
+            }
+        }
+        const de = DesktopEntryCache.entryForClass(e.windowClass)
+        return {
+            name:        (de && de.name) ? de.name : e.name,
+            // The raw Icon= name, so this pin follows Settings -> Icons like
+            // every other one. Only when there is no entry at all does the
+            // already-resolved URL get stored — _resolveDockIcon() passes those
+            // through untouched.
+            icon:        (de && de.icon) ? de.icon : e.icon,
+            command:     (de && de.exec) ? de.exec : root._guessCommand(e.windowClass),
+            windowClass: e.windowClass,
+            separator:   false
+        }
+    }
+
+    // Last resort for a window with no .desktop file behind it. The reverse-DNS
+    // class of a well-behaved app is its binary ("org.gnome.nautilus" ->
+    // "nautilus"), and a plain class usually IS the binary ("kitty"). It is a
+    // guess, and a wrong one costs a dock icon that does nothing when clicked
+    // while the app is closed — not a crash.
+    function _guessCommand(cls) {
+        if (!cls || cls === "") return ""
+        const segs = cls.split(".")
+        return segs.length > 1 ? segs[segs.length - 1].toLowerCase() : cls
+    }
+
+    // ── Pin confirmation ──────────────────────────────────────────
+    // A right-click changes something with no visible effect at the moment it
+    // happens: whether the icon is still there tomorrow. Hence a word about it.
+    // It lives HERE and not in DockIcon because pinning rewrites dynamicApps,
+    // and the Repeater destroys and recreates every delegate when that array's
+    // contents change — an animation started inside an icon dies instantly.
+    property string _toastText: ""
+    function _toast(msg) {
+        root._toastText = msg
+        pinToast.opacity = 1
+        toastTimer.restart()
     }
 
     // Trigger rebuild whenever the window list changes
@@ -177,12 +321,27 @@ Item {
         function onWindowListChanged() { root._rebuild() }
     }
 
+    // The pin store is read asynchronously and can be written by a hand-edit or
+    // by a second macshell instance, so the dock follows it rather than
+    // sampling it once at startup.
+    property var _pinsConn: Connections {
+        target: DockPins
+        function onPinsChanged() { root._rebuild() }
+        // Not the same signal: a store holding an empty pin list assigns the
+        // same [] it started with, which emits nothing at all, and the dock
+        // would then never draw its running apps either.
+        function onReadyChanged() { root._rebuild() }
+    }
+
     // Re-resolve icons once DesktopEntryCache's async index actually lands —
     // a window already open when macdock starts can race the singleton's
     // own first-load Process, see DesktopEntryCache.qml's `ready` comment.
     property var _cacheConn: Connections {
         target: DesktopEntryCache
         function onReadyChanged() { root._rebuild() }
+        // …and again whenever the index is rebuilt, which is how a pinned icon
+        // picks up a new icon theme without restarting the shell.
+        function onRevisionChanged() { root._rebuild() }
     }
 
     // ── Icon resolution for dynamic (unpinned) windows ───────────
@@ -281,8 +440,6 @@ Item {
         leftPadding:  root.dockPadH
         rightPadding: root.dockPadH
 
-        DockModel { id: dockModel }
-
         Repeater {
             model: root.dynamicApps
 
@@ -295,12 +452,53 @@ Item {
                 command:     modelData.command
                 separator:   modelData.separator
                 windowClass: modelData.windowClass
+                isPinned:    modelData.isPinned
 
                 baseSize:   root.baseIconSize
                 maxSize:    root.maxIconSize
                 magnRadius: root.magnRadius
                 dockHoverX: root.hoverX
+
+                onPinToggleRequested: root.togglePin(modelData.key)
             }
+        }
+    }
+
+    // Sits above the pill, inside the panel window's 130px height (the pill
+    // itself only occupies the bottom ~68 of that) and outside the input mask,
+    // so it is never in the way of a click.
+    Rectangle {
+        id: pinToast
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom:           pill.top
+        anchors.bottomMargin:     8
+
+        width:  toastLabel.implicitWidth  + 26
+        height: toastLabel.implicitHeight + 12
+        radius: height / 2
+
+        color:        pill.color
+        border.color: pill.border.color
+        border.width: 1
+
+        opacity: 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+        Text {
+            id: toastLabel
+            anchors.centerIn: parent
+            text:            root._toastText
+            color:           WalColors.foreground
+            font.family:     UiConfig.fontFamily
+            font.pixelSize:  13
+        }
+
+        Timer {
+            id: toastTimer
+            interval: 1600
+            repeat:   false
+            onTriggered: pinToast.opacity = 0
         }
     }
 

@@ -21,6 +21,17 @@ command -v yay >/dev/null || die "yay not found"
 HAVE_FLATPAK=false
 command -v flatpak >/dev/null && HAVE_FLATPAK=true
 
+# Say what this is BEFORE asking for a password.
+#
+# Launched from finder's settings menu, this script IS the whole window: a
+# terminal appears and the first thing in it used to be a bare "[sudo] password
+# for ahaan:". No title, no indication of what had been started, no way to tell
+# it apart from anything else that wants a password. Context first, prompt
+# second — the same courtesy the graphical prompts get.
+printf '\n%s%s  System upgrade%s\n' "$BOLD" "$CYAN" "$RESET"
+printf '%s  ─────────────────────────────────────────────%s\n\n' "$CYAN" "$RESET"
+printf '%s  Input password to continue.%s\n\n' "$YELLOW" "$RESET"
+
 # One password prompt up front, then keep the ticket alive for the rest of
 # the script so the pacman/yay calls further down never prompt again.
 sudo -v || die "sudo authentication failed"

@@ -220,7 +220,7 @@ Item {
         anchors.horizontalCenterOffset: -75
         anchors.verticalCenterOffset: -175
         color: WalColors.foreground
-        font.family: "JetBrainsMono Nerd Font Propo"
+        font.family: UiConfig.fontFamily
         font.pixelSize: 127
         font.bold: true
         text: clockTick.hourText
@@ -234,7 +234,7 @@ Item {
         anchors.horizontalCenterOffset: 75
         anchors.verticalCenterOffset: -90
         color: Qt.rgba(150 / 255, 150 / 255, 150 / 255, 0.6)
-        font.family: "JetBrainsMono Nerd Font Propo"
+        font.family: UiConfig.fontFamily
         font.pixelSize: 127
         font.bold: true
         text: clockTick.minuteText
@@ -276,7 +276,7 @@ Item {
         anchors.topMargin: 20 * root.uiScale
         anchors.rightMargin: 40 * root.uiScale
         color: WalColors.foreground
-        font.family: "JetBrainsMono Nerd Font Propo"
+        font.family: UiConfig.fontFamily
         font.pixelSize: 24
         text: clockTick.dateText
         renderType: Text.NativeRendering
@@ -290,7 +290,7 @@ Item {
         anchors.topMargin: 20 * root.uiScale
         anchors.leftMargin: 40 * root.uiScale
         color: WalColors.foreground
-        font.family: "JetBrainsMono Nerd Font Propo"
+        font.family: UiConfig.fontFamily
         font.pixelSize: 24
         textFormat: Text.StyledText
         text: "<i>Hello</i> <b>" + root.username + "</b>"

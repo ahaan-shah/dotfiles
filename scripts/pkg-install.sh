@@ -40,4 +40,21 @@ selected=$(pacman -Slq | fzf "${fzf_args[@]}")
 
 [ -z "$selected" ] && exit 0
 
+
+if [[ -t 1 ]]; then
+    BOLD=$(tput bold); RESET=$(tput sgr0)
+    CYAN=$(tput setaf 6); YELLOW=$(tput setaf 3)
+else
+    BOLD=""; RESET=""; CYAN=""; YELLOW=""
+fi
+
+# Name what is about to happen BEFORE sudo asks for anything. Selecting in fzf
+# and then being met by a bare "[sudo] password for ahaan:" gives no confirmation
+# of WHAT was selected, on the one screen where that matters most. Same banner
+# shape as system-update.sh so the flows read alike.
+printf '\n%s%s  %s%s\n' "$BOLD" "$CYAN" "Installing these packages:" "$RESET"
+printf '%s  ─────────────────────────────────────────────%s\n\n' "$CYAN" "$RESET"
+for _p in $selected; do printf '    %s\n' "$_p"; done
+printf '\n%s  Input password to continue.%s\n\n' "$YELLOW" "$RESET"
+
 sudo pacman -S --noconfirm $selected

@@ -1,88 +1,46 @@
 import QtQuick
 
+// THE FIRST-RUN SEED, not the dock. What is actually pinned lives in
+// ~/.local/state/hyprahaan/dock-pins.json and is edited by right-clicking an
+// icon — see DockPins.qml, which reads this file exactly once, on a machine
+// that has no store yet.
+//
+// It is two entries on purpose. This used to be eleven, naming Spotify, Zen,
+// VSCodium, two chromium webapps and the rest of one machine's software, so a
+// fresh install of these dotfiles came up with a dock of icons for apps that
+// were not installed and could not be launched. A terminal and a file manager
+// are the two things an Arch desktop can assume it has; everything else
+// arrives in the dock by being opened, and stays by being right-clicked.
+//
 // NOTE: ListElement values must be compile-time literals — no bindings, no JS —
 // so a home-relative icon path cannot call Quickshell.env() here. Such paths are
-// written with a leading "~/" and expanded by Dock.qml's _expandHome() as the
-// model is read in _rebuild(). Keeps this file free of any hardcoded username.
+// written with a leading "~/" and expanded by Dock.qml's _resolveDockIcon() as
+// the model is read in _rebuild(). Keeps this file free of any hardcoded username.
+//
+// `icon` takes three shapes, all resolved by that same function:
+//   "kitty"              an icon NAME, looked up in whatever icon theme is
+//                        currently set (Settings -> Icons), falling back to
+//                        Papirus-Dark. These used to be absolute
+//                        /usr/share/icons/Papirus-Dark/… paths, which is why
+//                        the dock kept its old icons after a theme change while
+//                        every GTK app had already switched.
+//   "~/…"                a home-relative file, for the webapp marks that no
+//                        icon theme ships.
+//   "/…"                 an absolute file, used as-is.
 ListModel {
 
     ListElement {
         name: "Terminal"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/kitty.svg"
+        icon: "kitty"
         command: "kitty"
         windowClass: "kitty"
         separator: false
     }
-     ListElement {
-        name: "Spotify"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/spotify.svg"
-        command: "spotify"
-        // lowercase native Wayland app-id, not the old XWayland WM_CLASS
-        // ("Spotify") — since ~/.config/spotify-flags.conf added
-        // --ozone-platform=wayland, and DockIcon.qml's cycleClass Process
-        // builds a case-sensitive "class:<windowClass>" hyprctl selector
-        windowClass: "spotify"
-        separator: false
-    }
-     ListElement {
-        name: "Whatsapp"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/whatsie.svg"
-        command: "chromium --app=https://web.whatsapp.com"
-        windowClass: "whatsapp"
-        separator: false
-    }
-    ListElement {
-        name: "Chromium"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/chromium.svg"
-        command: "chromium"
-        windowClass: "chromium"
-        separator: false
-    }
-    ListElement {
-        name: "Zen"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/zen-browser.svg"
-        command: "zen-browser"
-        windowClass: "zen"
-        separator: false
-    }
-    ListElement {
-        name: "ChatGPT"
-        icon: "~/.local/share/icons/webapps/openai.svg"
-        command: "chromium --app=https://chat.openai.com"
-        windowClass: "chat.openai"
-        separator: false
-    }
-    ListElement {
-        name: "VSCodium"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/vscodium.svg"
-        command: "codium"
-        windowClass: "codium"
-        separator: false
-    }
-    ListElement {
-        name: "TradingView"
-        icon: "~/.local/share/icons/webapps/tradingview.svg"
-        command: "chromium --app=https://www.tradingview.com/chart/lCRrEItS/"
-        windowClass: "tradingview"
-        separator: false
-    }
-     ListElement {
-        name: "Text-Editor"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/text-editor.svg"
-        command: "gnome-text-editor"
-        windowClass: "org.gnome.TextEditor"
-        separator: false
-    }
-     ListElement {
-        name: "Papers"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/org.gnome.Papers.svg"
-        command: "papers"
-        windowClass: "org.gnome.Papers"
-        separator: false
-    }
     ListElement {
         name: "Files"
-        icon: "/usr/share/icons/Papirus-Dark/128x128/apps/org.kde.dolphin.svg"
+        // Dolphin's icon over Nautilus's own — IconResolver.qml carries the
+        // matching alias so an unpinned Nautilus window looks the same.
+        icon: "org.kde.dolphin"
         command: "nautilus"
         windowClass: "org.gnome.Nautilus"
         separator: false

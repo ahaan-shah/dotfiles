@@ -1,6 +1,7 @@
 pragma Singleton
 
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 // Parses .desktop files once at startup and exposes a fuzzy-searchable app list.
@@ -14,6 +15,17 @@ QtObject {
 
     property string _buf: ""
 
+
+    // The `scripts` dir BESIDE this shell config, never a fixed path — same
+    // rule as Settings.qml and the taskbar's sideScriptDir, so a repo instance
+    // runs the repo's copy.
+    readonly property string _scriptDir: {
+        var dir = String(Quickshell.shellDir || "").replace(/^file:\/\//, "")
+        var cut = dir.lastIndexOf("/")
+        return cut > 0 ? dir.substring(0, cut) + "/scripts"
+                       : (Quickshell.env("HOME") || "") + "/.config/scripts"
+    }
+
     property var _proc: Process {
         id: findProc
         command: ["bash", "-c",
@@ -21,16 +33,16 @@ QtObject {
             // so app icons match macdock instead of falling through to
             // whatever Qt's default icon theme provider resolves.
             "echo '---PAPIRUS_INDEX_START---'; " +
-            "for sz in 64x64 48x48 128x128 32x32 24x24; do " +
-            "  find /usr/share/icons/Papirus-Dark/$sz/apps /usr/share/icons/Papirus/$sz/apps " +
-            "       -name '*.svg' 2>/dev/null; done; " +
-            // Flatpak apps' own icons (hicolor theme, not Papirus) live under
-            // its export dirs — indexed the same way so _resolveIconPath can
-            // find them before falling through to the image://icon/ provider.
-            "for sz in 64x64 48x48 128x128 32x32 24x24 scalable; do " +
-            "  find /var/lib/flatpak/exports/share/icons/hicolor/$sz/apps " +
-            "       ~/.local/share/flatpak/exports/share/icons/hicolor/$sz/apps " +
-            "       -name '*.svg' -o -name '*.png' 2>/dev/null; done; " +
+            // The application-icon index, in preference order: the theme chosen
+            // in the settings menu, what it inherits, Papirus as the backstop,
+            // then the flatpak exports. First match wins when the map is built
+            // below.
+            //
+            // scripts/icon-index.sh does the finding. It used to be an inline
+            // `find` over a hardcoded <size>/apps list here, which silently
+            // produced NOTHING for any theme not laid out exactly like Papirus
+            // — see that script's header for the two ways it was wrong.
+            Sys.quote(root._scriptDir + "/icon-index.sh") + "; " +
             "echo '---DESKTOP_FILES_START---'; " +
             "find /usr/share/applications ~/.local/share/applications " +
             "     /var/lib/flatpak/exports/share/applications " +
@@ -228,6 +240,28 @@ QtObject {
     }
 
     property var launchProc: Process { id: launchProc; running: false }
+
+    // Rebuild the whole index when the icon theme changes.
+    //
+    // Without this the theme picked in the settings menu did nothing to any
+    // shell: the scan runs once at startup and the map it produces is what
+    // every icon lookup reads for the life of the process, so a new theme only
+    // appeared after a restart. GTK apps updated immediately (they follow
+    // gsettings) which is exactly why it looked like the setting was being
+    // ignored by the shells specifically.
+    //
+    // Cheap enough to do on the signal: the scan is a `find` over a handful of
+    // theme directories, and the theme changes when a person picks one.
+    property var _themeConn: Connections {
+        target: UiConfig
+        function onIconThemeChanged() {
+            // running = true is a no-op while already running, so a change that
+            // lands mid-scan would otherwise be dropped silently.
+            if (findProc.running) return
+            root._buf = ""
+            findProc.running = true
+        }
+    }
 
     Component.onCompleted: {
         root._buf = ""

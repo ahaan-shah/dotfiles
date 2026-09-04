@@ -15,7 +15,19 @@ Item {
     property int screenHeight: 1080
 
     property bool shown: false
-    property string mode: "default"   // "default" | "emoji" | "clipboard" | "powerprofiles" | "powermenu" | "wallpaper"
+    property string mode: "default"   // "default" | "emoji" | "clipboard" | "powerprofiles" | "powermenu" | "wallpaper" | "settings"
+
+    // Settings is the one mode that does not use the result list below. It is a
+    // control surface, not a search result, so it is drawn as one of the
+    // taskbar's dropdown panels — see SettingsPanel.qml. Everything from the
+    // input down is hidden for it and the panel owns its own input and keys.
+    readonly property bool settingsMode: root.mode === "settings"
+
+    // The password box takes the settings menu's place rather than sitting on
+    // top of it: Ahaan asked for the menu to close when a password is needed,
+    // and one card on screen at a time is also simply clearer about what is
+    // being asked. Reached only from Settings.authRequired, never from IPC.
+    readonly property bool passwordMode: root.mode === "password"
     property string query: ""
     property int selectedIndex: 0
     property var displayResults: []   // unified row list, see _rebuild()
@@ -53,6 +65,15 @@ Item {
         if (m === "powerprofiles") { PowerProfiles.refresh(); root._rebuild() }
         if (m === "powermenu") root._rebuild()
         if (m === "wallpaper") { Wallpapers.refresh(); root._rebuild() }
+        if (m === "settings") {
+            settingsPanel.reset()
+            // Every listing is fetched up front, not on the page that shows it:
+            // search reaches the whole subtree, so a font has to be findable
+            // from the root without ever opening Fonts. They arrive one at a
+            // time, so this does not hold up the panel appearing.
+            Settings.prefetchAll()
+            Settings.refreshState()
+        }
         inputFocusTimer.start()
     }
 
@@ -62,7 +83,13 @@ Item {
         FileSearch.preview = null
     }
 
-    Timer { id: inputFocusTimer; interval: 10; onTriggered: input.forceActiveFocus() }
+    Timer {
+        id: inputFocusTimer
+        interval: 10
+        onTriggered: root.passwordMode ? passwordPrompt.focusInput()
+                   : root.settingsMode ? settingsPanel.focusInput()
+                   : input.forceActiveFocus()
+    }
 
     // ── IPC — persistent socket, toggled by hyprland.lua keybinds ────
     property var ipcProc: Process {
@@ -273,9 +300,20 @@ Item {
                 copyToClipboard(r.title)
                 break
             case "websearch":
-                // zen-browser specifically, not xdg-open's default handler —
-                // zen (class "zen") is the user's actual browser.
-                openProc.command = ["zen-browser", "https://www.google.com/search?q=" + encodeURIComponent(r.data)]
+                // The browser chosen under Settings -> Defaults -> Browser, not
+                // xdg-open's handler. This used to be a hardcoded "zen-browser";
+                // it is UiConfig.browser now so that picking a browser in the
+                // settings menu actually changes where finder searches.
+                //
+                // Through a shell, and detached, for two reasons: the value comes
+                // from a .desktop Exec line so it may carry flags of its own
+                // ("chromium --foo") which argv[0] cannot express, and a browser
+                // launched on Quickshell's stdout pipe dies of SIGPIPE on its
+                // first write once this Process exits. Same rule as
+                // AppIndex.launch().
+                openProc.command = ["bash", "-c",
+                    "setsid " + UiConfig.browser + " \"$1\" </dev/null >/dev/null 2>&1 &",
+                    "_", "https://www.google.com/search?q=" + encodeURIComponent(r.data)]
                 openProc.running = true
                 break
             case "emoji":
@@ -312,6 +350,12 @@ Item {
         root.selectedIndex = i
     }
 
+    // ── Font (ui.conf, live) ───────────────────────────────────────────
+    // One token for every label in this file, so the font picked under
+    // Settings -> Fonts repaints finder in place — no restart, the same way
+    // WalColors repaints it when the wallpaper changes.
+    readonly property string uiFont: UiConfig.fontFamily
+
     // ── Colors (pywal, live) ───────────────────────────────────────────
     readonly property color bgColor:     WalColors.color0 || WalColors.background
     readonly property color fgColor:     WalColors.color7 || WalColors.foreground
@@ -332,12 +376,21 @@ Item {
     // ── Keyboard ────────────────────────────────────────────────────
     Keys.onPressed: event => {
         if (!root.shown) return
+        // SettingsPanel handles every key itself, including Escape (which backs
+        // out of a page before it closes the menu).
+        if (root.settingsMode || root.passwordMode) return
         if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true }
         else if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
         else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
-        else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.activate(root.selectedIndex); event.accepted = true
-        }
+        // Return is deliberately NOT handled here — see input.onAccepted.
+        //
+        // It used to be, and the TextInput's own onAccepted handled it too, so
+        // every Return called activate() TWICE. That was invisible while every
+        // activation ended in close(): the second call just re-ran the same row.
+        // A menu that descends without closing makes it visible immediately —
+        // one Return opened a submenu AND activated its first row. Measured
+        // 2026-09-04. Up/Down/Escape stay here because a single-line TextInput
+        // ignores those, so they do bubble up; Return does not.
     }
 
     // ── Window box ──────────────────────────────────────────────────
@@ -349,8 +402,8 @@ Item {
         border.width: 1
         border.color: root._darker(root.accentColor, 1.5)
 
-        opacity: root.shown ? 1 : 0
-        scale: root.shown ? 1 : 0.94
+        opacity: (root.shown && !root.settingsMode && !root.passwordMode) ? 1 : 0
+        scale: (root.shown && !root.settingsMode && !root.passwordMode) ? 1 : 0.94
         visible: opacity > 0.001
         Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         Behavior on scale   { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -378,12 +431,14 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 10
                     verticalAlignment: TextInput.AlignVCenter
-                    font.family: "JetBrainsMono Nerd Font Propo"
+                    font.family: root.uiFont
                     font.pixelSize: 14
                     color: root.fgColor
                     clip: true
                     selectionColor: root._lighter(root.bgColor, 1.8)
                     onTextChanged: root.query = text
+                    // The ONE Return handler for this list — see the note in
+                    // root's Keys.onPressed above.
                     onAccepted: root.activate(root.selectedIndex)
 
                     Text {
@@ -458,7 +513,7 @@ Item {
                                         text: rowDelegate.modelData.emojiGlyph || ""
                                         color: root.fgColor
                                         font.pixelSize: 24
-                                        font.family: "JetBrainsMono Nerd Font Propo"
+                                        font.family: root.uiFont
                                     }
                                     Image {
                                         id: appIcon
@@ -492,7 +547,7 @@ Item {
                                             }
                                             color: root.fgColor
                                             font.pixelSize: 14
-                                            font.family: "JetBrainsMono Nerd Font Propo"
+                                            font.family: root.uiFont
                                         }
                                     }
                                 }
@@ -505,7 +560,7 @@ Item {
                                         elide: Text.ElideRight
                                         text: rowDelegate.modelData.title
                                         color: root.fgColor
-                                        font.family: "JetBrainsMono Nerd Font Propo"
+                                        font.family: root.uiFont
                                         font.pixelSize: rowDelegate.modelData.kind === "calc" ? 24 : 14
                                     }
                                     Text {
@@ -515,7 +570,7 @@ Item {
                                         text: rowDelegate.modelData.subtitle || ""
                                         color: root.fgColor
                                         opacity: 0.5
-                                        font.family: "JetBrainsMono Nerd Font Propo"
+                                        font.family: root.uiFont
                                         font.pixelSize: 12
                                     }
                                 }
@@ -589,10 +644,44 @@ Item {
                 visible: root.shown
                 topPadding: 6
 
-                Text { text: "↑↓ navigate"; color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "JetBrainsMono Nerd Font Propo" }
-                Text { text: "↵ select";     color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "JetBrainsMono Nerd Font Propo" }
-                Text { text: "esc close";    color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: "JetBrainsMono Nerd Font Propo" }
+                Text { text: "↑↓ navigate"; color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: root.uiFont }
+                Text { text: "↵ select";     color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: root.uiFont }
+                Text { text: "esc close";    color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: root.uiFont }
             }
+        }
+    }
+
+    // ── Settings (its own panel, in the taskbar's chrome) ───────────────
+    // Declared after `box` so it sits above the dismiss-scrim MouseArea; it
+    // carries a click-swallowing MouseArea of its own so clicking inside it
+    // does not close the menu.
+    SettingsPanel {
+        id: settingsPanel
+        anchors.centerIn: parent
+        shown: root.shown && root.settingsMode
+        onRequestClose: root.close()
+    }
+
+    // ── The password box ────────────────────────────────────────────────
+    PasswordPrompt {
+        id: passwordPrompt
+        anchors.centerIn: parent
+        shown: root.shown && root.passwordMode
+        onFinished: ok => {
+            // Let the switch re-read the compositor rather than assume the
+            // command did what it was asked.
+            if (ok) Settings.toggleSettled()
+            root.close()
+        }
+        onCancelled: root.close()
+    }
+
+    Connections {
+        target: Settings
+        function onAuthRequired(reason, command) {
+            root.mode = "password"
+            passwordPrompt.begin("", reason, command)
+            inputFocusTimer.start()
         }
     }
 }
