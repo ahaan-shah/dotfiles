@@ -197,9 +197,16 @@ Item {
                 if (w.class.includes(c) || c.includes(w.class)) covered = true
             })
             if (covered) return
+            // The APP's name, not the window's title. A title is whatever the
+            // window happens to say at this instant — an unpinned Nautilus
+            // caught mid-load reported "Loading…" — and that string is what
+            // the letter-tile fallback takes its initial from and what the pin
+            // toast names when this slot is right-clicked.
+            const wde = DesktopEntryCache.entryForClass(w.class)
             const e = {
                 key:         w.class,
-                name:        w.initialTitle || w.title || w.class,
+                name:        (wde && wde.name) ? wde.name
+                                               : (w.initialTitle || w.title || w.class),
                 icon:        root.resolveIcon(w),
                 rawIcon:     "",
                 rawCommand:  "",
@@ -277,14 +284,19 @@ Item {
                 separator:   e.separator
             }
         }
-        const de = DesktopEntryCache.entryForClass(e.windowClass)
+        const de    = DesktopEntryCache.entryForClass(e.windowClass)
+        // This desktop's own preference outranks the .desktop file's Icon=, or
+        // pinning Files by right-click would swap Dolphin's icon for Nautilus's.
+        const alias = IconResolver.aliasFor(e.windowClass)
         return {
             name:        (de && de.name) ? de.name : e.name,
-            // The raw Icon= name, so this pin follows Settings -> Icons like
-            // every other one. Only when there is no entry at all does the
+            // A NAME, so this pin follows Settings -> Icons like every other
+            // one. Only when there is no alias and no entry at all does the
             // already-resolved URL get stored — _resolveDockIcon() passes those
             // through untouched.
-            icon:        (de && de.icon) ? de.icon : e.icon,
+            icon:        alias !== ""      ? alias
+                       : (de && de.icon)   ? de.icon
+                       : e.icon,
             command:     (de && de.exec) ? de.exec : root._guessCommand(e.windowClass),
             windowClass: e.windowClass,
             separator:   false
@@ -348,6 +360,14 @@ Item {
     function resolveIcon(w) {
         const cls  = w.class        ?? ""
         const icls = w.initialClass ?? cls
+
+        // 0. A class this desktop has an opinion about — Dolphin's icon for
+        // Nautilus, and Papirus's zen-browser for zen. The table lives in
+        // IconResolver; the switcher has always read it and the dock never did,
+        // which is why an unpinned window could draw a different icon from the
+        // pinned entry for the same app.
+        const alias = IconResolver.aliasFor(cls)
+        if (alias !== "") return DesktopEntryCache.resolveIconPath(alias)
 
         // 1. Look up the .desktop file by StartupWMClass — most reliable for webapps
         const desktopIcon = DesktopEntryCache.iconForClass(cls)

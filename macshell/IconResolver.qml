@@ -27,18 +27,32 @@ QtObject {
         "org.gnome.weather":     "org.gnome.Weather"
     })
 
+    // The icon NAME this desktop prefers for a window class, or "" where it has
+    // no opinion and the .desktop entry's own Icon= should win.
+    //
+    // A name and not a resolved path, because the dock stores this in a pin
+    // (see Dock.qml's _pinRecord) and a path would freeze that pin to today's
+    // icon theme — the exact bug the old absolute Papirus paths in DockModel
+    // had. This is also the ONE place the table is read from now: the dock
+    // resolved icons straight out of DesktopEntryCache and never consulted it,
+    // so an unpinned Nautilus window drew Nautilus's own icon while the pinned
+    // entry drew Dolphin's — and right-clicking to re-pin it, which rebuilds
+    // the record from the .desktop entry, silently changed the icon.
+    function aliasFor(wmClass) {
+        if (!wmClass || wmClass === "") return ""
+        const lc = wmClass.toLowerCase()
+        // Papirus-Dark ships a real "zen-browser" icon — matches DockModel.qml.
+        if (lc === "zen") return "zen-browser"
+        return root._aliases[lc] ? root._aliases[lc] : ""
+    }
+
     // Re-resolving must be cheap and must re-run once the shared cache is
     // populated — consumers bind to DesktopEntryCache.ready for that.
     function iconForClass(wmClass) {
         if (!wmClass || wmClass === "") return ""
-        const lc = wmClass.toLowerCase()
-
-        // Papirus-Dark ships a real "zen-browser" icon — matches DockModel.qml.
-        if (lc === "zen") return DesktopEntryCache.resolveIconPath("zen-browser")
-
-        if (root._aliases[lc]) return DesktopEntryCache.resolveIconPath(root._aliases[lc])
-
-        return DesktopEntryCache.iconForClass(lc)
+        const alias = root.aliasFor(wmClass)
+        if (alias !== "") return DesktopEntryCache.resolveIconPath(alias)
+        return DesktopEntryCache.iconForClass(wmClass.toLowerCase())
     }
 
     function resolveForWindow(w) {
