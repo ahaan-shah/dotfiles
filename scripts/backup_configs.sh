@@ -30,6 +30,11 @@ EXCLUDES=(
     --exclude 'monitors.conf'
     --exclude 'monitors.lua'
     --exclude 'workspaces.conf'
+    # Which firewall services this machine has switched off, per zone. Not a
+    # secret, but machine-specific in exactly the sense above — another machine's
+    # zones and services are different, and a public repo should not describe
+    # this one's firewall posture either.
+    --exclude 'firewall-off.conf'
     --exclude 'backup_files.sh'     # names personal directories
     --exclude 'wake-lag-*'          # bulky machine-specific diagnostic captures
     --exclude 'wake-lag-logs/'

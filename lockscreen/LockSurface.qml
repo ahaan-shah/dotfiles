@@ -259,11 +259,37 @@ Item {
 
         Component.onCompleted: refresh()
     }
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-        onTriggered: clockTick.refresh()
+    // SystemClock rather than a QML `Timer`. Both tick once a second here, and
+    // a Timer was measured to keep perfect time even with the window hidden and
+    // unrendered (14 ticks over 14 hidden seconds, matching SystemClock exactly)
+    // — so this is not the reason the clock froze across a hibernate. It is the
+    // better primitive regardless: QML's Timer is a QPauseAnimationJob driven by
+    // the animation framework, while SystemClock is a plain event-loop timer, so
+    // it cannot be starved by whatever the render loop is doing. The actual
+    // unfreezing is the woke() handler below.
+    SystemClock {
+        precision: SystemClock.Seconds
+        onDateChanged: clockTick.refresh()
+    }
+
+    // Put right what a hibernate leaves broken on the lock that was raised
+    // going down. See shell.qml's IpcHandler for how this is raised.
+    //
+    // refresh(): the clock is repainted from the real time immediately rather
+    // than waiting on the next tick, so it is never briefly wrong on screen.
+    //
+    // forceActiveFocus(): `focus: true` on the field sets ITEM focus within
+    // this surface, which is not the same as the WINDOW holding Wayland
+    // keyboard focus — and a window that never took keyboard focus routes
+    // keystrokes nowhere, which is exactly the reported symptom (fingerprint
+    // works, typing does nothing). Asking for it again costs nothing when it
+    // was never lost, so this is safe to fire on every resume.
+    Connections {
+        target: root.context
+        function onWoke() {
+            clockTick.refresh()
+            passwordField.forceActiveFocus()
+        }
     }
 
     // ── label: date (font_size=40, color=$color4, pos=(-40,-20), right/top) ──

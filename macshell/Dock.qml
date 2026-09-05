@@ -153,6 +153,16 @@ Item {
         // takes is the correct thing to draw.
         if (!DockPins.ready) return
 
+        // A rebuild reassigns dynamicApps, which regenerates every Repeater
+        // delegate — under a drag that destroys the item the pointer is
+        // holding. The window list is polled every 350ms, so this is not a
+        // rare collision; it is one app opening away at any moment. Deferred
+        // and replayed by endDrag().
+        if (root._dragKey !== "") {
+            root._rebuildPending = true
+            return
+        }
+
         const byKey = ({})
 
         // 1. The pinned slots, in the store's order.
@@ -234,8 +244,169 @@ Item {
         pinEntries.forEach(e  => take(e.key))
         openEntries.forEach(e => take(e.key))
 
-        root._slotOrder  = order
-        root.dynamicApps = order.map(k => byKey[k])
+        const apps = order.map(k => byKey[k])
+        root._slotOrder = order
+        // Positions first, model second. Assigning dynamicApps regenerates the
+        // Repeater synchronously, and a delegate created while cellX still
+        // describes the OLD list is born at the wrong x — then slides there
+        // from it, because by then its Behavior is live.
+        root._relayout(apps)
+        root.dynamicApps = apps
+    }
+
+    // ── Layout ────────────────────────────────────────────────────
+    // x per slot, indexed by MODEL index but computed in VISUAL order, which
+    // are the same thing except while a drag is shuffling icons around. The Row
+    // this replaced could not do that: a Row positions by child order, and the
+    // child order comes from a JS-array model that is wholesale-replaced on
+    // every rebuild, so a reorder was a pop rather than a slide. Positioning
+    // each cell by an animated x is what makes the neighbours slide out of the
+    // way — see the Behavior in DockIcon.qml.
+    property var  cellX:    []
+    property real rowWidth: root.dockPadH * 2
+
+    function _cellW(e) { return (e && e.separator) ? 18 : root.baseIconSize + 8 }
+
+    function _relayout(apps) {
+        const n     = apps.length
+        const order = []
+        for (let i = 0; i < n; i++) order.push(i)
+
+        // The dragged icon is lifted out of the flow and re-inserted at the
+        // slot the pointer is over; everything between closes up behind it.
+        const from = root._dragIndex
+        const to   = root._dragTo
+        if (from >= 0 && to >= 0 && from !== to && from < n && to < n) {
+            order.splice(from, 1)
+            order.splice(to, 0, from)
+        }
+
+        const xs = new Array(n)
+        let content = 0
+        for (let v = 0; v < n; v++) {
+            const mi = order[v]
+            xs[mi] = root.dockPadH + content
+            content += root._cellW(apps[mi])
+            if (v < n - 1) content += root.iconSpacing
+        }
+        root.cellX    = xs
+        root.rowWidth = root.dockPadH * 2 + content
+    }
+
+    // ── Reorder by drag ───────────────────────────────────────────
+    // Press and hold an icon to pick it up, then drag it. The arming step is
+    // what keeps a dock icon a button: a plain press-and-move would make every
+    // slightly sloppy click a potential reorder, on a control whose whole job
+    // is to be clicked. It is a hold and not a double-click because a
+    // double-click's FIRST click cannot be suppressed without delaying every
+    // ordinary click by the double-click interval — see DockIcon.qml.
+    property string _armedKey: ""       // double-clicked, ready to be moved
+    property string _dragKey:  ""       // actually being dragged right now
+    property int    _dragIndex: -1      // its index in dynamicApps
+    property int    _dragTo:    -1      // the index it would land on
+    property real   _dragX:     0       // pointer x, in iconRow coordinates
+    property bool   _rebuildPending: false
+
+    // Read by shell.qml: the dock must not auto-hide out from under a drag.
+    readonly property bool dragActive: root._dragKey !== ""
+
+    // A backstop only: arming normally ends with the release that ends the
+    // hold. This covers the case where that release never arrives because the
+    // grab was taken away.
+    property var _disarmTimer: Timer {
+        id: disarmTimer
+        interval: 3000
+        repeat:   false
+        onTriggered: root._armedKey = ""
+    }
+
+    function armSlot(key) {
+        root._armedKey = key
+        disarmTimer.restart()
+        if (DockPreview.visible) DockPreview.hideNow()
+    }
+
+    function beginDrag(key, index) {
+        if (index < 0 || index >= root.dynamicApps.length) return
+        root._dragKey   = key
+        root._dragIndex = index
+        root._dragTo    = index
+        disarmTimer.stop()
+        // Magnification and the multi-instance preview both key off the
+        // pointer, and both are noise while an icon is being carried.
+        root.hoverX = -1
+        root._setHoverCandidate("", null)
+    }
+
+    function updateDrag(rowX) {
+        if (root._dragKey === "") return
+        root._dragX = rowX
+        const to = root._dropIndexAt(rowX)
+        if (to !== root._dragTo) {
+            root._dragTo = to
+            root._relayout(root.dynamicApps)
+        }
+    }
+
+    // Which slot the pointer is over, measured against the layout the list had
+    // BEFORE the drag started. Hit-testing the shuffled layout instead would
+    // feed the shuffle back into itself and make the icons oscillate around
+    // every boundary.
+    function _dropIndexAt(px) {
+        const apps = root.dynamicApps
+        const n    = apps.length
+        if (n === 0) return -1
+        let x = root.dockPadH
+        for (let i = 0; i < n; i++) {
+            const w = root._cellW(apps[i])
+            if (px < x + w) return i
+            x += w + root.iconSpacing
+        }
+        return n - 1
+    }
+
+    function endDrag(commit) {
+        const from = root._dragIndex
+        const to   = root._dragTo
+
+        root._dragKey   = ""
+        root._dragIndex = -1
+        root._dragTo    = -1
+        root._armedKey  = ""        // one move per double-click
+
+        if (commit && from >= 0 && to >= 0 && from !== to) {
+            const apps  = root.dynamicApps.slice()
+            const moved = apps.splice(from, 1)[0]
+            apps.splice(to, 0, moved)
+            root._slotOrder = apps.map(e => e.key)
+            root._relayout(apps)
+            root.dynamicApps = apps
+            root._persistOrder(apps)
+        } else {
+            root._relayout(root.dynamicApps)
+        }
+
+        if (root._rebuildPending) {
+            root._rebuildPending = false
+            root._rebuild()
+        }
+    }
+
+    // The store holds the pinned slots in dock order, so a drag that moved one
+    // of them has to rewrite it — and a drag that only moved a running,
+    // unpinned icon has nothing to say to it. Comparing before writing keeps a
+    // session-only rearrangement off the disk entirely.
+    function _persistOrder(apps) {
+        const next = []
+        apps.forEach(e => { if (e.isPinned) next.push(root._pinRecord(e)) })
+
+        const now = DockPins.pins
+        let same = (now.length === next.length)
+        for (let i = 0; same && i < next.length; i++) {
+            if (DockPins.keyFor(now[i], i) !== String(next[i].windowClass).toLowerCase())
+                same = false
+        }
+        if (!same) DockPins.setPins(next)
     }
 
     // ── Pinning ───────────────────────────────────────────────────
@@ -400,7 +571,7 @@ Item {
     }
 
     // ── Pill dimensions ───────────────────────────────────────────
-    readonly property real pillWidth:  iconRow.implicitWidth + dockPadH * 2
+    readonly property real pillWidth:  root.rowWidth + dockPadH * 2
     readonly property real pillHeight: maxIconSize + dockPadV * 2 + 14
 
     // Total height this item occupies (pill + float gap)
@@ -450,15 +621,17 @@ Item {
     }
 
     // ── Icon row ──────────────────────────────────────────────────
-    Row {
+    // A plain Item, not a Row: cells are placed by an animated x so a reorder
+    // can slide. implicitWidth reproduces what the Row reported (its own
+    // left/right padding included), because pillWidth is built from it.
+    Item {
         id: iconRow
         anchors.bottom:           parent.bottom
         anchors.bottomMargin:     root.floatMargin
         anchors.horizontalCenter: parent.horizontalCenter
-        spacing: root.iconSpacing
 
-        leftPadding:  root.dockPadH
-        rightPadding: root.dockPadH
+        implicitWidth:  root.rowWidth
+        implicitHeight: root.maxIconSize + 24
 
         Repeater {
             model: root.dynamicApps
@@ -477,9 +650,21 @@ Item {
                 baseSize:   root.baseIconSize
                 maxSize:    root.maxIconSize
                 magnRadius: root.magnRadius
-                dockHoverX: root.hoverX
+                // Frozen while carrying an icon — a cell that grows under the
+                // pointer mid-drag fights the drag for the same pixels.
+                dockHoverX:  root.dragActive ? -1 : root.hoverX
+
+                targetX:  root.cellX[index] ?? 0
+                armed:    root._armedKey === modelData.key
+                dragging: root._dragKey  === modelData.key
+                dragX:    root._dragX
 
                 onPinToggleRequested: root.togglePin(modelData.key)
+                onArmRequested:       root.armSlot(modelData.key)
+                onArmCancelled:       root._armedKey = ""
+                onDragStartRequested: root.beginDrag(modelData.key, index)
+                onDragMoved:          rowX => root.updateDrag(rowX)
+                onDragFinished:       committed => root.endDrag(committed)
             }
         }
     }

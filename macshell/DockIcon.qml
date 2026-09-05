@@ -22,6 +22,38 @@ Item {
     // slot order the store is written from.
     signal pinToggleRequested()
 
+    // ── Reorder drag ──────────────────────────────────────────────
+    // All of the state lives in the parent Dock and is fed back down here,
+    // deliberately: this delegate is destroyed and recreated whenever the
+    // window list changes shape, so anything held locally would evaporate
+    // mid-gesture. Only the two things that cannot outlive one press — where
+    // the press landed, and whether it turned into a drag — are local.
+    property real targetX:  0       // where the layout wants this cell
+    property bool armed:    false   // double-clicked, ready to be moved
+    property bool dragging: false
+    property real dragX:    0       // pointer x in row coords, while dragging
+
+    signal armRequested()
+    signal armCancelled()
+    signal dragStartRequested()
+    signal dragMoved(real rowX)
+    signal dragFinished(bool committed)
+
+    property real _pressRowX:    0
+    property bool _suppressClick: false
+
+    // The cell follows the layout, except while it is being carried, when it
+    // follows the pointer. Everything else slides because its targetX changed
+    // underneath this same Behavior.
+    x: root.dragging ? root.dragX - width / 2 : root.targetX
+    Behavior on x {
+        enabled: !root.dragging     // the carried icon must not lag the pointer
+        NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+    }
+
+    // The carried icon passes over its neighbours, not under them.
+    z: root.dragging ? 2 : (root.armed ? 1 : 0)
+
     // magnification state fed by parent Dock
     property real dockHoverX: -1          // mouse X in dock-row coords, –1 = no hover
     property int  baseSize:   48
@@ -100,15 +132,35 @@ Item {
         // Sits on the bottom of the cell; leaves room for the running dot
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom:           parent.bottom
-        anchors.bottomMargin:     11
+        // Lifts off the row while armed or carried, which together with the
+        // jiggle below is the whole of the "you can move me now" affordance.
+        anchors.bottomMargin:     11 + ((root.armed || root.dragging) ? 7 : 0)
+        Behavior on anchors.bottomMargin {
+            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+        }
 
         // Magnification is a pure visual transform (not a layout resize),
         // scaled from the bottom so it grows upward in place and can overlap
         // neighboring cells the way real dock magnification does, without
         // ever changing this item's actual width/height/x.
         transformOrigin: Item.Bottom
-        scale: (root.currentSize / root.baseSize) * (mouseArea.pressed ? 0.88 : 1.0)
+        scale: (root.currentSize / root.baseSize)
+               * ((mouseArea.pressed && !root.dragging) ? 0.88 : 1.0)
+               * (root.dragging ? 1.18 : (root.armed ? 1.08 : 1.0))
         Behavior on scale { NumberAnimation { duration: 70 } }
+
+        // A plain value, not a binding, so the animation below can drive it.
+        rotation: 0
+        SequentialAnimation {
+            running: root.armed && !root.dragging
+            loops:   Animation.Infinite
+            // Stopping mid-cycle would otherwise leave the icon frozen at
+            // whatever angle it had reached.
+            onStopped: iconItem.rotation = 0
+            NumberAnimation { target: iconItem; property: "rotation"; from:  0;   to: -3.5; duration: 100 }
+            NumberAnimation { target: iconItem; property: "rotation"; from: -3.5; to:  3.5; duration: 200 }
+            NumberAnimation { target: iconItem; property: "rotation"; from:  3.5; to:  0;   duration: 100 }
+        }
 
         // ── App icon image ────────────────────────────────────────
         Image {
@@ -200,9 +252,73 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+        // While armed, no ancestor gets to take the grab out from under a drag
+        // that is about to start.
+        preventStealing: root.armed || root.dragging
+
+        // root.x is this cell's position in row coordinates and mouse.x is
+        // measured from the cell, so the sum is the pointer in row coordinates
+        // — and it stays true once the cell starts following the pointer,
+        // because the two move by equal and opposite amounts.
+        function _rowX(mx) { return root.x + mx }
+
+        onPressed: mouse => {
+            root._pressRowX     = _rowX(mouse.x)
+            root._suppressClick = false
+        }
+
+        // Press and hold to pick an icon up. This was a double-click, and a
+        // double-click cannot be made free: nothing can know a second click is
+        // coming without delaying EVERY single click by the double-click
+        // interval, so the first one launched or focused the app on the way
+        // into a rearrange — and switched workspace with it when the app was
+        // on another one. A hold has no first click to leak.
+        //
+        // 450ms rather than the 800ms default, which is a long time to sit on
+        // a dock icon, and well clear of an ordinary click. Qt cancels the hold
+        // if the pointer travels past the drag threshold first, so this cannot
+        // fire in the middle of some other gesture.
+        pressAndHoldInterval: 450
+        onPressAndHold: mouse => {
+            if (root.separator || mouse.button !== Qt.LeftButton) return
+            // The release that ends a deliberate hold must not also launch the
+            // app, whether or not the hold turned into a drag.
+            root._suppressClick = true
+            root.armRequested()
+        }
+
+        onPositionChanged: mouse => {
+            if (root.separator || !pressed) return
+            if (!root.armed && !root.dragging) return
+            const rx = _rowX(mouse.x)
+            if (!root.dragging) {
+                // A double-click that never travels must not reorder anything,
+                // so the drag only begins once the pointer has actually moved.
+                if (Math.abs(rx - root._pressRowX) < 6) return
+                root._suppressClick = true
+                root.dragStartRequested()
+            }
+            root.dragMoved(rx)
+        }
+
+        // Arming lasts exactly as long as the finger is down. There is no
+        // rearrange MODE to be in or to get out of: hold, move, let go.
+        onReleased: {
+            if (root.dragging)   root.dragFinished(true)
+            else if (root.armed) root.armCancelled()
+        }
+        onCanceled: {
+            if (root.dragging)   root.dragFinished(false)
+            else if (root.armed) root.armCancelled()
+        }
 
         onClicked: mouse => {
             if (root.separator) return
+            // The release that ends a drag also produces a click.
+            if (root._suppressClick) {
+                root._suppressClick = false
+                return
+            }
 
             if (mouse.button === Qt.RightButton) {
                 // Pin an app that is only in the dock because it is open, or

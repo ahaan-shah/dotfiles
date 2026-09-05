@@ -54,7 +54,11 @@ Rectangle {
     function focusInput() { searchInput.forceActiveFocus() }
 
     function enter(row) {
-        panel.pageKey = (panel.pageKey === "") ? row.id : panel.pageKey + "/" + row.id
+        // A search hit carries the page it lives on. Descending into it has to
+        // start from THERE — building the key from the page the search was
+        // typed on would aim at a page that does not exist.
+        const base = (row.pageKey !== undefined) ? row.pageKey : panel.pageKey
+        panel.pageKey = (base === "") ? row.id : base + "/" + row.id
         panel.query = ""
         searchInput.text = ""
         panel.sel = 0
@@ -374,7 +378,8 @@ Rectangle {
                         Layout.preferredHeight: 15
                         Text {
                             anchors.centerIn: parent
-                            visible: row.isOn && row.modelData.kind === "choice"
+                            visible: row.isOn && (row.modelData.kind === "choice"
+                                                  || row.modelData.kind === "multi")
                             text: "󰄬"
                             color: Theme.accent
                             font.family: Theme.font

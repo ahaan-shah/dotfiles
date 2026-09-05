@@ -29,6 +29,9 @@ QtObject {
     // being red, and "authentication failed" has to read as a failure on every
     // wallpaper.
     readonly property color danger: "#e0796f"
+    // Likewise hardcoded: "it worked" has to read as success on every wallpaper,
+    // and pywal promises no green slot either.
+    readonly property color good:   "#7fca97"
 
     readonly property string font: UiConfig.fontFamily
 

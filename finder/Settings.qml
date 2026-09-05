@@ -68,6 +68,7 @@ QtObject {
                 { id: "fonts",   icon: "󰛖", title: "Fonts",   kind: "menu",   sub: "the font every shell draws with" },
                 { id: "icons",   icon: "󰋩", title: "Icons",   kind: "menu",   sub: "icon theme" },
                 { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "GTK theme" },
+                { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, password" },
                 { id: "about",   icon: "󰋼", title: "About",   kind: "action" }
             ]
         },
@@ -103,6 +104,30 @@ QtObject {
             ]
         },
 
+        "security": {
+            title: "Security", icon: "󰒃",
+            rows: [
+                { id: "firewall", icon: "󰞀", title: "Firewall",        kind: "menu", sub: "firewalld — zone and allowed services" },
+                { id: "passwd",   icon: "󰌾", title: "Change password", kind: "action" }
+            ]
+        },
+
+        "security/firewall": {
+            title: "Firewall", icon: "󰞀",
+            state: "firewall",
+            rows: [
+                // Every one of these needs root, and every one of them goes
+                // through finder's own password box — never polkit's. See
+                // scripts/firewall.sh for why writes avoid firewall-cmd.
+                { id: "enabled",  icon: "󰞀", title: "Firewall",         kind: "toggle" },
+                { id: "zone",     icon: "󰒙", title: "Zone",             kind: "menu", sub: "the profile applied to new connections" },
+                { id: "services", icon: "󰖟", title: "Allowed services", kind: "menu", sub: "what may reach this machine" }
+            ]
+        },
+
+        "security/firewall/zone":     { title: "Zone",             icon: "󰒙", list: "fw-zones",    fw: "set-zone" },
+        "security/firewall/services": { title: "Allowed services", icon: "󰖟", list: "fw-services", fw: "service", multi: true, width: 520 },
+
         "setup/defaults": {
             title: "Defaults", icon: "󰀻",
             rows: [
@@ -136,6 +161,15 @@ QtObject {
     // (update/install/remove) does NOT go through here: those open a terminal
     // anyway because the output is the point, so their password belongs in it.
     signal authRequired(string reason, string command)
+
+    // Raised by Privacy → Change password. Finder puts the same box up in the
+    // three-step flow rather than the one-step one.
+    signal changePasswordRequested()
+
+    function notify(title, body) {
+        root._sh("command -v notify-send >/dev/null && notify-send -a Settings " +
+                 root._q(title) + " " + root._q(body || ""))
+    }
 
 
     // ── grouping variants under one row ───────────────────────────────────
@@ -298,10 +332,28 @@ QtObject {
         return (g.byGroup || ({}))[key.substring(lk.length + 1)] || []
     }
 
-    // Adds the state a row cannot carry as a literal: whether a toggle is on.
+    // Adds the state a row cannot carry as a literal: whether a toggle is on,
+    // and what the firewall rows currently read.
     function _decorate(key, r) {
+        if (key === "security/firewall" && r.kind === "menu") {
+            // These two nest, so they keep a subtitle — and the useful subtitle
+            // is the live value, not a restatement of the label.
+            const fw = root.fwState
+            if (r.id === "zone" && fw.ZONE)
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: fw.ZONE + (fw.IFACE ? " on " + fw.IFACE : "") }
+            if (r.id === "services" && fw.ALLOWED !== undefined)
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: fw.ALLOWED + " allowed"
+                               + (fw.BLOCKED !== "0" ? ", " + fw.BLOCKED + " blocked" : "") }
+            return r
+        }
         if (r.kind !== "toggle") return r
-        const on = (key === "setup" && r.id === "titlebar") ? root.barsLoaded : false
+        const on = (key === "setup" && r.id === "titlebar") ? root.barsLoaded
+                 : (key === "security/firewall" && r.id === "enabled")
+                     ? (root.fwState.AVAILABLE === undefined ? null
+                        : root.fwState.RUNNING === "yes")
+                 : false
         return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
                  sub: r.sub || "", active: on === true, pending: on === null }
     }
@@ -330,9 +382,11 @@ QtObject {
             const rows = (root.pages[key].list) ? (root.lists[key] || []) : root.rowsFor(key)
             for (let i = 0; i < rows.length; i++) {
                 const r = rows[i]
-                // A submenu row is not a result: its children are, and offering
-                // both means "Fonts" and every font it contains in one list.
-                if (r.kind === "menu") continue
+                // Submenu rows ARE results. They used to be skipped on the
+                // theory that their children stood for them — but that made
+                // whole sections unreachable by name: searching "security" or
+                // "privacy" found nothing at all, because the only thing
+                // carrying that word was the menu row itself.
                 const hay = (r.title + " " + (r.sub || "") + " " + (r.detail || "")).toLowerCase()
                 const at = hay.indexOf(q)
                 if (at < 0) continue
@@ -371,12 +425,20 @@ QtObject {
         root.lists = ({})
         root._queue = []
         for (const key in root.pages) {
-            if (root.pages[key].list) root._queue.push(key)
+            const pg = root.pages[key]
+            // The firewall listings are NOT prefetched. They are only meaningful
+            // on their own page, 265 services would swamp a root search, and
+            // fetching them at open is what made three firewall.sh calls happen
+            // every single time the menu was raised.
+            if (pg.list && !pg.fw) root._queue.push(key)
         }
         root._pump()
     }
 
     function ensure(key) {
+        // Entering the firewall page re-reads it, so a change made elsewhere
+        // (or by the previous visit) is reflected rather than remembered.
+        if (key === "security/firewall") root.refreshFirewall()
         // A group page has no listing of its own; its parent's is what matters,
         // and by the time a group is visible that has already loaded.
         const p = root.pages[key]
@@ -397,9 +459,11 @@ QtObject {
         root._buf = ""
         const p = root.pages[key]
         const q = root._q(root.scriptDir)
-        listProc.command = ["bash", "-c",
-            (p.list === "keybinds" ? q + "/list-keybinds.sh"
-                                   : q + "/ui-prefs.sh list " + p.list) + " 2>/dev/null"]
+        const cmd = (p.list === "keybinds")        ? q + "/list-keybinds.sh"
+                  : (p.list === "fw-zones")        ? q + "/firewall.sh zones"
+                  : (p.list === "fw-services")     ? q + "/firewall.sh services"
+                  :                                  q + "/ui-prefs.sh list " + p.list
+        listProc.command = ["bash", "-c", cmd + " 2>/dev/null"]
         listProc.running = true
     }
 
@@ -448,7 +512,10 @@ QtObject {
             }
             out.push({
                 id: f[0], icon: p.icon, title: f[1] || f[0], sub: "",
-                kind: "choice", value: f[0],
+                // "multi" is the firewall's allowed-services list: more than one
+                // row is marked at a time and activating one toggles it, rather
+                // than moving a single selection.
+                kind: p.multi ? "multi" : "choice", value: f[0],
                 detail: p.showDetail ? (f[2] || "") : "",
                 // The current value is shown by filling the row, the way the
                 // taskbar's panels mark a connected network — not by a "current"
@@ -475,7 +542,41 @@ QtObject {
     // confident "off" while the query is in flight.
     property var barsLoaded: null
 
-    function refreshState() { barsProc.running = true }
+    function refreshState() { barsProc.running = true; root.refreshFirewall() }
+
+    // KEY="value" lines from firewall.sh status — every one of them an
+    // UNPRIVILEGED read, so the page renders its true state without asking for
+    // a password. Only changing something needs one.
+    property var fwState: ({})
+    function refreshFirewall() {
+        if (fwProc.running) return
+        fwProc.running = true
+    }
+
+    property var _fwProc: Process {
+        id: fwProc
+        command: ["bash", "-c", root._q(root.scriptDir + "/firewall.sh") + " status 2>/dev/null"]
+        running: false
+        // StdioCollector, not SplitParser + a Connections on running: the same
+        // shape barsProc below uses and the one that actually delivers here.
+        // The SplitParser version spawned the process and produced the output,
+        // but the buffer was still empty by the time `running` went false, so
+        // fwState stayed `{}` and the switch rendered as not-yet-known.
+        stdout: StdioCollector {
+            id: fwOut
+            onStreamFinished: root._parseFw(fwOut.text)
+        }
+    }
+
+    function _parseFw(raw) {
+        const out = ({})
+        const lines = String(raw).split("\n")
+        for (let i = 0; i < lines.length; i++) {
+            const m = lines[i].match(/^([A-Z_]+)="(.*)"$/)
+            if (m) out[m[1]] = m[2]
+        }
+        root.fwState = out
+    }
 
     property var _barsProc: Process {
         id: barsProc
@@ -497,6 +598,24 @@ QtObject {
     // watching the list redraw in it is the entire point of the Fonts page.
     function activate(key, row) {
         if (!row) return false
+
+        // A firewall listing is not a ui-prefs preference: it is a root-only
+        // change to the system firewall, so it goes through the password box.
+        if (row.kind === "choice" || row.kind === "multi") {
+            const fk = root.listPageKeyOf(key)
+            const fp = root.pages[fk === "" ? key : fk]
+            if (fp && fp.fw === "set-zone") {
+                root._fwAuth("Setting the firewall zone to " + row.value,
+                             "set-zone " + root._q(row.value))
+                return false
+            }
+            if (fp && fp.fw === "service") {
+                const allow = !row.active
+                root._fwAuth((allow ? "Allowing " : "Blocking ") + row.value + " through the firewall",
+                             (allow ? "allow " : "block ") + root._q(row.value))
+                return false
+            }
+        }
 
         if (row.kind === "choice") {
             // On a group page the key is "icons/Obsidian", which carries no
@@ -534,11 +653,27 @@ QtObject {
             return true
         }
 
-        root._action(key === "" ? row.id : key + "/" + row.id)
-        return true
+        // _action answers whether the menu should close. Change password must
+        // NOT: it raises the password box in this same window, and closing here
+        // tore the box down in the same frame it was created — which is why the
+        // row appeared to do nothing at all.
+        return root._action(key === "" ? row.id : key + "/" + row.id)
+    }
+
+    function _fwAuth(reason, args) {
+        root.authRequired(reason, root._q(root.scriptDir + "/firewall.sh") + " " + args)
     }
 
     function _toggle(key, row) {
+        if (key === "security/firewall" && row.id === "enabled") {
+            // on/off, never enable/disable: the unit must always come back at
+            // boot, so nothing here is allowed to disable it. `on` re-enables
+            // as well, so a machine that ended up disabled is corrected.
+            const want = (root.fwState.RUNNING === "yes") ? "off" : "on"
+            root._fwAuth(want === "on" ? "Turning the firewall on"
+                                       : "Turning the firewall off", want)
+            return
+        }
         if (key === "setup" && row.id === "titlebar") {
             const want = (root.barsLoaded === true) ? "off" : "on"
             // --persist, so the switch also decides what happens at the next
@@ -554,7 +689,7 @@ QtObject {
 
     // Called by the password box once the command has actually succeeded, so
     // the switch reflects what happened rather than what was asked for.
-    function toggleSettled() { barsRecheck.restart() }
+    function toggleSettled() { barsRecheck.restart(); root.refreshFirewall() }
 
     property var _barsRecheck: Timer {
         id: barsRecheck
@@ -563,6 +698,7 @@ QtObject {
         onTriggered: root.refreshState()
     }
 
+    // Returns true when the menu should close after the action.
     function _action(path) {
         switch (path) {
         // hold = true for the ones that exit the moment they finish. pacman
@@ -577,6 +713,10 @@ QtObject {
         case "update":          root._term("system-update",   "system-update.sh",   true);  break
         case "about":           root._term("about",           "about-system.sh",    false); break
 
+        case "security/passwd":
+            root.changePasswordRequested()
+            return false
+
         case "setup/monitors":
             // nwg-displays, not a panel of our own: it is what wrote the
             // monitors.lua the compositor is running, and it is the only thing
@@ -585,6 +725,7 @@ QtObject {
             root._sh("nwg-displays")
             break
         }
+        return true
     }
 
     // ── spawning ──────────────────────────────────────────────────────────

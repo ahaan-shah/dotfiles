@@ -44,6 +44,12 @@ Scope {
 
     signal unlocked()
 
+    // Emitted when the machine has just come back from suspend/hibernate,
+    // raised by shell.qml's IpcHandler off hypridle's after_sleep_cmd. Every
+    // surface listens; see LockSurface.qml's Connections block for what it has
+    // to put right.
+    signal woke()
+
     property string currentText: ""
 
     property bool _fpUnlocked: false

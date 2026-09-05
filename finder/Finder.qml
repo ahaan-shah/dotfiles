@@ -683,5 +683,12 @@ Item {
             passwordPrompt.begin("", reason, command)
             inputFocusTimer.start()
         }
+        // Same box, three steps instead of one — Ahaan's "universal
+        // authenticate password box design for all this".
+        function onChangePasswordRequested() {
+            root.mode = "password"
+            passwordPrompt.beginChangePassword()
+            inputFocusTimer.start()
+        }
     }
 }

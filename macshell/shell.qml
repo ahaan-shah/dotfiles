@@ -54,8 +54,12 @@ ShellRoot {
                 readonly property bool mouseOnDock: dockPanel.hovered
                 property bool windowOverlaps:  false
 
-                // Raw "mouse wants the dock revealed" condition.
+                // Raw "mouse wants the dock revealed" condition. A drag in
+                // progress counts: carrying an icon can take the pointer off
+                // the dock's own footprint, and the dock sliding away from
+                // under a held icon would strand the gesture.
                 readonly property bool hovering: mouseNearBottom || mouseOnDock
+                                                 || dockPanel.dragActive
 
                 // Grace period: after the mouse leaves the reveal region, keep the
                 // dock up for a moment so a brief/accidental exit doesn't instantly

@@ -134,7 +134,11 @@ QtObject {
             "     /var/lib/flatpak/exports/share/applications " +
             "     ~/.local/share/flatpak/exports/share/applications " +
             "-name '*.desktop' 2>/dev/null | while read f; do " +
-            "echo '---DESKTOP_FILE_START---'; cat \"$f\"; done"]
+            // The marker carries the FILE PATH: two .desktop files can claim
+            // the same key (kitty.desktop and kitty-open.desktop are both
+            // Icon=kitty, Exec basename kitty), and the file's own id is the
+            // only thing that tells them apart. See the ranking in _parse().
+            "echo \"---DESKTOP_FILE_START---$f\"; cat \"$f\"; done"]
         running: false
         stdout: SplitParser {
             splitMarker: ""
@@ -173,12 +177,27 @@ QtObject {
         // Same keys, same policy, different payload — see entryForClass().
         const byWmEntry   = {}
         const byNameEntry = {}
+        // How good the claim on each key is, so a later file cannot simply
+        // overwrite a better earlier one. This did not matter while the map
+        // held nothing but an icon path — kitty.desktop and kitty-open.desktop
+        // are both Icon=kitty, so whichever won looked identical. It matters
+        // now that the same entry yields Exec and Name: last-write-wins made
+        // "kitty" resolve to the URL launcher, and a Terminal pin created by
+        // right-click carried `kitty +open` and the name "kitty URL Launcher".
+        const score = {}
         const genericSegments = new Set(["app", "www", "web", "mail", "m", "go", "get"])
         const browserPrefixes = ["brave-", "chrome-", "chromium-", "msedge-", "firefox-"]
 
         const files = desktopRaw.split("---DESKTOP_FILE_START---")
         files.forEach(block => {
             if (!block.trim()) return
+
+            // First line of a block is the path the marker carried; the rest
+            // is the file. The id is the basename without ".desktop", which is
+            // what upstream calls the desktop file ID.
+            const nl       = block.indexOf("\n")
+            const filePath = nl > 0 ? block.substring(0, nl).trim() : ""
+            const fileId   = filePath.split("/").pop().replace(/\.desktop$/i, "").toLowerCase()
 
             let icon    = ""
             let wmClass = ""
@@ -197,20 +216,32 @@ QtObject {
 
             const resolved = root.resolveIconPath(icon)
             const entry    = { icon: icon, exec: root._cleanExec(exec), name: name }
-            // Every key written to byWm gets the same key in byWmEntry.
-            const put      = k => { byWm[k] = resolved; byWmEntry[k] = entry }
+            // Every key written to byWm gets the same key in byWmEntry, and
+            // only if this file's claim on it beats whatever is already there.
+            // Ranks, strongest first: StartupWMClass says outright which window
+            // this entry is for; the file's own id is the next best thing; an
+            // Exec basename or an Icon name is shared by every companion entry
+            // an app ships.
+            const put      = (k, rank) => {
+                if (!k) return
+                if ((k in byWm) && score[k] >= rank) return
+                score[k]      = rank
+                byWm[k]       = resolved
+                byWmEntry[k]  = entry
+            }
+            put(fileId, 60)
 
             // Index by StartupWMClass (most reliable)
-            if (wmClass) put(wmClass.toLowerCase())
+            if (wmClass) put(wmClass.toLowerCase(), 100)
 
             // Index by the full Icon= value (e.g. "org.gnome.Calendar")
-            put(icon.toLowerCase())
+            put(icon.toLowerCase(), 40)
 
             // Index by last dot-segment of Icon= (e.g. "calendar" from "org.gnome.Calendar")
             const iconDots = icon.split(".")
             if (iconDots.length > 1) {
                 const lastSeg = iconDots[iconDots.length - 1].toLowerCase()
-                if (lastSeg.length >= 3) put(lastSeg)
+                if (lastSeg.length >= 3) put(lastSeg, 30)
             }
 
             // For browser webapps: index by the brand segment of Icon=
@@ -222,7 +253,7 @@ QtObject {
                     const parts = s.split(".")
                     for (const part of parts) {
                         if (part && part.length >= 3 && !genericSegments.has(part)) {
-                            put(part)
+                            put(part, 30)
                             break
                         }
                     }
@@ -240,7 +271,7 @@ QtObject {
                     "google-chrome", "google-chrome-stable", "brave", "brave-browser",
                     "firefox", "librewolf", "msedge"])
                 if (base && base.length >= 3 && !browserBins.has(base))
-                    put(base)
+                    put(base, 35)
             }
 
             if (name) {

@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 
 // Quickshell replacement for hyprlock — see LockSurface.qml for the visual
@@ -24,6 +25,26 @@ ShellRoot {
             lock.locked = false
             Qt.quit()
         }
+    }
+
+    // `qs -p ~/.config/lockscreen ipc call lock wake` — called by hypridle's
+    // after_sleep_cmd, right after it turns DPMS back on.
+    //
+    // The lock raised by before_sleep_cmd is frozen by systemd ~100-200ms after
+    // the compositor confirms it (see LockSurface.qml's instantIntro comment),
+    // and it comes back from a hibernate in a state the surface cannot detect
+    // from the inside: the clock reads the time the machine went down and the
+    // password field takes no keystrokes, while fingerprint — a separate
+    // process, not the surface — still works. Both clear the moment any real
+    // input arrives, which is the tell: what is missing is the nudge, not the
+    // machinery. So this delivers one, from the resume signal hypridle already
+    // has, instead of guessing at it from a process that was not running.
+    //
+    // Only the FIRST lock after a resume is affected; every lock raised later
+    // in the session is fine, so nothing here should run at any other time.
+    IpcHandler {
+        target: "lock"
+        function wake(): void { lockContext.woke() }
     }
 
     WlSessionLock {

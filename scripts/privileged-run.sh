@@ -36,6 +36,15 @@ set -euo pipefail
 
 RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 umask 077
+
+# Sweep our own stale files before starting. The EXIT trap below covers every
+# ordinary exit and TERM/INT/HUP/QUIT, but nothing can catch SIGKILL — and
+# Quickshell kills the child when the menu closes, which is exactly how two
+# 0-byte leftovers were found sitting in $XDG_RUNTIME_DIR. They were empty
+# (the trap had truncated before it was cut short) so nothing leaked, but a
+# file named like this should never outlive the run that made it.
+find "$RUNTIME" -maxdepth 1 -name '.hyprahaan-auth.*' -mmin +2 -delete 2>/dev/null || true
+find "$RUNTIME" -maxdepth 1 -name '.hyprahaan-askpass.*' -mmin +2 -delete 2>/dev/null || true
 PASSFILE="$(mktemp "$RUNTIME/.hyprahaan-auth.XXXXXX")"
 ASKPASS="$(mktemp "$RUNTIME/.hyprahaan-askpass.XXXXXX")"
 
@@ -47,7 +56,7 @@ cleanup() {
     [ -f "$PASSFILE" ] && : >"$PASSFILE"
     rm -f "$PASSFILE" "$ASKPASS" "${PASSFILE}.armed"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT INT TERM HUP QUIT
 
 # read -r, no -s: stdin is a pipe from the caller, not a terminal, so there is
 # nothing to echo. IFS= and -r keep the password exactly as typed, spaces and

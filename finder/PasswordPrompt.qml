@@ -62,17 +62,84 @@ Rectangle {
     // for the first and passes the command's own code through for the second.
     property bool commandFailed: false
 
+    // ── flows ─────────────────────────────────────────────────────────────
+    // "auth"   one password, verified, then handed to privileged-run.sh.
+    // "passwd" three: current, new, confirm. Same box, same look — Ahaan asked
+    //          for this to be the one authenticate-password design everywhere,
+    //          so changing a password reuses it rather than growing a dialog of
+    //          its own.
+    property string flow: "auth"
+    property int stepIndex: 0
+    property string _current: ""     // flow "passwd": the verified current one
+    property string _newpw: ""       // flow "passwd": the new one, awaiting confirm
+
+    readonly property var _passwdSteps: [
+        { head: "Current password",     hint: "Confirm it is you before changing it" },
+        { head: "New password",         hint: "" },
+        { head: "Confirm new password", hint: "Type it once more" }
+    ]
+
     signal finished(bool ok)
     signal cancelled()
 
     function begin(t, why, cmd) {
+        prompt.flow = "auth"
+        prompt.stepIndex = 0
         prompt.title = t
         prompt.reason = why
         prompt.command = cmd
+        prompt._reset()
+    }
+
+    function beginChangePassword() {
+        prompt.flow = "passwd"
+        prompt.stepIndex = 0
+        prompt.title = ""
+        prompt.reason = ""
+        prompt.command = ""
+        prompt._current = ""
+        prompt._newpw = ""
+        prompt._reset()
+    }
+
+    function _reset() {
+        prompt.succeeded = false
         prompt.busy = false
         prompt.failed = false
         prompt.commandFailed = false
+        prompt.mismatch = false
         field.text = ""
+    }
+
+    readonly property bool alarm: prompt.failed || prompt.mismatch
+
+    // Held for a beat on success before the box goes. Authenticating used to
+    // just fade out, which is indistinguishable from the box being dismissed —
+    // there was nothing that said the password had been accepted.
+    property bool succeeded: false
+
+    // The confirm step disagreeing with the new password is neither an
+    // authentication failure nor a command failure, and saying "Authentication
+    // failed" there would be simply wrong.
+    property bool mismatch: false
+
+    // What the box says right now, for either flow.
+    readonly property string headline: {
+        if (prompt.succeeded)     return prompt.flow === "passwd" ? "Password changed" : "Authenticated"
+        if (prompt.mismatch)      return "Passwords do not match"
+        if (prompt.failed)        return prompt.commandFailed ? "That did not work" : "Authentication failed"
+        if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex].head
+        return "Administrator password"
+    }
+    readonly property string subline: {
+        // Nothing under the headline on success: "Authenticated" and "Password
+        // changed" already say it, and the notification carries the detail.
+        if (prompt.succeeded)     return ""
+        if (prompt.mismatch)      return "Type the new password again"
+        if (prompt.failed)        return prompt.commandFailed ? "The password was accepted, but the command failed"
+                                                             : "Try again, or press esc to cancel"
+        if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex].hint
+        return prompt.reason
     }
     function focusInput() { field.forceActiveFocus() }
 
@@ -87,9 +154,33 @@ Rectangle {
         if (field.text.length === 0) return
         const attempt = field.text
         field.text = ""
-        prompt.busy = true
         prompt.failed = false
         prompt.commandFailed = false
+        prompt.mismatch = false
+
+        if (prompt.flow === "passwd") {
+            if (prompt.stepIndex === 1) {           // the new password
+                prompt._newpw = attempt
+                prompt.stepIndex = 2
+                return
+            }
+            if (prompt.stepIndex === 2) {           // confirm it
+                if (attempt !== prompt._newpw) {
+                    prompt._newpw = ""
+                    prompt.stepIndex = 1
+                    prompt.mismatch = true
+                    shakeAnim.restart()
+                    field.forceActiveFocus()
+                    return
+                }
+                prompt.busy = true
+                prompt._runChangePassword()
+                return
+            }
+        }
+
+        // Step 0 of either flow: verify the password before anything else.
+        prompt.busy = true
         prompt._pending = attempt
         const pam = pamComponent.createObject(prompt, { config: "vlock", _response: attempt })
         if (!pam.start()) prompt._reject()
@@ -110,8 +201,17 @@ Rectangle {
             property string _response: ""
             onPamMessage: if (this.responseRequired) this.respond(this._response)
             onCompleted: result => {
-                if (result === PamResult.Success) prompt._run()
-                else                             prompt._reject()
+                if (result !== PamResult.Success) { prompt._reject(); this.destroy(); return }
+                if (prompt.flow === "passwd") {
+                    // Verified — keep it for chpasswd and move to the new one.
+                    prompt._current = prompt._pending
+                    prompt._pending = ""
+                    prompt.busy = false
+                    prompt.stepIndex = 1
+                    field.forceActiveFocus()
+                } else {
+                    prompt._run()
+                }
                 this.destroy()
             }
         }
@@ -130,13 +230,70 @@ Rectangle {
         prompt._pending = ""
     }
 
+    function _runChangePassword() {
+        // Two lines on stdin, current then new — see change-password.sh. Same
+        // reasoning as _run(): neither ever appears in argv.
+        authProc.command = ["bash", "-c",
+            "exec " + Sys.quote(Settings.scriptDir + "/change-password.sh")]
+        authProc.stdinEnabled = true
+        authProc.running = true
+        authProc.write(prompt._current + "\n" + prompt._newpw + "\n")
+        authProc.stdinEnabled = false
+        prompt._current = ""
+        prompt._newpw = ""
+    }
+
+    // Long enough to register, short enough not to be in the way.
+    property var _doneTimer: Timer {
+        id: doneTimer
+        interval: 700
+        repeat: false
+        onTriggered: prompt.finished(true)
+    }
+
     property var _authProc: Process {
         id: authProc
         running: false
+        // These two collectors are not decoration — without them the box hangs
+        // on "checking…" forever.
+        //
+        // A Quickshell Process hands its child a PIPE. With nothing reading the
+        // far end, the child blocks the moment it has written a pipe buffer's
+        // worth (64K) and never exits, so onExited never fires and `busy` is
+        // never cleared. `hyprbars.sh … --persist` runs `hyprpm enable`, which
+        // REBUILDS the plugin and prints steadily while it does — which is
+        // exactly how this was hit. Same family as the SIGPIPE rule: the child
+        // and the pipe have to be dealt with deliberately, one way or the other.
+        //
+        // Collected rather than redirected to /dev/null, so stderr can say what
+        // went wrong when a command fails.
+        stdout: StdioCollector { id: authOut }
+        stderr: StdioCollector { id: authErr }
         onExited: (code, status) => {
             prompt.busy = false
             if (code === 0) {
-                prompt.finished(true)
+                if (prompt.flow === "passwd")
+                    Settings.notify("Password changed", "Your login and sudo password is updated")
+                prompt.succeeded = true
+                doneTimer.restart()
+                return
+            }
+            // Whatever the command complained about, so a failure is
+            // diagnosable rather than just red.
+            const why = String(authErr.text || "").trim()
+            if (why !== "") console.warn("privileged command failed:", why)
+
+            if (prompt.flow === "passwd") {
+                // change-password.sh exits 77 only if the CURRENT password was
+                // wrong, which PAM already ruled out — so in practice this is
+                // chpasswd failing, and saying "try again" would be a lie.
+                prompt.failed = true
+                prompt.commandFailed = (code !== 77)
+                prompt.stepIndex = 0
+                prompt._current = ""
+                prompt._newpw = ""
+                shakeAnim.restart()
+                field.forceActiveFocus()
                 return
             }
             // Stay open either way — retyping is the obvious next move after a
@@ -158,8 +315,10 @@ Rectangle {
     implicitHeight: col.implicitHeight + Theme.pad * 2
     radius: Theme.cardRadius
     color: Theme.bg
-    border.width: 1
-    border.color: prompt.failed ? Theme.alpha(Theme.danger, 0.55) : Theme.line
+    // Thicker while green: at 1px the success state was easy to miss entirely.
+    border.width: prompt.succeeded ? 2.5 : 1
+    border.color: prompt.succeeded ? Theme.alpha(Theme.good, 0.85)
+                : prompt.alarm ? Theme.alpha(Theme.danger, 0.55) : Theme.line
     Behavior on border.color { ColorAnimation { duration: 160 } }
 
     opacity: prompt.shown ? 1 : 0
@@ -193,13 +352,16 @@ Rectangle {
             Rectangle {
                 implicitWidth: 38; implicitHeight: 38
                 radius: 12
-                color: prompt.failed ? Theme.alpha(Theme.danger, 0.16)
-                                     : Theme.alpha(Theme.accent, 0.20)
+                color: prompt.succeeded ? Theme.alpha(Theme.good, 0.20)
+                       : prompt.alarm ? Theme.alpha(Theme.danger, 0.16)
+                       : Theme.alpha(Theme.accent, 0.20)
                 Behavior on color { ColorAnimation { duration: 160 } }
                 Text {
                     anchors.centerIn: parent
-                    text: "󰌾"
-                    color: prompt.failed ? Theme.danger : Theme.text
+                    // The lock closes into a tick the moment it is accepted.
+                    text: prompt.succeeded ? "󰄬" : "󰌾"
+                    color: prompt.succeeded ? Theme.good
+                         : prompt.alarm ? Theme.danger : Theme.text
                     font.family: Theme.font
                     font.pixelSize: 18
                 }
@@ -211,9 +373,9 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
-                    text: !prompt.failed ? "Administrator password"
-                        : prompt.commandFailed ? "That did not work" : "Authentication failed"
-                    color: prompt.failed ? Theme.danger : Theme.text
+                    text: prompt.headline
+                    color: prompt.succeeded ? Theme.good
+                         : prompt.alarm ? Theme.danger : Theme.text
                     font.family: Theme.font
                     font.pixelSize: Theme.fsRow + 1
                     font.weight: Font.Medium
@@ -222,9 +384,7 @@ Rectangle {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                     visible: text.length > 0
-                    text: !prompt.failed ? prompt.reason
-                        : prompt.commandFailed ? "The password was accepted, but the command failed"
-                        : "Try again, or press esc to cancel"
+                    text: prompt.subline
                     color: Theme.dim
                     font.family: Theme.font
                     font.pixelSize: Theme.fsSub
