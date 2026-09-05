@@ -35,6 +35,10 @@ EXCLUDES=(
     # zones and services are different, and a public repo should not describe
     # this one's firewall posture either.
     --exclude 'firewall-off.conf'
+    # Which fingers are enrolled on this machine and what the user called them.
+    # Same class again — machine-specific, and a public repo has no business
+    # saying which finger unlocks this laptop.
+    --exclude 'fingerprint-names.conf'
     --exclude 'backup_files.sh'     # names personal directories
     --exclude 'wake-lag-*'          # bulky machine-specific diagnostic captures
     --exclude 'wake-lag-logs/'

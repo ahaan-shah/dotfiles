@@ -1,6 +1,7 @@
 apostrophe
 base
 base-devel
+bat
 bluetui
 bluez
 bluez-utils
@@ -64,6 +65,7 @@ inxi
 iwd
 keyd
 kitty
+lazygit
 less
 libpulse
 libqalculate
@@ -120,6 +122,7 @@ syntax-highlighting
 system-config-printer
 tealdeer
 terminus-font
+tesseract-data-eng
 tmux
 tree
 ttf-hack-nerd

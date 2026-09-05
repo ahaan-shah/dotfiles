@@ -28,6 +28,15 @@ Item {
     // and one card on screen at a time is also simply clearer about what is
     // being asked. Reached only from Settings.authRequired, never from IPC.
     readonly property bool passwordMode: root.mode === "password"
+
+    // The fingerprint enrol box, which takes the same place for the same
+    // reason. Reached only from Settings.fingerprintEnrollRequested, which is
+    // itself only raised once the password box has verified a password.
+    readonly property bool fingerprintMode: root.mode === "fingerprint"
+
+    // What Settings.verified() should be told once the password box accepts a
+    // password in its verify-only flow. Empty for every other flow.
+    property string pendingVerify: ""
     property string query: ""
     property int selectedIndex: 0
     property var displayResults: []   // unified row list, see _rebuild()
@@ -87,6 +96,7 @@ Item {
         id: inputFocusTimer
         interval: 10
         onTriggered: root.passwordMode ? passwordPrompt.focusInput()
+                   : root.fingerprintMode ? fingerprintPrompt.focusInput()
                    : root.settingsMode ? settingsPanel.focusInput()
                    : input.forceActiveFocus()
     }
@@ -378,7 +388,7 @@ Item {
         if (!root.shown) return
         // SettingsPanel handles every key itself, including Escape (which backs
         // out of a page before it closes the menu).
-        if (root.settingsMode || root.passwordMode) return
+        if (root.settingsMode || root.passwordMode || root.fingerprintMode) return
         if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true }
         else if (event.key === Qt.Key_Down) { root.moveSelection(1); event.accepted = true }
         else if (event.key === Qt.Key_Up) { root.moveSelection(-1); event.accepted = true }
@@ -402,8 +412,13 @@ Item {
         border.width: 1
         border.color: root._darker(root.accentColor, 1.5)
 
-        opacity: (root.shown && !root.settingsMode && !root.passwordMode) ? 1 : 0
-        scale: (root.shown && !root.settingsMode && !root.passwordMode) ? 1 : 0.94
+        // Every mode that draws a card of its own has to be listed here. The
+        // fingerprint box was added without it and the launcher sat lit up
+        // behind the scan card for the whole enrolment — its input line and
+        // its "↑↓ navigate" footer visible either side of it. Anything that
+        // adds a mode with its own surface has to come back to this line.
+        opacity: (root.shown && !root.settingsMode && !root.passwordMode && !root.fingerprintMode) ? 1 : 0
+        scale: (root.shown && !root.settingsMode && !root.passwordMode && !root.fingerprintMode) ? 1 : 0.94
         visible: opacity > 0.001
         Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
         Behavior on scale   { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -668,17 +683,65 @@ Item {
         anchors.centerIn: parent
         shown: root.shown && root.passwordMode
         onFinished: ok => {
+            const pending = root.pendingVerify
+            root.pendingVerify = ""
+            if (ok && pending !== "") {
+                // A verify-only password. Nothing ran; Settings decides what
+                // it unlocked, and that raises whatever box comes next — so
+                // this must NOT close, or the box it raises is torn down in
+                // the frame it was created in. Same trap the change-password
+                // row documents.
+                Settings.verified(pending)
+                return
+            }
             // Let the switch re-read the compositor rather than assume the
             // command did what it was asked.
             if (ok) Settings.toggleSettled()
             root.close()
         }
-        onCancelled: root.close()
+        onCancelled: {
+            // Read it BEFORE clearing it — the first version of this cleared
+            // first and then tested the cleared value, so the branch below was
+            // dead and a cancelled verify always closed finder.
+            const wasVerify = root.pendingVerify !== ""
+            root.pendingVerify = ""
+            // A cancelled verify goes BACK to the menu rather than closing
+            // finder outright: Fingerprints is three pages in, and changing
+            // your mind about a password should not cost that walk. The other
+            // flows keep the behaviour they had — they were raised from a row
+            // that acts and is done.
+            if (wasVerify) root.returnToSettings()
+            else root.close()
+        }
+    }
+
+    // ── The fingerprint enrol box ───────────────────────────────────────
+    FingerprintPrompt {
+        id: fingerprintPrompt
+        anchors.centerIn: parent
+        shown: root.shown && root.fingerprintMode
+        // Either way the listing and the counts have to be re-read: enrolling
+        // filled a slot, and abandoning one may still have left the sensor in
+        // a different state than the page last saw.
+        onFinished: ok => { Settings.refresh("security/fingerprints/delete")
+                            Settings.refreshFingerprints()
+                            root.returnToSettings() }
+        onCancelled: { Settings.refreshFingerprints(); root.returnToSettings() }
+    }
+
+    // Back to the settings menu on the page it was left on. settingsPanel.reset()
+    // is only ever called from openMode(), so its pageKey has survived the trip
+    // through the password and fingerprint boxes and the user lands where they
+    // were — looking at the list they just changed.
+    function returnToSettings() {
+        root.mode = "settings"
+        inputFocusTimer.start()
     }
 
     Connections {
         target: Settings
         function onAuthRequired(reason, command) {
+            root.pendingVerify = ""
             root.mode = "password"
             passwordPrompt.begin("", reason, command)
             inputFocusTimer.start()
@@ -686,8 +749,21 @@ Item {
         // Same box, three steps instead of one — Ahaan's "universal
         // authenticate password box design for all this".
         function onChangePasswordRequested() {
+            root.pendingVerify = ""
             root.mode = "password"
             passwordPrompt.beginChangePassword()
+            inputFocusTimer.start()
+        }
+        // Same box again, verifying only — see PasswordPrompt's flow notes.
+        function onVerifyRequired(reason, action) {
+            root.pendingVerify = action
+            root.mode = "password"
+            passwordPrompt.beginVerify(reason)
+            inputFocusTimer.start()
+        }
+        function onFingerprintEnrollRequested() {
+            root.mode = "fingerprint"
+            fingerprintPrompt.begin()
             inputFocusTimer.start()
         }
     }

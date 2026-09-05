@@ -68,6 +68,13 @@ Rectangle {
     //          for this to be the one authenticate-password design everywhere,
     //          so changing a password reuses it rather than growing a dialog of
     //          its own.
+    // "verify" one password, verified, and then NOTHING is run. It exists for
+    //          the operations that must run as this user rather than as root:
+    //          enrolling a fingerprint is fprintd's `enroll` action, granted to
+    //          the local active user, while the same call under sudo would be
+    //          claiming another user's device (`setusername`, auth_admin_keep)
+    //          and would be harder, not easier. The box proves who is asking;
+    //          Settings.verified() decides what that unlocks.
     property string flow: "auth"
     property int stepIndex: 0
     property string _current: ""     // flow "passwd": the verified current one
@@ -88,6 +95,15 @@ Rectangle {
         prompt.title = t
         prompt.reason = why
         prompt.command = cmd
+        prompt._reset()
+    }
+
+    function beginVerify(why) {
+        prompt.flow = "verify"
+        prompt.stepIndex = 0
+        prompt.title = ""
+        prompt.reason = why
+        prompt.command = ""
         prompt._reset()
     }
 
@@ -129,7 +145,13 @@ Rectangle {
         if (prompt.mismatch)      return "Passwords do not match"
         if (prompt.failed)        return prompt.commandFailed ? "That did not work" : "Authentication failed"
         if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex].head
-        return "Administrator password"
+        // "Enter Password", not "Administrator password": the password this
+        // box wants is Ahaan's own login password every time — PAM validates
+        // it against the `vlock` service as this user, and privileged-run.sh
+        // then hands that same password to sudo. Nothing here ever asks for a
+        // separate root account, so naming one described a login that does not
+        // exist on this machine.
+        return "Enter Password"
     }
     readonly property string subline: {
         // Nothing under the headline on success: "Authenticated" and "Password
@@ -209,6 +231,14 @@ Rectangle {
                     prompt.busy = false
                     prompt.stepIndex = 1
                     field.forceActiveFocus()
+                } else if (prompt.flow === "verify") {
+                    // Verified and done. No command, no sudo — the same
+                    // "Authenticated" beat as flow "auth", and then finished()
+                    // hands off to whatever asked.
+                    prompt.busy = false
+                    prompt._pending = ""
+                    prompt.succeeded = true
+                    doneTimer.restart()
                 } else {
                     prompt._run()
                 }

@@ -870,6 +870,19 @@ phase_system() {
     sudo_file "$SCRIPT_DIR/system/sysctl.d/20-quiet-printk.conf" /etc/sysctl.d/20-quiet-printk.conf
     run sudo sysctl --system >/dev/null
 
+    # ── polkit ─────────────────────────────────────────────────────────
+    # Lets the settings menu enrol and delete fingerprints without polkit
+    # raising a password dialog of its own on top of finder's. Only where
+    # there is actually a reader — on a machine with none the rule would be
+    # loosening an action nothing can invoke. The file itself carries the
+    # full reasoning and the trade it makes.
+    if [ -n "${HW_FPRINT:-}" ]; then
+        sudo_file "$SCRIPT_DIR/system/polkit-1/rules.d/49-fprintd-enroll.rules" \
+                  /etc/polkit-1/rules.d/49-fprintd-enroll.rules
+    else
+        skip "no fingerprint reader — fprintd polkit rule not installed"
+    fi
+
     # ── everyday services ──────────────────────────────────────────────
     # (wifi, bluetooth and the firewall are handled by the `network` phase.)
     have upower           && enable_unit upower.service

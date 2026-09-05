@@ -671,6 +671,13 @@ hl.bind("ALT + Print", hl.dsp.exec_cmd("hyprshot -m window -o ~/Pictures/Screens
 -- desc: Screenshots the whole screen
 hl.bind("Print",       hl.dsp.exec_cmd("hyprshot -m active -m output -o ~/Pictures/Screenshots"))
 
+-- OCR (scripts/ocr-region.sh). Same region gesture as F11 above, but the text
+-- inside the box lands on the clipboard instead of a PNG landing in Pictures —
+-- which is why it sits on the same key with a modifier rather than somewhere
+-- unrelated. Needs tesseract-data-eng; the script says so if it is missing.
+-- desc: Extracts text from a selected region (OCR)
+hl.bind("ALT + F11",   hl.dsp.exec_cmd("~/.config/scripts/ocr-region.sh"))
+
 -- Colorpicker
 -- desc: Picks a colour from the screen
 hl.bind("ALT + C", hl.dsp.exec_cmd("hyprpicker -a"))

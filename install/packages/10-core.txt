@@ -57,6 +57,10 @@ fzf                       # finder fuzzy ranking
 grim
 slurp
 imagemagick
+tesseract                 # ALT+F11 OCR, scripts/ocr-region.sh
+tesseract-data-eng        # the language data is a SEPARATE package from
+                          #   tesseract, and without it OCR fails with an
+                          #   empty result rather than an error
 ffmpeg
 poppler                   # pdftoppm, finder's PDF previews
 libnotify                 # notify-send

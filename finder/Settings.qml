@@ -68,7 +68,7 @@ QtObject {
                 { id: "fonts",   icon: "󰛖", title: "Fonts",   kind: "menu",   sub: "the font every shell draws with" },
                 { id: "icons",   icon: "󰋩", title: "Icons",   kind: "menu",   sub: "icon theme" },
                 { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "GTK theme" },
-                { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, password" },
+                { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
                 { id: "about",   icon: "󰋼", title: "About",   kind: "action" }
             ]
         },
@@ -106,10 +106,40 @@ QtObject {
 
         "security": {
             title: "Security", icon: "󰒃",
+            state: "fingerprints",
             rows: [
-                { id: "firewall", icon: "󰞀", title: "Firewall",        kind: "menu", sub: "firewalld — zone and allowed services" },
-                { id: "passwd",   icon: "󰌾", title: "Change password", kind: "action" }
+                { id: "firewall",     icon: "󰞀", title: "Firewall",        kind: "menu", sub: "firewalld — zone and allowed services" },
+                { id: "fingerprints", icon: "󰈷", title: "Fingerprints",    kind: "menu", sub: "what unlocks the lock screen" },
+                { id: "passwd",       icon: "󰌾", title: "Change password", kind: "action" }
             ]
+        },
+
+        // ── Fingerprints ──────────────────────────────────────────────────
+        // fprintd holds ten fixed finger slots and no names; scripts/
+        // fingerprint.sh keeps the names and picks the slot. Adding one is
+        // gated behind the password box, deleting one is not — see _action
+        // and _fpDelete below for why they differ.
+        "security/fingerprints": {
+            title: "Fingerprints", icon: "󰈷",
+            rows: [
+                { id: "add",    icon: "󰐕", title: "Add fingerprint",     kind: "action" },
+                { id: "delete", icon: "󰆴", title: "Delete fingerprints", kind: "menu" }
+            ]
+        },
+
+        // No showDetail and no grouping, and both are the same decision: what
+        // identifies a fingerprint here is the NAME it was given, not the
+        // fprintd slot it happens to occupy. The slot is chosen by the script
+        // from whatever is free, so it carries no meaning worth showing — and
+        // showing it invited the page to organise itself around it.
+        //
+        // Grouping did exactly that. It keys on `value`, which is the slot, so
+        // "right-thumb" and "right-index-finger" share the prefix "right" and
+        // the page folded them behind a "right" row. Hands are not a category
+        // anyone chose; a list of names is.
+        "security/fingerprints/delete": {
+            title: "Delete fingerprints", icon: "󰆴",
+            list: "fingerprints", fprint: "delete", noGroup: true, width: 480
         },
 
         "security/firewall": {
@@ -153,7 +183,14 @@ QtObject {
         // Wider than everything else: a bind is a combo AND what it does, and
         // at 430 the description had nowhere to go. list-keybinds.sh already
         // supplies it — the page just had no room to show it.
-        "setup/keybindings": { title: "Keybindings", icon: "󰌌", list: "keybinds", width: 660 }
+        // noGroup, and it is the only listing that sets it. Grouping exists to
+        // collapse VARIANTS of one thing — 36 Obsidian icon themes behind one
+        // Obsidian row — and a modifier is not a variant: "SUPER +" is a
+        // prefix shared by 34 unrelated binds, so grouping on it produced a
+        // "SUPER + · 34 variants" door with nothing in common behind it and
+        // buried every bind one level down. A list of binds wants to be a flat
+        // list of binds.
+        "setup/keybindings": { title: "Keybindings", icon: "󰌌", list: "keybinds", width: 660, noGroup: true }
     })
 
     // Raised when a row needs root. Finder closes the menu and puts the
@@ -165,6 +202,18 @@ QtObject {
     // Raised by Privacy → Change password. Finder puts the same box up in the
     // three-step flow rather than the one-step one.
     signal changePasswordRequested()
+
+    // Same box again, but in its verify-only flow: PAM checks the password and
+    // then nothing is handed to privileged-run.sh, because what follows must
+    // run as THIS USER and not as root. Enrolling a fingerprint is exactly
+    // that — `fprintd-enroll` as root would be claiming another user's device,
+    // which is the setusername action and is auth_admin_keep, so sudo would
+    // make the thing harder rather than easier. `action` says what to do once
+    // the password is accepted; see verified() below.
+    signal verifyRequired(string reason, string action)
+
+    // Raised once a verified password has been accepted for "fp-enroll".
+    signal fingerprintEnrollRequested()
 
     function notify(title, body) {
         root._sh("command -v notify-send >/dev/null && notify-send -a Settings " +
@@ -201,6 +250,7 @@ QtObject {
     function _regroup(key) {
         const rows = root.lists[key] || []
         const page = root.pages[key] || ({})
+        if (page.noGroup) return { top: rows, byGroup: ({}) }
         if (rows.length < 2) return { top: rows, byGroup: ({}) }
 
         const isName = ({})
@@ -348,6 +398,33 @@ QtObject {
                                + (fw.BLOCKED !== "0" ? ", " + fw.BLOCKED + " blocked" : "") }
             return r
         }
+        // The Security row and the Fingerprints page both say how many are
+        // enrolled rather than restating what a fingerprint is — the same rule
+        // the firewall rows follow: the useful subtitle is the live value.
+        if (key === "security" && r.id === "fingerprints") {
+            const st = root.fpState
+            if (st.AVAILABLE === "no")
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: st.REASON || "no reader" }
+            if (st.COUNT !== undefined)
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: st.COUNT === "0" ? "none enrolled"
+                            : st.COUNT === "1" ? "1 enrolled"
+                            : st.COUNT + " enrolled" }
+            return r
+        }
+        if (key === "security/fingerprints") {
+            const st = root.fpState
+            if (r.id === "delete" && st.COUNT !== undefined)
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: st.COUNT === "0" ? "nothing enrolled yet"
+                            : st.COUNT + " enrolled" }
+            // Only worth a subtitle when it is about to stop working.
+            if (r.id === "add" && st.FREE === "0")
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: "all ten slots are full" }
+            return r
+        }
         if (r.kind !== "toggle") return r
         const on = (key === "setup" && r.id === "titlebar") ? root.barsLoaded
                  : (key === "security/firewall" && r.id === "enabled")
@@ -395,6 +472,15 @@ QtObject {
                     id: r.id, icon: r.icon, title: r.title, kind: r.kind,
                     value: r.value, detail: r.detail, active: r.active === true,
                     font: r.font, pageKey: key, trail: path,
+                    // Results carry no subtitle as a rule — they use the
+                    // trailing slot for the page they live on instead, and a
+                    // subtitle there would be two kinds of secondary text on
+                    // one row. A keybind is the exception, because its
+                    // subtitle is not description, it is the ANSWER: searching
+                    // "wall" and being shown a bare "ALT + W" tells you what is
+                    // bound and not what it does, which is the whole reason
+                    // this page parses the config instead of asking hyprctl.
+                    sub: r.kind === "keybind" ? (r.sub || "") : "",
                     // Title matches beat subtitle/detail matches, and an earlier
                     // match beats a later one — otherwise a 276-row font list
                     // buries an exact hit under everything that merely contains
@@ -430,7 +516,12 @@ QtObject {
             // on their own page, 265 services would swamp a root search, and
             // fetching them at open is what made three firewall.sh calls happen
             // every single time the menu was raised.
-            if (pg.list && !pg.fw) root._queue.push(key)
+            // Neither the firewall nor the fingerprint listings are
+            // prefetched. Both are only meaningful on their own page, and
+            // both cost a subprocess that talks to a daemon — fetching them
+            // at open is what made three firewall.sh calls happen every
+            // single time the menu was raised.
+            if (pg.list && !pg.fw && !pg.fprint) root._queue.push(key)
         }
         root._pump()
     }
@@ -439,6 +530,7 @@ QtObject {
         // Entering the firewall page re-reads it, so a change made elsewhere
         // (or by the previous visit) is reflected rather than remembered.
         if (key === "security/firewall") root.refreshFirewall()
+        if (key === "security" || key === "security/fingerprints") root.refreshFingerprints()
         // A group page has no listing of its own; its parent's is what matters,
         // and by the time a group is visible that has already loaded.
         const p = root.pages[key]
@@ -462,6 +554,7 @@ QtObject {
         const cmd = (p.list === "keybinds")        ? q + "/list-keybinds.sh"
                   : (p.list === "fw-zones")        ? q + "/firewall.sh zones"
                   : (p.list === "fw-services")     ? q + "/firewall.sh services"
+                  : (p.list === "fingerprints")    ? q + "/fingerprint.sh list"
                   :                                  q + "/ui-prefs.sh list " + p.list
         listProc.command = ["bash", "-c", cmd + " 2>/dev/null"]
         listProc.running = true
@@ -542,7 +635,14 @@ QtObject {
     // confident "off" while the query is in flight.
     property var barsLoaded: null
 
-    function refreshState() { barsProc.running = true; root.refreshFirewall() }
+    function refreshState() {
+        barsProc.running = true
+        root.refreshFirewall()
+        // Cheap (fprintd-list over D-Bus, no authorisation) and the Security
+        // row's subtitle is a live count, so it has to be known before the
+        // user ever walks into that page.
+        root.refreshFingerprints()
+    }
 
     // KEY="value" lines from firewall.sh status — every one of them an
     // UNPRIVILEGED read, so the page renders its true state without asking for
@@ -551,6 +651,25 @@ QtObject {
     function refreshFirewall() {
         if (fwProc.running) return
         fwProc.running = true
+    }
+
+    // KEY="value" lines from fingerprint.sh status. Every read here is
+    // unprivileged (fprintd-list needs no authorisation), so the page renders
+    // its true state without asking for anything.
+    property var fpState: ({})
+    function refreshFingerprints() {
+        if (fpProc.running) return
+        fpProc.running = true
+    }
+
+    property var _fpStatProc: Process {
+        id: fpProc
+        command: ["bash", "-c", root._q(root.scriptDir + "/fingerprint.sh") + " status 2>/dev/null"]
+        running: false
+        stdout: StdioCollector {
+            id: fpOut
+            onStreamFinished: root.fpState = root._parseKv(fpOut.text)
+        }
     }
 
     property var _fwProc: Process {
@@ -568,15 +687,18 @@ QtObject {
         }
     }
 
-    function _parseFw(raw) {
+    // firewall.sh and fingerprint.sh print the same KEY="value" shape, so the
+    // parser is shared rather than written twice.
+    function _parseKv(raw) {
         const out = ({})
         const lines = String(raw).split("\n")
         for (let i = 0; i < lines.length; i++) {
             const m = lines[i].match(/^([A-Z_]+)="(.*)"$/)
             if (m) out[m[1]] = m[2]
         }
-        root.fwState = out
+        return out
     }
+    function _parseFw(raw) { root.fwState = root._parseKv(raw) }
 
     property var _barsProc: Process {
         id: barsProc
@@ -607,6 +729,15 @@ QtObject {
             if (fp && fp.fw === "set-zone") {
                 root._fwAuth("Setting the firewall zone to " + row.value,
                              "set-zone " + root._q(row.value))
+                return false
+            }
+            // "Can delete right there", as asked — no confirmation step. It
+            // is not gated behind the password box either, and that asymmetry
+            // is deliberate: ENROLLING adds a credential that unlocks the
+            // screen, which is why add is gated; deleting one only removes
+            // access, and the worst case is enrolling the finger again.
+            if (fp && fp.fprint === "delete") {
+                root._fpDelete(row)
                 return false
             }
             if (fp && fp.fw === "service") {
@@ -658,6 +789,49 @@ QtObject {
         // tore the box down in the same frame it was created — which is why the
         // row appeared to do nothing at all.
         return root._action(key === "" ? row.id : key + "/" + row.id)
+    }
+
+    // Called by the password box once PAM has accepted the password in its
+    // verify-only flow. Nothing was run as root; this is where what the
+    // password was FOR actually happens.
+    function verified(action) {
+        if (action === "fp-enroll") root.fingerprintEnrollRequested()
+    }
+
+    // Deleting runs as this user, not through privileged-run.sh — see the
+    // verifyRequired comment above. 2>&1 so a refusal (which is what a missing
+    // polkit rule looks like) can be reported rather than vanishing.
+    property string _fpDeleting: ""
+    function _fpDelete(row) {
+        if (fpDelProc.running) return
+        root._fpDeleting = row.title
+        fpDelProc.command = ["bash", "-c",
+            root._q(root.scriptDir + "/fingerprint.sh") + " delete " + root._q(row.value) + " 2>&1"]
+        fpDelProc.running = true
+    }
+
+    property var _fpDelProc: Process {
+        id: fpDelProc
+        running: false
+        // Collected rather than dropped: without a reader for the pipe a
+        // chatty child blocks on its 64K buffer and onExited never fires —
+        // the same trap PasswordPrompt's authProc documents.
+        stdout: StdioCollector { id: fpDelOut }
+        onExited: (code, status) => {
+            if (code === 0) {
+                root.notify("Fingerprint deleted", root._fpDeleting)
+            } else {
+                const why = String(fpDelOut.text || "").trim()
+                console.warn("fingerprint delete failed:", why)
+                root.notify("Could not delete that fingerprint",
+                            why !== "" ? why : "fprintd refused")
+            }
+            root._fpDeleting = ""
+            // Re-read both: the listing the user is looking at, and the counts
+            // the pages above it show.
+            root.refresh("security/fingerprints/delete")
+            root.refreshFingerprints()
+        }
     }
 
     function _fwAuth(reason, args) {
@@ -715,6 +889,24 @@ QtObject {
 
         case "security/passwd":
             root.changePasswordRequested()
+            return false
+
+        case "security/fingerprints/add":
+            if (root.fpState.AVAILABLE === "no") {
+                root.notify("No fingerprint reader",
+                            root.fpState.REASON || "Nothing to enrol against")
+                return false
+            }
+            if (root.fpState.FREE === "0") {
+                root.notify("No free slots",
+                            "All ten fingers are enrolled — delete one first")
+                return false
+            }
+            // The password box first, then the enrol box. Same reason the
+            // firewall rows go through it: adding a fingerprint changes what
+            // unlocks this machine, so it should cost a password — and it
+            // should cost OUR password box rather than polkit's.
+            root.verifyRequired("Adding a fingerprint", "fp-enroll")
             return false
 
         case "setup/monitors":

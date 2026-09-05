@@ -1,0 +1,53 @@
+// 49-fprintd-enroll.rules — let the person sitting at this machine enrol and
+// delete their own fingerprints without a second password dialog.
+//
+// Installed to /etc/polkit-1/rules.d/. Numbered 49 so it sorts before polkit's
+// own 50-default.rules and wins.
+//
+// ── What it changes, exactly ──────────────────────────────────────────────
+// fprintd ships three actions. Measured with pkcheck on this machine:
+//
+//     net.reactivated.fprint.device.verify        allow_active = yes
+//     net.reactivated.fprint.device.enroll        allow_active = auth_self_keep
+//     net.reactivated.fprint.device.setusername   allow_active = auth_admin_keep
+//
+// Only `enroll` is touched, and only to make it match `verify`, which upstream
+// already grants outright. `setusername` — acting on somebody ELSE's prints —
+// is deliberately left alone at auth_admin_keep.
+//
+// ── Why, rather than just letting polkit ask ──────────────────────────────
+// `auth_self_keep` means the session's polkit agent (lxqt-policykit-agent here)
+// raises a password dialog of its own. The settings menu's whole design is that
+// finder's own box is the only thing that ever asks for a password — see
+// PasswordPrompt.qml and the "no polkit prompts" note in scripts/firewall.sh —
+// and here that dialog would land between the name box and the scan box, in the
+// middle of a flow that is meant to read as one gesture.
+//
+// So the password is still required, and it is still the user's own: Security →
+// Fingerprints puts finder's password box up first and PAM validates it against
+// the `vlock` service before this script is ever run. What the rule removes is
+// the SECOND prompt for the same fact, not the check.
+//
+// ── The trade, stated plainly ─────────────────────────────────────────────
+// With this in place, any process already running as this user in the active
+// local session can enrol a fingerprint without a prompt — and an enrolled
+// finger unlocks the lock screen. The gate in the settings menu is ours, not
+// the kernel's, so it protects the person at the keyboard and not against code
+// already running as them.
+//
+// Two things bound that. `subject.local && subject.active` means it does not
+// apply over SSH or to a session that is not the one on the screen, and
+// `verify` — matching an existing finger — is already granted outright
+// upstream, so the class of access is not new. Anything running as this user
+// could also read ~/.ssh and drive hyprctl; a fingerprint slot is not the
+// weakest thing in that reach.
+//
+// If that trade is not wanted, delete this file. scripts/fingerprint.sh reports
+// ENROLL_READY="no" when it is absent and the Fingerprints page says so instead
+// of hanging behind a dialog nobody expected.
+polkit.addRule(function (action, subject) {
+    if (action.id === "net.reactivated.fprint.device.enroll" &&
+        subject.local && subject.active && subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
