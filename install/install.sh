@@ -331,6 +331,17 @@ phase_configs() {
         ok "webapp launchers repointed at $HOME"
     fi
     deploy_dir "$DOTDIR/webapps/icons" "$HOME/.local/share/icons/webapps" || true
+
+    # neofetch's config points image_source at a wallpaper by absolute path.
+    # Same class as the rc files and the .desktop entries above: it is a
+    # mirror-only file, so nothing ever expanded $HOME in it, and under a
+    # different username it names a directory that does not exist. neofetch
+    # then falls back to ASCII with no complaint, which is why this was never
+    # noticed. Rewritten here rather than excluded, because the rest of the
+    # file is a real config worth keeping.
+    if [ "$DRY_RUN" = 0 ] && [ -f "$HOME/.config/neofetch/config.conf" ]; then
+        sed -i "s#/home/[A-Za-z0-9_.-]\+/#$HOME/#g" "$HOME/.config/neofetch/config.conf"
+    fi
     deploy_dir "$DOTDIR/wallpapers"           "$HOME/Pictures/wallpapers" || true
     deploy_dir "$DOTDIR/spicetify/Themes"     "$HOME/.config/spicetify/Themes" || true
 
@@ -1515,6 +1526,116 @@ phase_verify() {
              | grep -oE '~/\.config/[A-Za-z0-9_./-]+\.sh' | sort -u)
     [ "$missing" = 0 ] && chk "every keybind script exists and is executable"
 
+    # ── the settings menu's back end ───────────────────────────────────
+    # These are reached from QML, never from a keybind, so the sweep above
+    # cannot see them: finder's settings pages shell out to them by absolute
+    # path. A missing or non-executable one fails the same silent way the agent
+    # collectors do — the page opens, the action does nothing, and there is no
+    # error anywhere. Named individually rather than globbed, because the point
+    # is to catch one that never got deployed, and a glob over what IS there
+    # can only ever pass.
+    local sm miss_sm=""
+    for sm in ui-prefs.sh list-keybinds.sh icon-index.sh about-system.sh \
+              privileged-run.sh change-password.sh firewall.sh fingerprint.sh \
+              webapp-install.sh webapp-remove.sh nightlight.sh ocr-region.sh; do
+        [ -x "$HOME/.config/scripts/$sm" ] || miss_sm="$miss_sm $sm"
+    done
+    if [ -n "$miss_sm" ]; then
+        bad "settings-menu back end missing or not executable:$miss_sm"
+    else
+        chk "settings-menu back end deployed and executable (12 scripts)"
+    fi
+
+    # ── the authentication surface ─────────────────────────────────────
+    # Both the lock screen (lockscreen/LockContext.qml) and finder's password
+    # box (finder/PasswordPrompt.qml) authenticate against the `vlock` PAM
+    # service, chosen because it is plain pam_unix with no faillock — see the
+    # note in PasswordPrompt.qml. It is a FILE from the kbd package, not
+    # anything either app ships, and without it every password in this desktop
+    # is rejected: the screen cannot be unlocked and no settings action can
+    # authorise. systemd depends on kbd so this is expected to pass; it is
+    # checked because the cost of it failing unnoticed is being locked out.
+    if [ -r /etc/pam.d/vlock ]; then
+        chk "/etc/pam.d/vlock present (the PAM service both password boxes use)"
+    else
+        bad "/etc/pam.d/vlock is MISSING — the lock screen and the settings password box will reject every password. Install it with: sudo pacman -S kbd"
+    fi
+
+    # ── polkit's password prompts ──────────────────────────────────────
+    # Every prompt polkit raises on this desktop is drawn by finder's password
+    # box, through scripts/polkit-agent.py. The failure mode if any piece of
+    # this is missing is the worst kind: nothing appears and nothing errors —
+    # the program that wanted a privilege simply waits, because polkit is
+    # content to wait forever for an agent that never answers. Hence three
+    # separate checks rather than one.
+    if [ -x "$HOME/.config/scripts/polkit-agent.py" ]; then
+        chk "polkit-agent.py deployed and executable"
+    else
+        bad "polkit-agent.py missing or not executable — NOTHING will answer a polkit prompt (no dialog, no error, the caller just waits)"
+    fi
+    # python-gobject and the two typelibs polkit ships. Imported rather than
+    # asked of pacman: a typelib can be present and unloadable, and the agent's
+    # very first statement is this import — it exits there, before it registers
+    # anything, if it fails.
+    if python3 -c "import gi; gi.require_version('Polkit','1.0'); gi.require_version('PolkitAgent','1.0'); from gi.repository import Polkit, PolkitAgent" >/dev/null 2>&1; then
+        chk "python-gobject + the Polkit/PolkitAgent typelibs import"
+    else
+        bad "the polkit agent cannot import its bindings — install python-gobject (and polkit, which ships the typelibs)"
+    fi
+    # The setuid helper is the only thing on the machine allowed to answer
+    # polkitd, and the agent drives it through PolkitAgent.Session. Without the
+    # setuid bit it refuses to run at all ("needs to be setuid root"), which
+    # would make every password look wrong.
+    if [ -u /usr/lib/polkit-1/polkit-agent-helper-1 ]; then
+        chk "polkit-agent-helper-1 present and setuid"
+    else
+        bad "/usr/lib/polkit-1/polkit-agent-helper-1 is missing or not setuid — no password can ever be accepted by polkit"
+    fi
+    # Running, finally — but only worth reporting inside a live session: on a
+    # fresh rebuild from a TTY nothing has autostarted yet, and saying so would
+    # be noise rather than a finding.
+    if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+        if pgrep -f "scripts/polkit-agent.py" >/dev/null 2>&1; then
+            chk "the polkit agent is running in this session"
+        else
+            warn "the polkit agent is not running — it autostarts from hyprland.lua, so this session predates the change or it died. Start it with: setsid ~/.config/scripts/polkit-agent.py </dev/null >/dev/null 2>&1 &"
+        fi
+    fi
+
+    # ── night light ────────────────────────────────────────────────────
+    # The Display panel's night-light row is a hyprsunset front end, and it
+    # reads "on" as "hyprsunset is running". With the binary absent the toggle
+    # is not broken so much as permanently off, which looks identical.
+    if have hyprsunset; then
+        chk "hyprsunset present (the Display panel's night light)"
+    else
+        bad "hyprsunset not installed — the Display panel's night light can never turn on"
+    fi
+
+    # ── fingerprint enrolment authorisation ────────────────────────────
+    # Enrolling and deleting check net.reactivated.fprint.device.enroll, which
+    # upstream leaves at auth_self_keep — meaning the session's polkit agent
+    # raises a password dialog of ITS own, on top of the one finder already
+    # drew. The rule grants it to the local active user in wheel, matching the
+    # `verify` action the lock screen already relies on. Without it the page
+    # still works: fingerprint.sh reports ENROLL_READY="no" and the page says
+    # so rather than hanging. So this is a warning, not a failure.
+    #
+    # Asked of polkit, NOT by looking for the file. /etc/polkit-1/rules.d is
+    # 0750 root:polkitd, so `[ -r ... ]` is false for this user whether the
+    # rule is there or not — measured: the first version of this check
+    # reported the rule absent on a machine where pkcheck answered
+    # "polkit.result=yes". Ask the thing that decides. pkcheck with no
+    # --allow-user-interaction returns the verdict without raising a dialog,
+    # which is the same call `fingerprint.sh status` makes for ENROLL_READY.
+    if [ -n "${HW_FPRINT:-}" ] && have pkcheck; then
+        if pkcheck --action-id net.reactivated.fprint.device.enroll --process $$ >/dev/null 2>&1; then
+            chk "fingerprint enrolment is authorised without a second polkit dialog"
+        else
+            warn "enrolling a fingerprint is not authorised for this session, so Settings will report it as unavailable rather than hanging behind a dialog. Install the rule with: $SCRIPT_DIR/install.sh --only system"
+        fi
+    fi
+
     # ── hardware profile ───────────────────────────────────────────────
     check "hardware.env written" "[ -s '$HOME/.config/scripts/hardware.env' ]"
 
@@ -1531,7 +1652,8 @@ phase_verify() {
     local b
     for b in hyprctl quickshell qs socat jq fd fzf wl-copy wl-paste grim notify-send \
              gio qalc pdftoppm brightnessctl wal inotifywait nmcli bluetoothctl \
-             python3; do
+             python3 \
+             slurp tesseract magick hyprsunset pkcheck busctl chpasswd; do
         have "$b" || bad "missing runtime dependency: $b"
     done
     chk "runtime dependency sweep finished"

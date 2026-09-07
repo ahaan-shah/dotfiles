@@ -54,7 +54,7 @@ alias remove="~/.config/scripts/pkg-remove.sh"
 
 # encryption
 alias sycrypt="gpg -c"
-alias encrypt="gpg --encrypt -r ahaanshah04@gmail.com"
+alias encrypt="gpg --encrypt -r REDACTED@example.invalid"
 alias decrypt="gpg --decrypt"
 
 ### ---------- STARSHIP PROMPT ----------

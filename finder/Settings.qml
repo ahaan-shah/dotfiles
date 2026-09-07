@@ -948,15 +948,34 @@ QtObject {
     // picker, a form, a sudo prompt, fastfetch. The title is what hyprland.lua's
     // window rules match on to size these windows, so it is not decoration.
     //
-    // `--title X -e <cmd>` is the kitty/alacritty form; UiConfig.terminal is
-    // whatever the user picked under Setup -> Defaults, so an exotic terminal
-    // with different flags would need this line adjusted.
+    // kitty, HARDCODED — deliberately not UiConfig.terminal. These are the
+    // desktop's own panels, not the user's shell: hyprland.lua floats and sizes
+    // every one of them with a rule that matches `class = "^(kitty)$"` plus the
+    // title below, and about-float's size is derived from kitty's measured cell
+    // (9.14 x 21 px at this font). Both halves break under any other terminal:
+    //
+    //   • the class no longer matches, so no rule fires and the window comes up
+    //     at the compositor default — measured under ghostty as an About panel
+    //     too narrow for fastfetch's 112 columns, wrapping every line onto the
+    //     next and garbling the whole page.
+    //   • `--title X` is the kitty/alacritty spelling. ghostty's parser wants
+    //     `--title=X` and rejects the separated form outright: it pops a
+    //     "Configuration Errors" dialog reading `cli:1:title: value required`
+    //     / `cli:2:about: invalid field` over the broken window.
+    //
+    // Setup -> Defaults offers eight terminals and each has its own flag
+    // spelling, its own window class and its own cell size, so honouring the
+    // preference here would mean a flag table AND a re-measured window rule per
+    // terminal. AppIndex.launch() and hyprland.lua's F12 btop bind already
+    // resolved this the same way for the same reason; this was the one place
+    // that still leaked the preference into a window the desktop owns.
+    // UiConfig.terminal stays what it is for: SUPER+Q and $TERMINAL.
     function _term(title, script, hold) {
         var inner = root._q(root.scriptDir + "/" + script.split(" ")[0])
         const args = script.split(" ").slice(1)
         for (let i = 0; i < args.length; i++) inner += " " + root._q(args[i])
         if (hold) inner += "; printf '\\nPress any key to close… '; read -rsn1 _"
-        root._sh(UiConfig.terminal + " --title " + root._q(title) +
+        root._sh("kitty --title " + root._q(title) +
                  " -e bash -c " + root._q(inner))
     }
 

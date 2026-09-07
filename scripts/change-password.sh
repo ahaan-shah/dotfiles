@@ -38,6 +38,16 @@ set -uo pipefail
 RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 umask 077
 
+# Whose password this changes, asked of the kernel rather than taken from the
+# environment. This is spawned from a Quickshell Process, so its environment is
+# whatever the compositor was started with — and the one thing chpasswd reads
+# is "<user>:<password>", running as root. An unset or tampered $USER would
+# therefore aim a root-privileged password change at an account nobody asked
+# for, and the sudo above would already have succeeded. scripts/fingerprint.sh
+# carries the same guard for the same reason.
+ME="$(id -un)"
+[ -n "$ME" ] || { echo "cannot resolve the current user" >&2; exit 1; }
+
 # Sweep our own stale files before starting. The EXIT trap below covers every
 # ordinary exit and TERM/INT/HUP/QUIT, but nothing can catch SIGKILL — and
 # Quickshell kills the child when the menu closes, which is exactly how two
@@ -84,7 +94,7 @@ fi
 
 # chpasswd reads user:password on ITS stdin; the askpass helper is a separate
 # program, so the two never contend for the same descriptor.
-if ! printf '%s:%s\n' "$USER" "$NEW" | sudo -A chpasswd 2>/dev/null; then
+if ! printf '%s:%s\n' "$ME" "$NEW" | sudo -A chpasswd 2>/dev/null; then
     echo "the password could not be changed" >&2
     exit 1
 fi

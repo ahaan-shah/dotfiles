@@ -12,7 +12,6 @@ python-pywal
 python-pywalfox
 rstudio-desktop-bin
 spotify
-stably-orca-bin
 voxtype
 vscodium-bin
 yay

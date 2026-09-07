@@ -113,6 +113,11 @@ Item {
                 const cmd = data.trim()
                 if (cmd.startsWith("open:")) root.openMode(cmd.slice(5))
                 else if (cmd === "close") root.close()
+                // The polkit agent announcing a waiting request. The id is
+                // all that travels on this socket — anything running as this
+                // user can write here, so the request itself is fetched from
+                // the agent over its own socket. See PolkitLink.qml.
+                else if (cmd.startsWith("polkit:")) polkitLink.announce(cmd.slice(7))
             }
         }
     }
@@ -682,7 +687,11 @@ Item {
         id: passwordPrompt
         anchors.centerIn: parent
         shown: root.shown && root.passwordMode
+        onPolkitPassword: pw => polkitLink.sendPassword(pw)
         onFinished: ok => {
+            // polkit's flow answers to the agent, not to Settings: there is no
+            // toggle to settle and nothing was run from here.
+            if (passwordPrompt.flow === "polkit") { root.close(); return }
             const pending = root.pendingVerify
             root.pendingVerify = ""
             if (ok && pending !== "") {
@@ -700,6 +709,14 @@ Item {
             root.close()
         }
         onCancelled: {
+            // Esc on a polkit prompt is an answer, and the program waiting on
+            // it is entitled to hear it: without this it would sit blocked on
+            // an authentication that is never coming.
+            if (passwordPrompt.flow === "polkit") {
+                polkitLink.cancel()
+                root.close()
+                return
+            }
             // Read it BEFORE clearing it — the first version of this cleared
             // first and then tested the cleared value, so the branch below was
             // dead and a cancelled verify always closed finder.
@@ -713,6 +730,31 @@ Item {
             if (wasVerify) root.returnToSettings()
             else root.close()
         }
+    }
+
+    // ── polkit's prompts, in the same box ───────────────────────────────
+    // This is the only way into the password box that does not start with the
+    // user asking for something: the request comes from whatever program went
+    // looking for a privilege. So it takes the window over whatever finder was
+    // doing — a half-typed search is worth less than an answer to the thing
+    // now waiting on it, and polkit will wait indefinitely for one.
+    PolkitLink {
+        id: polkitLink
+        onRequested: (message, user, isSelf) => {
+            root.pendingVerify = ""
+            root.query = ""          // or a stale search reappears behind the box
+            root.mode = "password"
+            root.shown = true
+            passwordPrompt.beginPolkit(message, user, isSelf)
+            inputFocusTimer.start()
+        }
+        onFailed:   passwordPrompt.polkitFailed()
+        onAccepted: passwordPrompt.polkitAccepted()
+        // polkitd withdrew the request (the caller gave up), or the agent went
+        // away. Nothing is listening for a password any more, so the box goes
+        // — but only if it is still the polkit one, since the user may have
+        // cancelled it and opened something else in the meantime.
+        onWithdrawn: if (root.passwordMode && passwordPrompt.flow === "polkit") root.close()
     }
 
     // ── The fingerprint enrol box ───────────────────────────────────────

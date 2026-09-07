@@ -42,7 +42,44 @@ that needs it, and those phases can be skipped with `--no-root`.
 | `plugins` | **Builds** `hyprbars` via `hyprpm` and deliberately leaves it **disabled**. Never fatal — `hyprland.lua` gates its hyprbars block, so an absent plugin means no title bars and nothing else |
 | `hibernation` | Opt-in. Swap file, `resume=` cmdline, resume hook — the only phase that edits your bootloader |
 | `fingerprint` | Offers to enrol fingers, if a reader is detected. Interactive by nature |
-| `verify` | Asserts the result, including that `hyprland.lua` actually parses and that the agent collectors really write a record |
+| `verify` | Asserts the result, including that `hyprland.lua` actually parses, that the agent collectors really write a record, that the settings menu's twelve back-end scripts are executable, and that `/etc/pam.d/vlock` exists — the PAM service both password boxes authenticate against |
+
+## Nothing of the original machine travels
+
+This installer's job is to set a machine up **the way this one is set up**, not
+to connect it to this one. Anything that describes the original — its hardware,
+its paths, its owner, its credentials — is either regenerated on the target or
+never leaves in the first place. The three mechanisms:
+
+**Excluded at the source.** `scripts/backup_configs.sh` never copies
+`hardware.env` (this laptop's touchpad, battery, LEDs and GPU addresses),
+`monitors.*`/`workspaces.conf` (this panel's resolution and scale),
+`firewall-off.conf` (which services this machine has switched off) or
+`fingerprint-names.conf` (which fingers unlock it, and what they are called).
+Each is regenerated locally: `install.sh --only hardware` writes a new
+`hardware.env` from the target's own sysfs, and the other three come into
+existence the first time you use the page that owns them.
+
+**Neutralised on the way out.** Some files genuinely need an absolute path — a
+`.desktop` file cannot expand `$HOME` — so those are rewritten to `/home/USER/`
+in the mirror and repointed at the real `$HOME` by the `configs` phase. Email
+addresses are redacted. The backup then **refuses to complete** if any absolute
+home path or private source-repo path survives, the same way it already refuses
+on a credential match.
+
+**Never collected at all.** No password reaches any file this repo writes:
+`privileged-run.sh` and `change-password.sh` keep it in a `0600` file on
+`$XDG_RUNTIME_DIR`, which is a per-user tmpfs, for the length of one command.
+Wifi PSKs live in `/etc/NetworkManager/system-connections`, which is root-only
+and deliberately not among the `/etc` files the backup snapshots.
+
+So the privileged pages read the target machine and nothing else. The firewall
+page lists the zones in the target's own `/usr/lib` and `/etc/firewalld`; the
+password box authenticates the target's local account through PAM; the
+fingerprint page enrols against the reader physically attached to it, into
+fprintd's own store, and writes the names it is given to a file that is created
+on first use and never mirrored. There is no state anywhere that ties a machine
+built by this installer back to the one it was authored on.
 
 ## Packages
 

@@ -19,6 +19,7 @@ cups-pk-helper
 discord
 dmidecode
 dnsmasq
+docker
 dosfstools
 dysk
 edk2-ovmf
@@ -65,6 +66,7 @@ inxi
 iwd
 keyd
 kitty
+lazydocker
 lazygit
 less
 libpulse
@@ -76,7 +78,6 @@ limine
 linux
 linux-firmware
 linux-headers
-lxqt-policykit
 mesa-utils
 meson
 minicom
@@ -86,6 +87,7 @@ nautilus
 networkmanager
 noto-fonts
 noto-fonts-emoji
+npm
 nvidia-open
 nvidia-prime
 nvidia-utils

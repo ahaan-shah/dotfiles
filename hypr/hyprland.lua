@@ -270,7 +270,11 @@ hl.on("hyprland.start", function()
     -- hl.exec_cmd("elephant")
     hl.exec_cmd("hyprpm reload")
     -- hl.exec_cmd("walker --gapplication-service")
-    hl.exec_cmd("/usr/bin/lxqt-policykit-agent")
+    -- The session's polkit agent. lxqt-policykit-agent used to be here and
+    -- drew its own Qt5 dialog, which matched nothing else on this desktop;
+    -- this one has no UI of its own and hands every request to finder's
+    -- password box instead. See scripts/polkit-agent.py.
+    hl.exec_cmd("~/.config/scripts/polkit-agent.py")
     hl.exec_cmd("~/.config/scripts/battery_notify.sh")
     -- re-applies the taskbar battery panel's saved charge cap (sysfs
     -- resets to 100 on every boot) — see scripts/apply-battery-threshold.sh

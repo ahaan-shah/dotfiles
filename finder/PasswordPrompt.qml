@@ -42,6 +42,21 @@ import Quickshell.Services.Pam
 // This does the same. There is no blocking "Authenticating…" state and nothing
 // is ever disabled; the failure simply arrives when it arrives.
 //
+// ── And polkit's prompts land here too ───────────────────────────────────
+// Everything polkit would have shown its own dialog for — mounting a disk, a
+// systemd unit, anything run through pkexec — arrives as flow "polkit" from
+// scripts/polkit-agent.py by way of PolkitLink.qml. It is the same box for the
+// same reason the change-password flow is: this is the one place on this
+// desktop that asks for a password, and lxqt-policykit-agent's Qt5 dialog
+// (which answered these before) looked like nothing else here.
+//
+// The vlock pre-check matters even more there than it does for sudo. polkit
+// authenticates through /usr/lib/pam.d/polkit-1, which includes system-auth —
+// pam_faillock and pam_unix, exactly sudo's stack. Measured with the agent's
+// own harness: one wrong password took 2.06s to come back and left one
+// faillock entry against service `polkit-1`. So a typo is refused here, by
+// vlock, and never reaches polkit at all.
+//
 // ── No fingerprint affordance here, and that is measured ─────────────────
 // The lock screen offers one, so it would be reasonable to expect it. But
 // fprintd there is called directly, next to PAM; sudo's PAM stack is what
@@ -75,6 +90,10 @@ Rectangle {
     //          claiming another user's device (`setusername`, auth_admin_keep)
     //          and would be harder, not easier. The box proves who is asking;
     //          Settings.verified() decides what that unlocks.
+    // "polkit" one password, verified, then handed to the polkit agent over
+    //          PolkitLink rather than to a command. The box stays up until the
+    //          agent says polkit accepted it too, because that answer comes
+    //          from another process and can still be no.
     property string flow: "auth"
     property int stepIndex: 0
     property string _current: ""     // flow "passwd": the verified current one
@@ -105,6 +124,51 @@ Rectangle {
         prompt.reason = why
         prompt.command = ""
         prompt._reset()
+    }
+
+    // Whose password polkit wants, and whether that is the person sitting here.
+    // auth_admin resolves through 50-default.rules to unix-group:wheel, which
+    // is this user, so `polkitSelf` is true for everything this machine
+    // actually asks — but an action that named someone else would authenticate
+    // as them, and then neither the wording nor the vlock pre-check below can
+    // pretend otherwise.
+    property string polkitUser: ""
+    property bool polkitSelf: true
+
+    // The password, once verified, goes to the agent instead of to a command.
+    signal polkitPassword(string pw)
+
+    function beginPolkit(why, user, isSelf) {
+        prompt.flow = "polkit"
+        prompt.stepIndex = 0
+        prompt.title = ""
+        prompt.reason = why
+        prompt.command = ""
+        prompt.polkitUser = user
+        prompt.polkitSelf = isSelf
+        prompt._reset()
+    }
+
+    // The agent's verdict on a password this box has already accepted.
+    function polkitFailed() {
+        prompt.busy = false
+        prompt._pending = ""
+        // For our own password vlock has already said it is right, so a "no"
+        // from polkit is not a typo and must not say "try again" — a locked
+        // account (faillock, deny=20 here) or an expired one lands here. When
+        // the identity is someone else there was nothing to pre-check against,
+        // and then it IS a typo.
+        prompt.commandFailed = prompt.polkitSelf
+        prompt.failed = true
+        shakeAnim.restart()
+        field.forceActiveFocus()
+    }
+
+    function polkitAccepted() {
+        prompt.busy = false
+        prompt._pending = ""
+        prompt.succeeded = true
+        doneTimer.restart()
     }
 
     function beginChangePassword() {
@@ -145,6 +209,12 @@ Rectangle {
         if (prompt.mismatch)      return "Passwords do not match"
         if (prompt.failed)        return prompt.commandFailed ? "That did not work" : "Authentication failed"
         if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex].head
+        // A polkit action that wants somebody else's password says so. Every
+        // action on this machine resolves to this user, so this is the branch
+        // that never fires — and it is here so that the day one does not, the
+        // box is not quietly asking for the wrong password.
+        if (prompt.flow === "polkit" && !prompt.polkitSelf)
+            return "Password for " + prompt.polkitUser
         // "Enter Password", not "Administrator password": the password this
         // box wants is Ahaan's own login password every time — PAM validates
         // it against the `vlock` service as this user, and privileged-run.sh
@@ -158,8 +228,9 @@ Rectangle {
         // changed" already say it, and the notification carries the detail.
         if (prompt.succeeded)     return ""
         if (prompt.mismatch)      return "Type the new password again"
-        if (prompt.failed)        return prompt.commandFailed ? "The password was accepted, but the command failed"
-                                                             : "Try again, or press esc to cancel"
+        if (prompt.failed)        return !prompt.commandFailed ? "Try again, or press esc to cancel"
+                                : prompt.flow === "polkit" ? "The password was accepted here, but polkit refused it"
+                                                           : "The password was accepted, but the command failed"
         if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex].hint
         return prompt.reason
     }
@@ -201,7 +272,18 @@ Rectangle {
             }
         }
 
-        // Step 0 of either flow: verify the password before anything else.
+        if (prompt.flow === "polkit" && !prompt.polkitSelf) {
+            // Someone else's password: vlock authenticates THIS user and would
+            // reject it however right it is, so there is nothing to pre-check
+            // with. It goes straight to the agent and polkit's own PAM stack
+            // decides — the slow path, with faillock, which is the price of
+            // being asked for a password that is not ours.
+            prompt.busy = true
+            prompt.polkitPassword(attempt)
+            return
+        }
+
+        // Step 0 of any other flow: verify the password before anything else.
         prompt.busy = true
         prompt._pending = attempt
         const pam = pamComponent.createObject(prompt, { config: "vlock", _response: attempt })
@@ -231,6 +313,14 @@ Rectangle {
                     prompt.busy = false
                     prompt.stepIndex = 1
                     field.forceActiveFocus()
+                } else if (prompt.flow === "polkit") {
+                    // Verified here; now polkit has to accept it as well.
+                    // `busy` stays set — the box is genuinely waiting on
+                    // another process — and polkitAccepted/polkitFailed is
+                    // what clears it.
+                    const pw = prompt._pending
+                    prompt._pending = ""
+                    prompt.polkitPassword(pw)
                 } else if (prompt.flow === "verify") {
                     // Verified and done. No command, no sudo — the same
                     // "Authenticated" beat as flow "auth", and then finished()
@@ -412,6 +502,15 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
+                    // Two lines, not one. Every subline this box wrote itself
+                    // fits on one — but polkit's do not: it supplies its own
+                    // wording for the action, and "Authentication is required
+                    // to run a program as another user" was cut at "as ano…"
+                    // in the very first screenshot of this flow. The card
+                    // grows by a line when it needs to and is unchanged
+                    // otherwise.
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
                     elide: Text.ElideRight
                     visible: text.length > 0
                     text: prompt.subline

@@ -1,9 +1,8 @@
 [Desktop Entry]
 Name=Claude
-Exec=chromium --app=https://claude.ai/new
-StartupWMClass=chrome-claude.ai__new-Default
-Icon=/home/ahaan/.local/share/icons/webapps/claude.png
+Exec=chromium --app=https://claude.ai
+StartupWMClass=chrome-claude.ai__-Default
+Icon=/home/USER/.local/share/icons/webapps/claude.svg
 Type=Application
-Categories=Utility;
-Keywords=claude;ai;
-
+Categories=Network;
+Keywords=claude;webapp;

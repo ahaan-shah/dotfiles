@@ -14,10 +14,9 @@ alias top="vtop --theme brew"
 alias neo="neofetch"
 alias ff="fastfetch"
 alias yaz="yazi"
-alias bkpconfigs="/home/ahaan/.config/scripts/backup_configs.sh"
-alias backupnow="/home/ahaan/.config/scripts/backup_files.sh"
+alias bkpconfigs="~/.config/scripts/backup_configs.sh"
+alias backupnow="~/.config/scripts/backup_files.sh"
 alias py="python"
-alias arduinodata="/home/ahaan/college/year-2/sem4/dsp/Arduino/scripts/log_arduino.sh"
 alias f="figlet"
 alias btui="bluetui"
 alias ave="source .venv/bin/activate"
@@ -29,7 +28,7 @@ alias remove="yay -Rns "
 alias search="yay -Ss"
 
 # encryption
-alias encrypt="gpg --encrypt -r ahaanshah04@gmail.com"
+alias encrypt="gpg --encrypt -r REDACTED@example.invalid"
 alias decrypt="gpg --decrypt"
 
 PS1='[\u@\h \W]\$ '

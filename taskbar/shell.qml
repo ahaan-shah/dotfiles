@@ -1529,6 +1529,17 @@ Scope {
         else root.agentVisible = false;
     }
 
+    // The live set is half of what decides who gets a tab (see agentHasData),
+    // so the tab strip has to be rebuilt when an agent starts or stops, not
+    // only when a record lands on disk.
+    onAgentLiveChanged: root.rebuildAgents()
+
+    // Opening the panel is the moment "which agent?" gets answered, so answer
+    // it then rather than leaving whatever the last cycle left behind — and the
+    // moment the numbers have to be current, which is why this is a full
+    // refresh and not the "limits" one the open used to fire. See the timer.
+    onAgentVisibleChanged: if (root.agentVisible) { root.agentPreferLive(); root.agentRefresh("normal"); }
+
     // The collectors are enumerated the same way agent-usage-update.sh does it,
     // and must stay in step with it: skip the update script itself, strip one
     // trailing extension so agent-usage-codex and agent-usage-codex.py both
@@ -1632,6 +1643,14 @@ Scope {
     // (that is how it reports "nothing yet" rather than failing), and this is
     // what stops such a record from putting an empty tab — and an icon — in the
     // bar.
+    //
+    // It is NOT the whole rule: rebuildAgents() also admits an agent whose CLI
+    // is live right now. Measured with a freshly installed, never-authenticated
+    // codex (all-zero record) running alongside nothing else: the bar icon came
+    // up off agentRunning, the panel opened, and the only tab in it was Claude
+    // Code — an agent that was not running. An agent you are looking at is not
+    // an idle install, and the panel must not answer "who is running?" with
+    // somebody else.
     function agentHasData(r) {
         if (!r) return false;
         return root.agentNum(r.totalPrompts) > 0 || root.agentNum(r.totalSessions) > 0
@@ -1646,9 +1665,10 @@ Scope {
             var w = agentWatchers.objectAt(i);
             if (!w || !w.record) continue;
             var r = w.record;
-            if (!root.agentHasData(r)) continue;
+            var id = String(r.id || w.modelData);
+            if (!root.agentHasData(r) && !root.agentLive[id]) continue;
             out.push({
-                id:              String(r.id || w.modelData),
+                id:              id,
                 name:            String(r.name || r.id || w.modelData),
                 tierLabel:       String(r.tierLabel || ""),
                 usageStatusText: String(r.usageStatusText || ""),
@@ -1671,6 +1691,20 @@ Scope {
         if (root.agentIndex >= out.length) root.agentIndex = 0;
     }
 
+    // Which subscription the panel opens on. The tabs sort by name, so with
+    // claude and codex both on record, index 0 is Claude Code whether or not it
+    // is the one running — which is how the panel came to answer "who is
+    // running?" with an agent that was not. Moves only when the current tab is
+    // not itself live, so a choice made by hand with two agents up survives
+    // closing and reopening the panel.
+    function agentPreferLive() {
+        if (root.agents.length < 2) return;
+        var cur = root.agents[Math.max(0, Math.min(root.agentIndex, root.agents.length - 1))];
+        if (cur && root.agentLive[cur.id]) return;
+        for (var i = 0; i < root.agents.length; i++)
+            if (root.agentLive[root.agents[i].id]) { root.agentIndex = i; return; }
+    }
+
     //---- live-process probe ------------------------------------------------
     // `pgrep -x <id>` is enough for every agent so far: claude and codex both
     // set comm to their own name, which keeps this as generic as the rest of
@@ -1685,12 +1719,19 @@ Scope {
                 return "pgrep -x " + root.shq(id) + " >/dev/null 2>&1 && echo " + root.shq(id);
             }).join("; ") + (root.agentProbeIds.length > 0 ? "; true" : "true")]
         stdout: StdioCollector { onStreamFinished: {
-            var live = {}, lines = (this.text || "").split("\n");
+            var live = {}, ids = [], lines = (this.text || "").split("\n");
             for (var i = 0; i < lines.length; i++) {
                 var id = lines[i].trim();
-                if (id !== "") live[id] = true;
+                if (id !== "" && !live[id]) { live[id] = true; ids.push(id); }
             }
-            root.agentLive = live;
+            // Only reassign when the SET changed, for the same reason agentIds
+            // does it: this probe fires every 2s, and agentLive now drives
+            // rebuildAgents(), which reassigns root.agents. Reassigning that
+            // rebuilds the panel's Repeaters — so an unconditional write here
+            // would rebuild the whole dashboard twice a second while an agent
+            // is up.
+            if (ids.sort().join(" ") !== Object.keys(root.agentLive).sort().join(" "))
+                root.agentLive = live;
         } }
     }
 
@@ -1727,11 +1768,22 @@ Scope {
     Timer { interval: 900000; running: true; repeat: true; triggeredOnStart: true
             onTriggered: root.agentRefresh("normal") }
 
-    // While the panel is open the limits are what someone is actually watching,
-    // so re-probe those alone and reuse the transcript scan, which is the
-    // expensive half. The collector caches its probe for 15s of its own accord,
-    // so opening and shutting the panel cannot become a request per flick.
-    Timer { interval: 120000; running: root.agentVisible; repeat: true; triggeredOnStart: true
+    // While the panel is *already* open the limits are what someone is watching
+    // move, so re-probe those alone and reuse the transcript scan, which is the
+    // expensive half.
+    //
+    // triggeredOnStart is deliberately FALSE, and that is the whole fix for a
+    // reported bug: it used to be true, so opening the panel fired a
+    // "limits" refresh — and --limits-only reuses a scan up to 900s old, then
+    // rewrites the record from it. Measured 2026-09-07: codex started at
+    // 20:12:28, which fired the "normal" refresh on agentRunning and cached a
+    // truthful zero (nothing written yet); it was used until 20:24:58; the
+    // panel was opened at 20:26:56 and re-published those same zeros, because
+    // the scan behind them was 868s old and the window is 900. The act of
+    // looking at the panel is exactly when a stale number is least acceptable,
+    // so the open is a full refresh (onAgentVisibleChanged above) and this
+    // timer only handles the ticks after it.
+    Timer { interval: 120000; running: root.agentVisible; repeat: true; triggeredOnStart: false
             onTriggered: root.agentRefresh("limits") }
 
     // A collector installed mid-session shows up within the minute; nothing has
@@ -1857,6 +1909,23 @@ Scope {
         for (var i = 0; i < days.length; i++)
             peak = Math.max(peak, root.agentNum(days[i].messageCount));
         return Math.max(1, peak);
+    }
+
+    // "1 session", not "1 sessions". Every count on this line could be 1 —
+    // codex's first day was 4 prompts, 1 session, 1 active day — and claude
+    // simply never was, which is why the line read correctly for a year.
+    function agentPlural(n, word) {
+        var v = root.agentNum(n);
+        return v + " " + word + (v === 1 ? "" : "s");
+    }
+
+    // Whether the week has anything in it. Not agentWeekPeak() > 0: that one
+    // floors at 1 so it can be divided by, which makes it useless as a test.
+    function agentWeekTotal(a) {
+        var days = a ? (a.recentDays || []) : [], total = 0;
+        for (var i = 0; i < days.length; i++)
+            total += root.agentNum(days[i].messageCount);
+        return total;
     }
 
     function agentModelRows(a) {
@@ -5452,6 +5521,22 @@ Scope {
                     }
                 }
 
+                // ---------- nothing on record yet ----------
+                // An agent earns a tab by running, not only by having usage
+                // (see agentHasData), so this tab can legitimately have no
+                // numbers in it at all — a fresh install, or one that has not
+                // been signed in to. Say so, rather than leaving a hero over a
+                // stack of empty sections.
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.agent && !root.agentHasData(root.agent)
+                    text: root.agentsBusy ? "Collecting usage…" : "No usage recorded yet"
+                    color: root.alpha(root.ncText, 0.45)
+                    font.family: root.ncFont
+                    font.pixelSize: root.ns(10)
+                    wrapMode: Text.WordWrap
+                }
+
                 // ---------- limits ----------
                 PanelDivider { visible: agentLimits.visible }
 
@@ -5532,7 +5617,10 @@ Scope {
                     readonly property var rows: root.agent ? (root.agent.recentDays || []) : []
                     readonly property real peak: root.agentWeekPeak(root.agent)
                     readonly property string today: root.agentToday()
-                    visible: rows.length > 0
+                    // A collector reports "no usage this week" as seven days of
+                    // zero, not as an empty array — draw that as nothing at all
+                    // rather than as seven empty bars under a chart heading.
+                    visible: root.agentWeekTotal(root.agent) > 0
 
                     SectionLabel { text: "TOKENS BY DAY" }
 
@@ -5599,9 +5687,9 @@ Scope {
                     // squeezing it, which is exactly what this line did.
                     Text {
                         visible: root.agent && root.agent.todayPrompts > 0
-                        text: root.agent ? (root.agent.todayPrompts + " prompts, "
-                                            + root.agent.todaySessions + " sessions today  ·  "
-                                            + root.agent.activeDays + " active days") : ""
+                        text: root.agent ? (root.agentPlural(root.agent.todayPrompts, "prompt") + ", "
+                                            + root.agentPlural(root.agent.todaySessions, "session") + " today  ·  "
+                                            + root.agentPlural(root.agent.activeDays, "active day")) : ""
                         color: root.alpha(root.ncText, 0.4)
                         font.family: root.ncFont
                         font.pixelSize: root.ns(9)

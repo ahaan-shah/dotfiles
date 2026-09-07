@@ -551,7 +551,24 @@ def fetch_codex_rpc():
     account_msg = rpc_request(proc, 2, "account/read", timeout=4)
     limits_msg = rpc_request(proc, 3, "account/rateLimits/read", timeout=4)
 
-    account = (account_msg.get("result") or {}).get("account") or {}
+    account_result = account_msg.get("result") or {}
+    account = account_result.get("account") or {}
+    limits_error = limits_msg.get("error") or {}
+
+    # A signed-out CLI answers both calls without failing anything above: with
+    # codex-cli 0.153.4, account/read returns {"account": null,
+    # "requiresOpenaiAuth": true} and account/rateLimits/read returns a JSON-RPC
+    # *error* object -- which has no "result", so the two `or {}`s below read it
+    # as "no limits to report" and nothing here ever raises. That is why a fresh
+    # codex install rendered in the panel as a blank tab whose plan line read
+    # "SUBSCRIPTION". Report the actual state; AUTH_HELP already says the fix.
+    if not account and (account_result.get("requiresOpenaiAuth") or limits_error):
+      result["usageStatusText"] = "Not signed in"
+      return result
+    if limits_error:
+      result["usageStatusText"] = "Codex limits unavailable"
+      result["authHelpText"] = str(limits_error.get("message") or AUTH_HELP)
+
     limits = (limits_msg.get("result") or {}).get("rateLimits") or {}
     plan = limits.get("planType") or account.get("planType") or account.get("type") or ""
     result["tierLabel"] = str(plan) if plan else ""

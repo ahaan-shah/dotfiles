@@ -16,12 +16,17 @@
 // is deliberately left alone at auth_admin_keep.
 //
 // ── Why, rather than just letting polkit ask ──────────────────────────────
-// `auth_self_keep` means the session's polkit agent (lxqt-policykit-agent here)
-// raises a password dialog of its own. The settings menu's whole design is that
-// finder's own box is the only thing that ever asks for a password — see
-// PasswordPrompt.qml and the "no polkit prompts" note in scripts/firewall.sh —
-// and here that dialog would land between the name box and the scan box, in the
-// middle of a flow that is meant to read as one gesture.
+// `auth_self_keep` means the session's polkit agent raises a prompt of its own.
+// The settings menu's whole design is that finder's own box is the only thing
+// that ever asks for a password — see PasswordPrompt.qml and the "no polkit
+// prompts" note in scripts/firewall.sh — and here that ask would land between
+// the name box and the scan box, in the middle of a flow that is meant to read
+// as one gesture.
+//
+// This did not stop mattering when the agent changed. scripts/polkit-agent.py
+// replaced lxqt-policykit-agent and draws polkit's prompts in finder's box, so
+// without this rule the second ask would now take the enrol flow's own window
+// away from it mid-gesture rather than appearing beside it.
 //
 // So the password is still required, and it is still the user's own: Security →
 // Fingerprints puts finder's password box up first and PAM validates it against

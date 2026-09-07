@@ -2,6 +2,6 @@
 Name=TRW
 Exec=chromium --app=https://app.jointherealworld.com/checklist
 StartupWMClass=chrome-app.jointherealworld.com__checklist-Default
-Icon=/home/ahaan/.local/share/icons/webapps/trw.png
+Icon=/home/USER/.local/share/icons/webapps/trw.png
 Type=Application
 

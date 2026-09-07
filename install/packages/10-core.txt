@@ -8,15 +8,44 @@ hypridle
 hyprpaper
 hyprpicker
 hyprshot                  # F11 / Print / ALT+Print binds
+hyprsunset                # the taskbar's Display panel IS a hyprsunset front
+                          #   end: scripts/nightlight.sh drives it over
+                          #   hyprland-ctm-control-v1, and the panel defines
+                          #   "night light on" as "hyprsunset is running".
+                          #   Absent, the toggle silently never turns on —
+                          #   there is no error path, because "not running"
+                          #   is also the honest answer for "off".
 xdg-desktop-portal-hyprland
 xdg-user-dirs
 quickshell                # taskbar, macshell, finder, lockscreen all run on it
 qt5-wayland
 qt6-wayland
-lxqt-policykit            # hyprland.lua autostarts lxqt-policykit-agent
 greetd
 greetd-tuigreet
-polkit
+polkit                    # and its GObject-introspection typelibs, which are
+                          #   what scripts/polkit-agent.py drives: Polkit-1
+                          #   registers the agent, PolkitAgent-1 runs the
+                          #   setuid helper that does the PAM conversation.
+                          #   Both ship in this package, not a separate one.
+python-gobject            # the same agent's only import. Without it every
+                          #   polkit prompt on this desktop silently never
+                          #   appears — the agent exits at `import gi` and
+                          #   nothing is registered, so a program that needs a
+                          #   privilege waits forever instead of asking.
+                          #   lxqt-policykit was removed from this list when
+                          #   the agent replaced it; nothing pulls it in now.
+kbd                       # NOT for the keymap tools: it ships /etc/pam.d/vlock,
+                          #   and that file is the whole authentication surface
+                          #   of this desktop. lockscreen/LockContext.qml and
+                          #   finder/PasswordPrompt.qml both authenticate
+                          #   against the `vlock` PAM service — plain pam_unix,
+                          #   no faillock — so without it nothing can unlock the
+                          #   screen and no settings action can authorise.
+                          #   systemd depends on kbd today, so it is always
+                          #   pulled in anyway; it is named here because the
+                          #   failure mode is a machine you cannot get back
+                          #   into, which is too expensive to leave implicit.
+                          #   The verify phase checks the file, not the package.
 
 # ── audio ─────────────────────────────────────────────────────────────
 pipewire
@@ -72,6 +101,13 @@ python                    # the agent-usage collectors are Python (stdlib only:
                           #   sqlite3, urllib). Pulled in by python-pywal anyway,
                           #   but named because code here calls it directly.
 python-pywal              # the whole colour scheme
+python-pywalfox           # finder/apply-wallpaper.sh calls `pywalfox update`
+                          #   as one step of the theme fan-out, so Firefox
+                          #   retints with everything else. That script has no
+                          #   `set -e` by design, so a missing pywalfox is not
+                          #   fatal — it prints "command not found" to a stderr
+                          #   nobody reads and the browser just stays on the
+                          #   old palette.
 inotify-tools             # WalColors live theme reload in all three shells
 wtype                     # voxtype types through this
 keyd                      # capslock remap (see system/keyd/default.conf)

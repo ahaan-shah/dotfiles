@@ -2,7 +2,7 @@
 Name=Netflix
 Exec=chromium --app=https://www.netflix.com/in/
 StartupWMClass=chrome-www.netflix.com__in_-Default
-Icon=/home/ahaan/.local/share/icons/webapps/netflix.png
+Icon=/home/USER/.local/share/icons/webapps/netflix.png
 Type=Application
 Categories=Utility;
 Keywords=nf;
