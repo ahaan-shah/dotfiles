@@ -42,6 +42,7 @@ alias btui="bluetui"
 alias ave="source .venv/bin/activate"
 alias jnotes="jupyter notebook"
 alias jlab="jupyter lab"
+alias gst="git status"
 
 alias connectiphone="ifuse ~/iphone && nautilus ~/iphone/DCIM"
 alias ninitimes="~/.config/scripts/sleep-timer.sh"
