@@ -95,6 +95,7 @@ nwg-displays
 obs-studio
 obsidian
 obsidian-icon-theme
+opencode
 otf-codenewroman-nerd
 otf-monaspace-nerd
 papers

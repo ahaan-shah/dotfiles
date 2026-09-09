@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<libosinfo version="0.0.1">
+  <!-- Linux Mint is absent from upstream osinfo-db entirely — `osinfo-query os`
+       has no entry under any spelling. Ubuntu-derived, so it inherits Ubuntu's
+       device set. Unlike the Omarchy entry, the volume-id regex here was NOT
+       verified against a real image (none on hand); a miss costs nothing but a
+       fallback to manual selection. -->
+  <os id="http://linuxmint.com/linuxmint/rolling">
+    <short-id>linuxmint</short-id>
+    <name>Linux Mint</name>
+    <vendor>Linux Mint</vendor>
+    <family>linux</family>
+    <distro>linuxmint</distro>
+    <release-status>rolling</release-status>
+    <derives-from id="http://ubuntu.com/ubuntu/24.04"/>
+    <firmware arch="x86_64" type="efi"/>
+
+    <devices>
+      <device id="http://pcisig.com/pci/1af4/1000"/>
+      <device id="http://pcisig.com/pci/1af4/1001"/>
+      <device id="http://pcisig.com/pci/1af4/1002"/>
+      <device id="http://pcisig.com/pci/1af4/1003"/>
+      <device id="http://pcisig.com/pci/1af4/1004"/>
+      <device id="http://pcisig.com/pci/1af4/1005"/>
+      <device id="http://pcisig.com/pci/1af4/1041"/>
+      <device id="http://pcisig.com/pci/1af4/1042"/>
+      <device id="http://pcisig.com/pci/1af4/1043"/>
+      <device id="http://pcisig.com/pci/1af4/1044"/>
+      <device id="http://pcisig.com/pci/1af4/1045"/>
+      <device id="http://pcisig.com/pci/1af4/1048"/>
+      <device id="http://pcisig.com/pci/1af4/1049"/>
+      <device id="http://pcisig.com/pci/1af4/1050"/>
+      <device id="http://pcisig.com/pci/1af4/1052"/>
+      <device id="http://pcisig.com/pci/1b36/0004"/>
+      <device id="http://pcisig.com/pci/8086/293e"/>
+      <device id="http://qemu.org/chipset/x86/q35"/>
+      <device id="http://usb.org/usb/80ee/0021"/>
+    </devices>
+
+    <resources arch="all">
+      <minimum><ram>2147483648</ram><storage>21474836480</storage></minimum>
+      <recommended><ram>4294967296</ram><storage>42949672960</storage></recommended>
+    </resources>
+
+    <media arch="x86_64" live="true">
+      <iso>
+        <volume-id>[Ll]inux ?[Mm]int.*</volume-id>
+      </iso>
+    </media>
+  </os>
+</libosinfo>

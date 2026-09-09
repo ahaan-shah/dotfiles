@@ -1143,7 +1143,75 @@ phase_virt() {
         ok "default storage pool active ($(sudo virsh pool-dumpxml default 2>/dev/null | sed -n 's|.*<path>\(.*\)</path>.*|\1|p'))"
     fi
 
-    ok "VMs ready — open virt-manager, point it at an ISO, and create"
+    # ── 5 · ISO library, and qemu's route to it ────────────────────────
+    # A second pool so ISOs are not mixed in with the disk images, and so the
+    # New VM wizard opens somewhere useful. $HOME, never a literal path: this
+    # tree is mirrored to a public repo.
+    local isodir="$HOME/iso files"
+    run mkdir -p "$isodir"
+    if [ "$DRY_RUN" = 1 ]; then
+        info "DRY would define+autostart the iso_files pool at $isodir"
+    elif have virsh; then
+        if sudo virsh pool-info iso_files >/dev/null 2>&1; then
+            skip "iso_files pool already defined"
+        else
+            run sudo virsh pool-define-as iso_files dir - - - - "$isodir"
+            sudo virsh pool-build iso_files >/dev/null 2>&1 || true
+            run sudo virsh pool-autostart iso_files
+            sudo virsh pool-start iso_files >/dev/null 2>&1 || true
+            ok "iso_files pool -> $isodir"
+        fi
+    fi
+
+    # qemu.conf above makes guests run as the `qemu` user, and $HOME is 0710 on
+    # this install — so qemu cannot traverse into it and every ISO kept in the
+    # home tree fails to open with a bare permission error that names the file,
+    # not the directory above it. One execute bit, no read: qemu can walk
+    # through $HOME but still cannot list it.
+    if getent passwd qemu >/dev/null 2>&1 && have setfacl; then
+        # `getfacl | grep -q` under pipefail is the trap this repo has hit four
+        # times; count into a variable instead.
+        local qacl
+        qacl=$(getfacl -p "$HOME" 2>/dev/null | grep -c '^user:qemu:' || true)
+        if [ "$qacl" -gt 0 ]; then
+            skip "qemu already has traverse on $HOME"
+        else
+            run setfacl -m u:qemu:--x "$HOME"
+            ok "qemu granted traverse (--x, no read) on $HOME"
+        fi
+    fi
+
+    # ── 6 · osinfo entries upstream does not carry ─────────────────────
+    # virt-manager REFUSES to leave step 2 of the wizard when libosinfo cannot
+    # name the media — "You must select an OS" — which reads like the VM failed
+    # to build. It did not; the OS choice only seeds default device models.
+    # Upstream detects Debian, NixOS, Ubuntu, Fedora, openSUSE and Windows
+    # 10/11 unaided but has no entry at all for Mint or Omarchy. This is a
+    # DIRECTORY, not a list in this script: adding a distro is adding a file.
+    # libosinfo's user path is $XDG_CONFIG_HOME/osinfo, which pacman never
+    # touches, so these survive an osinfo-db update.
+    deploy_dir "$SCRIPT_DIR/osinfo" "$HOME/.config/osinfo" || true
+
+    # ── 7 · the VM helper scripts on PATH ──────────────────────────────
+    # They are deployed with everything else into ~/.config/scripts, which is
+    # not on PATH; ~/.local/bin is (set by .zshrc). Symlinks, not copies, so a
+    # later configs phase updates them without touching this one.
+    local vs
+    if [ "$DRY_RUN" = 1 ]; then
+        info "DRY would link vm-create and vm-tune into $HOME/.local/bin"
+    else
+        mkdir -p "$HOME/.local/bin"
+        for vs in vm-create vm-tune; do
+            if [ -x "$HOME/.config/scripts/$vs.sh" ]; then
+                ln -sfn "$HOME/.config/scripts/$vs.sh" "$HOME/.local/bin/$vs"
+                ok "$vs on PATH"
+            else
+                warn "$vs.sh not deployed — run the configs phase first"
+            fi
+        done
+    fi
+
+    ok "VMs ready — 'vm-create <name> <iso>', or virt-manager for the wizard"
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1802,6 +1870,29 @@ phase_verify() {
         else
             skip "libvirt network state needs root; re-run the virt phase to check it"
         fi
+
+        # The wizard dead-ends on an unrecognised ISO, so the local osinfo
+        # entries are load-bearing, not cosmetic. grep -c, not grep -q: this
+        # file runs under pipefail and a -q that exits early SIGPIPEs the
+        # producer, which is the failure this repo has hit four times.
+        if have osinfo-query; then
+            check "osinfo carries the local Omarchy entry" \
+                  "[ \"\$(osinfo-query os 2>/dev/null | grep -c omarchy)\" -gt 0 ]"
+            check "osinfo carries the local Linux Mint entry" \
+                  "[ \"\$(osinfo-query os 2>/dev/null | grep -c linuxmint)\" -gt 0 ]"
+        fi
+        # Guests run as the qemu user; without traverse on $HOME every ISO in
+        # the home tree fails to open.
+        if getent passwd qemu >/dev/null 2>&1 && have getfacl; then
+            check "qemu can traverse \$HOME (ISOs are readable)" \
+                  "[ \"\$(getfacl -p '$HOME' 2>/dev/null | grep -c '^user:qemu:')\" -gt 0 ]"
+        fi
+        # Reached by name from an interactive shell, never from a keybind, so
+        # the keybind sweep above cannot see them.
+        local vs
+        for vs in vm-create vm-tune; do
+            check "$vs is on PATH" "[ -x '$HOME/.local/bin/$vs' ]"
+        done
     fi
 
     # ── fingerprint ────────────────────────────────────────────────────

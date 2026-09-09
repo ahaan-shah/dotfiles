@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<libosinfo version="0.0.1">
+  <!-- Omarchy is not in upstream osinfo-db, so virt-manager's New VM wizard
+       stops at "You must select an OS" and refuses to go on. The match fields
+       below were read off the real 4.0.3 image, not guessed:
+         volume-id     OMARCHY_202609
+         publisher-id  OMARCHY <HTTPS://OMARCHY.ORG>
+         application-id OMARCHY INSTALLER
+       Arch-derived (built with mkarchiso), so the device set is Arch's. -->
+  <os id="http://omarchy.org/omarchy/rolling">
+    <short-id>omarchy</short-id>
+    <name>Omarchy</name>
+    <vendor>Omarchy</vendor>
+    <family>linux</family>
+    <distro>archlinux</distro>
+    <release-status>rolling</release-status>
+    <derives-from id="http://archlinux.org/archlinux/rolling"/>
+    <firmware arch="x86_64" type="efi"/>
+
+    <devices>
+      <device id="http://pcisig.com/pci/1af4/1000"/>
+      <device id="http://pcisig.com/pci/1af4/1001"/>
+      <device id="http://pcisig.com/pci/1af4/1002"/>
+      <device id="http://pcisig.com/pci/1af4/1003"/>
+      <device id="http://pcisig.com/pci/1af4/1004"/>
+      <device id="http://pcisig.com/pci/1af4/1005"/>
+      <device id="http://pcisig.com/pci/1af4/1041"/>
+      <device id="http://pcisig.com/pci/1af4/1042"/>
+      <device id="http://pcisig.com/pci/1af4/1043"/>
+      <device id="http://pcisig.com/pci/1af4/1044"/>
+      <device id="http://pcisig.com/pci/1af4/1045"/>
+      <device id="http://pcisig.com/pci/1af4/1048"/>
+      <device id="http://pcisig.com/pci/1af4/1049"/>
+      <device id="http://pcisig.com/pci/1af4/1050"/>
+      <device id="http://pcisig.com/pci/1af4/1052"/>
+      <device id="http://pcisig.com/pci/1b36/0004"/>
+      <device id="http://pcisig.com/pci/8086/293e"/>
+      <device id="http://qemu.org/chipset/x86/q35"/>
+      <device id="http://usb.org/usb/80ee/0021"/>
+    </devices>
+
+    <resources arch="all">
+      <minimum>
+        <ram>2147483648</ram>
+        <storage>21474836480</storage>
+      </minimum>
+      <recommended>
+        <ram>8589934592</ram>
+        <storage>64424509440</storage>
+      </recommended>
+    </resources>
+
+    <media arch="x86_64" live="true">
+      <iso>
+        <volume-id>OMARCHY_\d{6}</volume-id>
+        <publisher-id>OMARCHY &lt;HTTPS?://(WWW.)?OMARCHY.ORG&gt;</publisher-id>
+        <application-id>OMARCHY INSTALLER</application-id>
+      </iso>
+    </media>
+  </os>
+</libosinfo>

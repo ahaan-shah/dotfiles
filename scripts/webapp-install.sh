@@ -71,9 +71,6 @@ case "$URL" in
     *) URL="https://$URL"; printf '%s  -> assuming %s%s\n' "$DIM" "$URL" "$RESET" ;;
 esac
 
-printf '%sIcon: a URL or a local file. Leave blank to fetch the site'"'"'s favicon.%s\n' "$DIM" "$RESET"
-read -rp "Icon: " ICON_SRC
-
 # slug — the file name for both the .desktop and the icon. Lowercase and
 # alphanumeric-or-dash only, because it also ends up in a path.
 SLUG="$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')"
@@ -95,39 +92,114 @@ WMCLASS="chrome-${HOST}__${URLPATH//\//_}-Default"
 
 BROWSER="$(pick_browser)"
 
-# ── icon ──────────────────────────────────────────────────────────────────
+# ── icon ─────────────────────────────────────────────────────────────────
 mkdir -p "$ICONDIR" "$APPDIR"
 ICON_PATH=""
-fetch_icon() {
-    local src="$1" ext out
-    case "$src" in
+
+# A path typed at this prompt arrives in whatever form the terminal produced.
+# Drag-and-drop wraps the whole thing in quotes, tab-completion backslash-escapes
+# the spaces, and a hand-typed one may start at ~ or at the cwd. All of those
+# used to fall through to the URL branch and be handed to curl, which answered
+# "Bad hostname" and left the app with the generic globe — so they are unpicked
+# here before anything decides what the answer is.
+normalise_src() {
+    local p="$1"
+    case "$p" in
+        "'"*"'"|'"'*'"') p="${p:1:${#p}-2}" ;;   # a quoted paste
+    esac
+    p="${p//\\ / }"                              # "\ " from tab-completion
+    case "$p" in "~") p="$HOME" ;; "~/"*) p="$HOME/${p#\~/}" ;; esac
+    printf '%s' "$p"
+}
+
+# The name is not evidence of what a file is: the favicon service URL has no
+# suffix at all, and a file saved as "logo" is still a PNG — the old code built
+# "$SLUG.$src" out of a whole path in that case and cp died mid-script. So ask
+# file(1) what the bytes are. This also catches the download that isn't an
+# image: a 404 page comes back from curl as a perfectly non-empty file, passed
+# the -s test, and rendered as a blank slot in the dock.
+image_ext() {
+    case "$(file -b --mime-type -- "$1" 2>/dev/null || true)" in
+        image/png)                          printf 'png' ;;
+        image/svg+xml)                      printf 'svg' ;;
+        image/jpeg)                         printf 'jpg' ;;
+        image/x-icon|image/vnd.microsoft.icon) printf 'ico' ;;
+        image/webp)                         printf 'webp' ;;
+        image/gif)                          printf 'gif' ;;
+        *) return 1 ;;
+    esac
+}
+
+warn() { printf '%s  %s%s\n' "$DIM" "$*" "$RESET"; }
+
+# Both installers clear "$SLUG".* first: re-installing an app whose icon was a
+# .png with an .svg would otherwise leave the old file behind for good, since
+# nothing afterwards ever looks at it again.
+install_local_icon() {
+    local src="$1" ext
+    [ -f "$src" ] || { warn "not a readable file: $src"; return 1; }
+    ext="$(image_ext "$src")" || { warn "not an image file: $src"; return 1; }
+    rm -f "$ICONDIR/$SLUG".*
+    cp -f "$src" "$ICONDIR/$SLUG.$ext"
+    chmod 644 "$ICONDIR/$SLUG.$ext"
+    ICON_PATH="$ICONDIR/$SLUG.$ext"
+}
+
+# Downloads land in the same place under the same name, so a web app's icon is
+# always $ICONDIR/$SLUG.<ext> however it was supplied, which is what lets
+# webapp-remove.sh delete it by the Icon= line and know it is ours.
+download_icon() {
+    local src="$1" tmp ext
+    command -v curl >/dev/null || { warn "curl is needed to download an icon"; return 1; }
+    tmp="$(mktemp "${TMPDIR:-/tmp}/webapp-icon.XXXXXX")"
+    if ! curl -fsSL --max-time 20 -o "$tmp" "$src"; then
+        rm -f "$tmp"; warn "could not download $src"; return 1
+    fi
+    ext="$(image_ext "$tmp")" || {
+        rm -f "$tmp"; warn "what came back from $src is not an image"; return 1
+    }
+    rm -f "$ICONDIR/$SLUG".*
+    mv -f "$tmp" "$ICONDIR/$SLUG.$ext"
+    chmod 644 "$ICONDIR/$SLUG.$ext"
+    ICON_PATH="$ICONDIR/$SLUG.$ext"
+}
+
+printf '%sIcon: a path to a local file (tab completes), or a URL.\n      Leave blank to fetch the site'"'"'s favicon.%s\n' "$DIM" "$RESET"
+while [ -z "$ICON_PATH" ]; do
+    # -e for readline, so a path can be tab-completed rather than typed out in
+    # full and got wrong. Only with a tty on stdin: fed from a pipe (a test
+    # harness) readline has nothing to drive it.
+    if [ -t 0 ]; then read -erp "Icon: " ICON_SRC || ICON_SRC=""
+    else            read -rp  "Icon: " ICON_SRC || ICON_SRC=""; fi
+    ICON_SRC="$(normalise_src "$ICON_SRC")"
+
+    case "$ICON_SRC" in
         "") # No icon given: the site's own favicon, upscaled. Google's service
             # is used rather than /favicon.ico directly because that is usually
-            # a 16px .ico, which renders as a smear in a 128px dock slot.
-            src="https://www.google.com/s2/favicons?domain=${HOST}&sz=256"
-            ext="png" ;;
-        /*|~*) # a local file
-            src="${src/#\~/$HOME}"
-            [ -f "$src" ] || die "no such file: $src"
-            ext="${src##*.}"
-            cp -f "$src" "$ICONDIR/$SLUG.$ext"
-            ICON_PATH="$ICONDIR/$SLUG.$ext"
-            return 0 ;;
-        *)  ext="${src##*.}"
-            case "$ext" in png|svg|jpg|jpeg|ico|webp) ;; *) ext="png" ;; esac ;;
+            # a 16px .ico, which renders as a smear in a 128px dock slot. A
+            # failure here is not worth re-prompting over — the generic icon
+            # below is the answer.
+            download_icon "https://www.google.com/s2/favicons?domain=${HOST}&sz=256" || true
+            break ;;
+        http://*|https://*)
+            download_icon "$ICON_SRC" || true ;;
+        *)  if [ -e "$ICON_SRC" ]; then
+                install_local_icon "$ICON_SRC" || true
+            # A host typed without a scheme, matching what the URL prompt above
+            # does with one. Only when it isn't a file and can't be a path:
+            # "example.com/i.png" yes, "icons/i.png" no.
+            elif [[ "$ICON_SRC" != /* && "$ICON_SRC" != .* && "$ICON_SRC" == *.*/* ]]; then
+                warn "-> assuming https://$ICON_SRC"
+                download_icon "https://$ICON_SRC" || true
+            else
+                warn "no such file: $ICON_SRC"
+            fi ;;
     esac
-    command -v curl >/dev/null || die "curl is needed to download an icon"
-    out="$ICONDIR/$SLUG.$ext"
-    if curl -fsSL --max-time 20 -o "$out" "$src"; then
-        # A zero-length file is what a 200-with-empty-body looks like, and it
-        # would leave a .desktop pointing at an icon that renders as nothing.
-        if [ -s "$out" ]; then ICON_PATH="$out"; else rm -f "$out"; fi
-    fi
-}
-fetch_icon "$ICON_SRC"
+    [ -n "$ICON_PATH" ] || warn "try again, or leave it blank for the site's favicon"
+done
 
 if [ -z "$ICON_PATH" ]; then
-    printf '%s  icon could not be fetched — falling back to the generic web icon%s\n' "$DIM" "$RESET"
+    warn "icon could not be fetched — falling back to the generic web icon"
     ICON_PATH="web-browser"
 fi
 

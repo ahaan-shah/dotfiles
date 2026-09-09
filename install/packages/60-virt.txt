@@ -1,12 +1,18 @@
-# Virtual machines — QEMU/KVM through libvirt, driven by virt-manager.
+# Virtual machines — QEMU/KVM through libvirt, driven by virt-manager or by
+# vm-create.sh.
 #
 # Installed only when the CPU actually reports virtualisation support; the
 # `virt` phase then sets the qemu user/group, enables the modular libvirt
-# daemons and marks the default NAT network autostart, so "download an ISO and
-# create a VM" works with no further setup.
+# daemons, marks the default NAT network autostart, adds an ISO pool with the
+# ACL that lets the qemu user reach it, and installs the osinfo entries
+# upstream is missing — so "download an ISO and create a VM" works with no
+# further setup, whatever the ISO is.
 qemu-desktop              # the desktop-oriented QEMU build (x86_64 + UI)
 libvirt
 virt-manager
+virt-install              # vm-create.sh drives this directly; it is also a
+                          # hard dependency of virt-manager, listed because
+                          # something here calls it by name
 virt-viewer
 dnsmasq                   # libvirt's default NAT network needs it for DHCP/DNS
 edk2-ovmf                 # UEFI firmware for guests (Windows 11, Secure Boot)
