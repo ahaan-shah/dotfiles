@@ -30,10 +30,12 @@
 #
 # That is why the lock screen can call fprintd-verify with no ceremony while
 # enrolling and deleting cannot. `auth_self_keep` means the running polkit
-# agent (lxqt-policykit-agent here) puts up a password dialog of its OWN —
-# which is the thing this repo has deliberately engineered out everywhere else,
-# and which would land in the middle of the enrol flow between the name box and
-# the scan box.
+# agent puts up a password prompt of its OWN, which would land in the middle of
+# the enrol flow between the name box and the scan box. That was true when the
+# agent was lxqt-policykit-agent and its Qt5 dialog, and it is still true now
+# that the agent is scripts/polkit-agent.py: its prompt is finder's own
+# password box, so the second ask would TAKE OVER the window the enrol flow is
+# using — the same interruption wearing familiar clothes.
 #
 # install/system/polkit-1/rules.d/49-fprintd-enroll.rules is the answer to
 # that: it grants enrol to the local active user in wheel, exactly as `verify`

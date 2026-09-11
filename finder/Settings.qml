@@ -499,7 +499,8 @@ QtObject {
                 if (at < 0) continue
                 const path = (key === scopeKey) ? "" : root.crumb(key).slice(1).join(" › ")
                 out.push({
-                    id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                    id: r.id, icon: r.icon, iconFont: r.iconFont || "",
+                    title: r.title, kind: r.kind,
                     value: r.value, detail: r.detail, active: r.active === true,
                     font: r.font, pageKey: key, trail: path,
                     // Results carry no subtitle as a rule — they use the
@@ -617,6 +618,67 @@ QtObject {
         }
     }
 
+    // ── what a listing row is drawn with ──────────────────────────────────
+    // A glyph per row where a font has one, and the page's own glyph where none
+    // does. Glyphs and not the apps' own icons, which this briefly did instead:
+    // an icon is a themed PNG that ignores the palette, and Ahaan's call is that
+    // every mark in this menu should take the pywal accent and fade with the
+    // selection like the rest of the column. A glyph is text, so it does.
+    //
+    // The table is here and not in ui-prefs.sh for the same reason every other
+    // glyph in this file is here — which codepoint stands for a thing is a
+    // drawing decision, and the scripts stay drawing-free.
+    //
+    // Unmapped is not a gap to fill with an approximation. nano, helix, micro,
+    // zed, gedit and kate have no mark in any installed font, Zen Browser has
+    // none either, and no terminal emulator does — the page's own pencil,
+    // globe and console say what those rows are honestly, where a borrowed logo
+    // would say something false. Ahaan asked for exactly that for nano, Zen and
+    // the terminals. (The Nerd Font does carry U+E838 "dev-nano", but it draws
+    // a screw, not GNU nano.)
+    //
+    // `font` is the family the glyphs in that table live in. The editors come
+    // out of the Nerd Font every shell already draws with, so they need none.
+    // The browsers do not: Brave's mark exists only in Font Awesome Brands, at
+    // U+E63C — which in JetBrainsMono Nerd Font is "seti-bsl", a different icon
+    // entirely — so naming the family is what stops the row drawing the wrong
+    // thing. Chrome's mark is in both and is taken from Font Awesome too, so the
+    // two browser rows are one family and one weight.
+    readonly property var _glyphs: ({
+        "editors": ({
+            "vim":    "",   // custom-vim
+            "nvim":   "",   // custom-neovim
+            "codium": "",   // dev-vscodium
+            "code":   "",   // dev-vscode
+            "emacs":  ""    // custom-emacs
+        }),
+        // Keyed on the COMMAND's basename, not the command: a browser's value is
+        // whatever its .desktop puts in Exec=, which is "brave" on one machine
+        // and "/usr/bin/brave-browser" on the next. The basename is the part
+        // that identifies it.
+        "browsers": ({
+            "brave":           "",   // fa-brands brave
+            "brave-browser":   "",
+            "chromium":        "",   // fa-brands chrome
+            "chrome":          "",
+            "google-chrome":   "",
+            "google-chrome-stable": ""
+        })
+    })
+
+    readonly property var _glyphFonts: ({ "browsers": "Font Awesome 7 Brands" })
+
+    function _rowGlyph(page, value) {
+        const t = root._glyphs[page.list]
+        if (!t) return ""
+        const base = String(value).substring(String(value).lastIndexOf("/") + 1)
+        return t[base] || ""
+    }
+
+    function _rowGlyphFont(page, value) {
+        return root._rowGlyph(page, value) === "" ? "" : (root._glyphFonts[page.list] || "")
+    }
+
     // value <TAB> label <TAB> detail <TAB> current  — the one format every
     // ui-prefs.sh listing prints, so this parser does not care which one it got.
     function _parseList(key, raw) {
@@ -675,7 +737,13 @@ QtObject {
                 continue
             }
             out.push({
-                id: f[0], icon: p.icon, title: f[1] || f[0], sub: "",
+                // The page's glyph is the FALLBACK, not the rule: a list of
+                // editors under one pencil says the same thing four times and
+                // nothing about which row is which. _rowGlyph answers for the
+                // ones a font can name and leaves the rest to the page.
+                id: f[0], icon: root._rowGlyph(p, f[0]) || p.icon,
+                iconFont: root._rowGlyphFont(p, f[0]),
+                title: f[1] || f[0], sub: "",
                 // "multi" is the firewall's allowed-services list: more than one
                 // row is marked at a time and activating one toggles it, rather
                 // than moving a single selection.

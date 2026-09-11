@@ -372,7 +372,11 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("~/.config/scripts/battery_notify.sh")
     -- re-applies the taskbar battery panel's saved charge cap (sysfs
     -- resets to 100 on every boot) — see scripts/apply-battery-threshold.sh
-    hl.exec_cmd("~/.config/scripts/apply-battery-threshold.sh")
+    -- --resume because a cold boot leaves the EC in exactly the state a
+    -- hibernate resume does, and it is the mode that verifies rather than
+    -- assumes. Without it the cap goes unproven until battery-threshold.timer's
+    -- first run, which OnBootSec puts two minutes out.
+    hl.exec_cmd("~/.config/scripts/apply-battery-threshold.sh --resume")
     -- always come up with the mic MUTED and the LED off, whatever mute state
     -- wireplumber restores from the last session (see scripts/micmute-led.sh)
     hl.exec_cmd("~/.config/scripts/micmute-led.sh startup")

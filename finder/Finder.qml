@@ -61,6 +61,16 @@ Item {
     // ── Open / close ─────────────────────────────────────────────────
     function openMode(m) {
         if (root.shown && root.mode === m) { close(); return }
+        // What is on screen right now, measured BEFORE the mode changes: the
+        // size the next card grows out of. Only when something is actually
+        // visible — opening settings from a closed finder has nothing to morph
+        // from, and pinning to a stale size would make the card jump.
+        const fromSettings = root.shown && root.settingsMode
+        const fromBox      = root.shown && !root.settingsMode
+                             && !root.passwordMode && !root.fingerprintMode
+        const boxW = box.width,             boxH = box.height
+        const setW = settingsPanel.width,   setH = settingsPanel.height
+
         root.mode = m
         root.query = ""
         root.selectedIndex = 0
@@ -76,12 +86,20 @@ Item {
         if (m === "wallpaper") { Wallpapers.refresh(); root._rebuild() }
         if (m === "settings") {
             settingsPanel.reset()
+            // The launcher box becomes the settings card rather than being
+            // replaced by it. Ahaan asked for this both ways round.
+            if (fromBox) settingsPanel.enterFrom(boxW, boxH)
             // Every listing is fetched up front, not on the page that shows it:
             // search reaches the whole subtree, so a font has to be findable
             // from the root without ever opening Fonts. They arrive one at a
             // time, so this does not hold up the panel appearing.
             Settings.prefetchAll()
             Settings.refreshState()
+        } else if (fromSettings) {
+            // And the way back: apps, wallpapers, emoji, clipboard, the power
+            // menus — whichever mode is being opened, its box starts at the
+            // size of the settings card it is taking over from.
+            box.enterFrom(setW, setH)
         }
         inputFocusTimer.start()
     }
@@ -377,6 +395,10 @@ Item {
     readonly property color accentColor: WalColors.color8
     readonly property color errorBg:     WalColors.color1
 
+    // The width of the card's one column: the search box, and the results list
+    // under it. Everything else in the card is measured from it.
+    readonly property int innerW: 644
+
     function _alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
     function _lighter(c, f) { return Qt.lighter(c, f) }
     function _darker(c, f)  { return Qt.darker(c, f) }
@@ -414,8 +436,15 @@ Item {
         anchors.centerIn: parent
         radius: 30
         color: root.bgColor
-        border.width: 1
-        border.color: root._darker(root.accentColor, 1.5)
+        // The taskbar's panel edge, not one of finder's own: 2px of
+        // alpha(color7, 0.8) is what every dropdown in taskbar/shell.qml draws,
+        // and Theme.line/Theme.cardBorder are where that pair lives now — the
+        // settings card, the password box and the fingerprint box already read
+        // from them, so all five surfaces cannot drift apart. This box used to
+        // draw 1px of darker(color8), which on most wallpapers was no edge at
+        // all.
+        border.width: Theme.cardBorder
+        border.color: Theme.line
 
         // Every mode that draws a card of its own has to be listed here. The
         // fingerprint box was added without it and the launcher sat lit up
@@ -425,14 +454,34 @@ Item {
         opacity: (root.shown && !root.settingsMode && !root.passwordMode && !root.fingerprintMode) ? 1 : 0
         scale: (root.shown && !root.settingsMode && !root.passwordMode && !root.fingerprintMode) ? 1 : 0.94
         visible: opacity > 0.001
-        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-        Behavior on scale   { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+        // Theme.motionPage, the same number and curve the settings card fades
+        // and resizes on, so a switch between the two is one movement. See
+        // SettingsPanel's enterFrom for the other half.
+        Behavior on opacity { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
+        Behavior on scale   { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
         Behavior on color   { ColorAnimation { duration: 300 } }
 
-        width: content.width + 40
-        height: content.height + 40
-        Behavior on width  { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-        Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        // heldW/heldH are the settings card's trick, mirrored: coming BACK from
+        // a card of a different size, the box is pinned to that size for one
+        // frame so the Behaviors below have somewhere to animate from. Zero
+        // means "not holding", which is why neither can legitimately be 0.
+        property real heldW: 0
+        property real heldH: 0
+        width:  box.heldW > 0 ? box.heldW : content.width + 40
+        height: box.heldH > 0 ? box.heldH : content.height + 40
+        Behavior on width  { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
+        Behavior on height { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
+
+        function enterFrom(w, h) {
+            if (w <= 0 || h <= 0) return
+            box.heldW = w
+            box.heldH = h
+            boxRelease.restart()
+        }
+        // One frame, the same as SettingsPanel's slideStart: long enough for the
+        // new mode's rows to exist, so the animation starts from a known size
+        // towards a settled one rather than at a moving goalpost.
+        Timer { id: boxRelease; interval: 16; onTriggered: { box.heldW = 0; box.heldH = 0 } }
 
         Column {
             id: content
@@ -441,7 +490,14 @@ Item {
 
             // ── Search input ──────────────────────────────────────────
             Rectangle {
-                width: 644
+                // The search box and the list below it are ONE column and have
+                // to end on the same line — Ahaan, looking at a 644-wide input
+                // sitting over a 600-wide row. So neither number is written
+                // twice: root.innerW is the column, the list takes all of it,
+                // and when the preview pane is out the box stretches to cover
+                // the list AND the preview rather than floating short in a
+                // wider card.
+                width: Math.max(root.innerW, resultsRow.visible ? resultsRow.width : 0)
                 height: 44
                 radius: 16
                 color: root._lighter(root.bgColor, 1.35)
@@ -481,12 +537,18 @@ Item {
 
             // ── Content row: list (+ preview) ─────────────────────────
             Row {
+                id: resultsRow
                 spacing: 10
                 visible: root.displayResults.length > 0
 
                 ListView {
                     id: listCol
-                    width: 600
+                    // The full column when the list is on its own; the leftover
+                    // when a preview sits beside it. 254 would be the leftover
+                    // if the ROW had to stay within innerW, and a file list that
+                    // narrow is unreadable — so in preview mode the row is what
+                    // is wider and the search box above matches it instead.
+                    width: previewBox.visible ? 600 : root.innerW
                     // Cap the list's own height and let it scroll instead of growing
                     // the whole window arbitrarily tall (e.g. the 50-row emoji listing).
                     height: Math.min(contentHeight, 420)
@@ -494,8 +556,50 @@ Item {
                     spacing: 4
                     model: root.displayResults
                     currentIndex: root.selectedIndex
-                    highlightMoveDuration: 100
                     highlightFollowsCurrentItem: true
+
+                    // The selection SLIDES; it used to blink. Each delegate drew
+                    // its own fill and faded it over 100ms, so moving one row was
+                    // two crossfades in different places and never a movement —
+                    // which is what "not smooth" was. One highlight item that the
+                    // view animates between rows is the fix, and it is also the
+                    // settings menu's model: the same fill, outline, radius and
+                    // weight out of Theme, so apps, files, emoji, clipboard,
+                    // wallpapers and the power menus all mark a selection the way
+                    // Settings does.
+                    highlight: Rectangle {
+                        // The view sets y and height; width is ours, and binding
+                        // it to the view keeps the mark the full width of a row
+                        // rather than the width of whatever is in one.
+                        width: listCol.width
+                        radius: Theme.rowRadius
+                        color: Theme.rowSel
+                        border.width: Theme.rowBorder
+                        border.color: Theme.rowSelLine
+                    }
+                    // Theme.motion, the same number the settings band travels
+                    // on, so the two lists move at one speed. Resize matters as
+                    // much as move here: these rows are not one height (a result
+                    // with a subtitle is taller), so a step can change the mark's
+                    // shape as well as its place, and both have to take the same
+                    // time or the box appears to snap and then settle.
+                    highlightMoveDuration: Theme.motion
+                    highlightResizeDuration: Theme.motion
+                    // Velocity and duration are alternatives and velocity is the
+                    // default; -1 is what hands the timing to the durations
+                    // above, otherwise a long jump moves at 400px/s and takes
+                    // however long it takes.
+                    highlightMoveVelocity: -1
+                    highlightResizeVelocity: -1
+                    // The list scrolls itself to keep the selection in view. With
+                    // no range applied that scroll is instant, so stepping past
+                    // the bottom row teleported the whole list under a highlight
+                    // that was still gliding. ApplyRange animates the content
+                    // with the same duration, so the rows and the mark move
+                    // together.
+                    highlightRangeMode: ListView.ApplyRange
+                    preferredHighlightBegin: 0
+                    preferredHighlightEnd: listCol.height
 
                     delegate: Rectangle {
                         id: rowDelegate
@@ -503,9 +607,9 @@ Item {
                         required property int index
                         width: listCol.width
                         height: rowContent.height + 16
-                        radius: 10
-                        color: index === root.selectedIndex ? root._alpha(root.accentColor, 0.25) : "transparent"
-                        Behavior on color { ColorAnimation { duration: 100 } }
+                        // Nothing drawn: the fill and the outline are the view's
+                        // highlight now, one item for the whole list.
+                        color: "transparent"
 
                             Row {
                                 id: rowContent

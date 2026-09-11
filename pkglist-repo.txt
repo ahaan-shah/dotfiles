@@ -84,6 +84,7 @@ minicom
 mpv
 nano
 nautilus
+neovim
 networkmanager
 noto-fonts
 noto-fonts-emoji
@@ -97,6 +98,7 @@ obsidian
 obsidian-icon-theme
 opencode
 otf-codenewroman-nerd
+otf-font-awesome
 otf-monaspace-nerd
 papers
 papirus-icon-theme

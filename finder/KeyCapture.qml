@@ -236,7 +236,10 @@ Rectangle {
     radius: Theme.cardRadius
     color: Theme.bg
     border.width: Theme.cardBorder
-    border.color: Theme.alpha(Theme.accent, 0.55)
+    // Theme.line like every other card in finder, not the accent it used to
+    // draw: "finder entirely wears the taskbar's edge" is the rule now, and
+    // this box already says it is capturing with its title and its live combo.
+    border.color: Theme.line
 
     opacity: cap.shown ? 1 : 0
     scale:   cap.shown ? 1 : 0.97

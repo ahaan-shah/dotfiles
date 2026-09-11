@@ -152,6 +152,12 @@ mark() {
 # can render a title, a subtitle and a "current" marker without knowing what
 # kind of list it asked for. `detail` and `current` are allowed to be empty; the
 # tabs are not.
+#
+# Nothing here says what a row is DRAWN with. A listing briefly carried a fifth
+# column naming each browser's icon-theme icon, so the row could show the app's
+# own logo; Ahaan wanted the glyphs, which take the pywal accent like every
+# other icon in the menu, and a themed PNG does not. Settings.qml owns that
+# decision now and this file is drawing-free again.
 
 list_fonts() {
     # `fc-list : family` prints one comma-separated alias set per font FILE:
@@ -238,18 +244,40 @@ list_browsers() {
 # Terminals and editors have no equivalent of the http-handler marker, so these
 # are probe lists: a fixed set of candidates, filtered down to what is actually
 # installed. A candidate that is not installed is simply not offered.
+#
+# Each entry is  command:label.  The command is the value, because that is what
+# DEFAULT_TERMINAL becomes and what every `$TERMINAL -e …` caller runs — which
+# is also why this stays a probe list rather than a scan of the TerminalEmulator
+# category: a desktop file's Exec is a path with flags on it
+# ("/usr/bin/ghostty --gtk-single-instance=true"), and that is not a thing you
+# can append `-e` to.
+#
+# No per-terminal icon. The font has no mark for kitty, ghostty, alacritty or
+# any of the others — only generic console glyphs — and Ahaan's call is that one
+# honest terminal glyph on every row beats a row of themed PNGs that ignore the
+# palette. The page's own glyph is what they all wear.
 list_terminals() {
-    local c
-    for c in kitty alacritty foot wezterm ghostty gnome-terminal konsole xterm; do
-        command -v "$c" >/dev/null 2>&1 && printf '%s\t%s\t%s\n' "$c" "$c" ""
+    local t c name
+    for t in kitty:Kitty alacritty:Alacritty foot:Foot wezterm:WezTerm \
+             ghostty:Ghostty gnome-terminal:"GNOME Terminal" konsole:Konsole \
+             xterm:xterm; do
+        c="${t%%:*}"; name="${t#*:}"
+        command -v "$c" >/dev/null 2>&1 && printf '%s\t%s\t%s\n' "$c" "$name" ""
     done
     return 0
 }
 
+# The label is the editor's NAME, not its command: "nvim" and "hx" are how you
+# invoke them, not what they are called, and a list of binaries reads as a list
+# of binaries. The value is still the command — that is what $EDITOR becomes —
+# so the two halves of each entry are deliberately different strings.
 list_editors() {
-    local c
-    for c in nvim vim helix hx nano micro emacs code codium zed gedit kate; do
-        command -v "$c" >/dev/null 2>&1 && printf '%s\t%s\t%s\n' "$c" "$c" ""
+    local e c name
+    for e in nvim:Neovim vim:Vim helix:Helix hx:Helix nano:Nano micro:Micro \
+             emacs:Emacs code:"VS Code" codium:VSCodium zed:Zed gedit:gedit \
+             kate:Kate; do
+        c="${e%%:*}"; name="${e#*:}"
+        command -v "$c" >/dev/null 2>&1 && printf '%s\t%s\t%s\n' "$c" "$name" ""
     done
     return 0
 }

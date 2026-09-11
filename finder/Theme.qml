@@ -47,25 +47,39 @@ QtObject {
     function contrast(c) { return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? "black" : "white" }
 
     // ── surfaces ──────────────────────────────────────────────────────────
-    readonly property color line:      root.alpha(root.col7, 0.30)   // the card edge
+    // The card edge, and it is the TASKBAR's edge: alpha(color7, 0.8) at 2px is
+    // exactly what every dropdown panel in taskbar/shell.qml draws (its
+    // `ncBorder`), and Ahaan's call is that finder wear the same one. It was
+    // col7 at 0.30, which against a bright wallpaper was barely an edge at all.
+    readonly property color line:      root.alpha(root.col7, 0.80)   // the card edge
     readonly property color hairline:  root.alpha(root.text, 0.10)   // dividers inside it
-    // Deliberately far below rowSel: at 0.07 a hovered row read as a second
-    // selection, so the pointer resting anywhere made the list ambiguous.
-    readonly property color rowHover:  root.alpha(root.col7, 0.035)
+    // There is no rowHover any more. It was alpha(col7, 0.035) — deliberately
+    // far below rowSel, because at 0.07 a hovered row read as a second
+    // selection — and Ahaan's call is that the pointer should not paint the
+    // list at all. The mouse still SELECTS and still activates; it just leaves
+    // no trail. Anything tempted to add a hover wash back belongs here, and
+    // should ask first.
     // ONE value across the whole row. It was a left-to-right gradient for a
     // while and the falloff is gone: on a row 430px wide it made the right-hand
     // end look unfinished rather than shaped, and the page now has a box and a
     // unit sitting in exactly that end. A selection is one thing, so it is one
     // colour.
     //
-    // 0.55 and not less: pywal's accent is a light warm orange, and a fifth of
-    // it over a near-black card desaturates to mud rather than reading as a
-    // colour at all.
-    readonly property color rowSel:    root.alpha(root.accent, 0.55)
-    // The selected row's outline. Full-strength accent: it is the same mark the
-    // old 3px leading bar was, wrapped around the row instead of stacked beside
-    // it, so it has to read as that mark and not as a divider.
-    readonly property color rowSelLine: root.accent
+    // 0.95, and it is Ahaan's number twice over: he asked for 0.80, tried it on
+    // the running desktop and turned it up here. Before that it was 0.55, and
+    // before that a fifth of the accent, which over a near-black card
+    // desaturated to mud rather than reading as a colour at all. At 0.95 the
+    // selection is the accent, near enough, and the row it marks is
+    // unmistakable from across the screen.
+    readonly property color rowSel:    root.alpha(root.accent, 0.95)
+    // The selected row's outline, and it can no longer BE the accent. At a 0.55
+    // fill a full-strength accent outline stood clear of it; at 0.80 the two
+    // are the same colour four-fifths of the way and the outline vanished into
+    // its own fill — thickening it only made a thicker nothing. So the outline
+    // is drawn in the text colour instead, which is what the taskbar's own
+    // active rows do (`alpha(ncText, 0.85)` in shell.qml) and keeps the mark
+    // legible whatever pywal makes the accent.
+    readonly property color rowSelLine: root.alpha(root.text, 0.85)
 
     readonly property color dim:    root.alpha(root.text, 0.45)   // subtitles, crumbs
     readonly property color dimmer: root.alpha(root.text, 0.30)   // footer hints, chevrons
@@ -81,21 +95,31 @@ QtObject {
     readonly property int cardBorder: 2
     readonly property int rowHeight:  44
     readonly property int rowTall:    58   // with a subtitle
-    readonly property real rowBorder: 1.5  // on the SELECTED row only
+    // On the SELECTED row only, and 1.5 is not a guess: it is the weight the
+    // battery panel's charge-limit buttons carry (taskbar/shell.qml, 1.5px of
+    // alpha(ncText, 0.9) around a solid-accent active button), which is the
+    // same shape doing the same job. Ahaan asked for the two to match. A 2.5px
+    // pass sat between them and read as heavier than anything on the bar.
+    readonly property real rowBorder: 1.5
     readonly property int rowRadius:  12
     readonly property int iconSlot:   26
 
     // ── motion ────────────────────────────────────────────────────────────
     // ONE number for everything the selection does, because the complaint that
     // produced it was that the parts did not match: the highlight slid over
-    // 190ms while the row's own state — the icon coming up to full strength,
-    // the hover fill — switched on its own shorter timing, so a single step
-    // looked like two separate events, one of them slow.
+    // 190ms while the row's own state — the icon coming up to full strength —
+    // switched on its own shorter timing, so a single step looked like two
+    // separate events, one of them slow.
     //
-    // 120 rather than 190: a step of one row is a small distance, and past
-    // roughly 150ms the eye stops reading it as the selection moving and starts
-    // waiting for it to arrive.
-    readonly property int motion: 120
+    // 180, set by Ahaan on the running desktop. The note this replaces argued
+    // for 120 — "past roughly 150ms the eye stops reading it as the selection
+    // moving and starts waiting for it to arrive" — and that was written when
+    // the launcher's selection did not travel at all. Now that it does, and
+    // over a whole card rather than a 430px column, the slower step is the one
+    // that reads as movement. It drives the settings band, the launcher's
+    // highlight (move AND resize) and every colour fade on a row, which is the
+    // point: they cannot disagree.
+    readonly property int motion: 180
 
     // The selection band's two edges do not move together: the one facing the
     // direction of travel leaves on `motion`, the one behind it on `motionLag`,

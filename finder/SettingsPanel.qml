@@ -245,6 +245,28 @@ Rectangle {
         slideIn.restart()
     }
 
+    // Entering the menu from the launcher, and the reason this function exists
+    // at all: the settings card used to appear at its own size while the
+    // launcher box faded out at a different one, which is two cards swapping
+    // rather than one becoming the other. Ahaan: "settings is snappy and like
+    // its own standalone thing".
+    //
+    // It is the PAGE-CHANGE machinery, reused exactly. heldW/heldH pin the card
+    // to the size of the box it is replacing for one frame; slideStart releases
+    // the pin on the next one, and the same Behaviors that grow the card into a
+    // deeper page grow it out of the launcher. Nothing new animates — the
+    // motion is the one this file already had.
+    function enterFrom(w, h) {
+        if (w <= 0 || h <= 0) return
+        panel.heldW = w
+        panel.heldH = h
+        // Off until releaseHold, exactly as in jumpTo: the pin itself must not
+        // animate, or the card slides from wherever it last was.
+        panel.pageAnim = false
+        slideStart.restart()
+        pageAnimClear.restart()
+    }
+
     function reset() {
         panel.pageKey = ""
         panel.query = ""
@@ -319,8 +341,9 @@ Rectangle {
 
         width: 24; height: 24; radius: 8
         anchors.verticalCenter: parent ? parent.verticalCenter : undefined
-        color: sbHover.hovered && sb.enabled ? Theme.alpha(Theme.text, 0.14)
-                                             : Theme.alpha(Theme.text, 0.06)
+        // One fill, lit or not. It used to brighten to 0.14 under the pointer;
+        // no control in finder reacts to hover any more.
+        color: Theme.alpha(Theme.text, 0.06)
         // Disabled means "the range ends here", and it dims rather than
         // vanishing: a + that disappears at the maximum reads as a glitch,
         // where a dim one reads as a limit.
@@ -336,7 +359,6 @@ Rectangle {
             font.pixelSize: 15
         }
 
-        HoverHandler { id: sbHover }
         MouseArea {
             anchors.fill: parent
             enabled: sb.shown && sb.enabled
@@ -401,8 +423,13 @@ Rectangle {
     opacity: panel.shown ? 1 : 0
     scale:   panel.shown ? 1 : 0.97
     visible: opacity > 0.001
-    Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-    Behavior on scale   { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+    // Theme.motionPage and OutCubic, which is what the launcher box fades on
+    // and what this card resizes on. Three numbers used to meet here — the box
+    // left over 150ms, this arrived over 130, and the size morph runs over 190
+    // — and a crossfade whose two halves disagree is exactly what reads as one
+    // thing being replaced by another instead of turning into it.
+    Behavior on opacity { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
+    Behavior on scale   { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
 
     MouseArea { anchors.fill: parent }   // swallow clicks; the scrim is behind
 
@@ -768,18 +795,11 @@ Rectangle {
                     }
                 }
 
-                // Hover only. The selected row's fill and outline are the
-                // ListView's travelling highlight, above — a hovered row still
-                // gets fill alone, because an outline on hover would read as a
-                // second selection.
-                Rectangle {
-                    anchors.fill: parent
-                    radius: Theme.rowRadius
-                    color: rowHover.hovered && !row.isSel ? Theme.rowHover : "transparent"
-                    Behavior on color { ColorAnimation { duration: Theme.motion } }
-                }
-
-                HoverHandler { id: rowHover }
+                // No hover wash, and no HoverHandler to drive one: Ahaan does not
+                // want the pointer painting the list. The MouseArea above stays,
+                // so clicking a row still selects and activates it — "the mouse
+                // should still work" was the other half of the ask. The only
+                // fill on this list is the selection.
 
                 RowLayout {
                     anchors.fill: parent
@@ -802,7 +822,14 @@ Rectangle {
                             // gliding highlight is the snap the glide was meant
                             // to remove.
                             Behavior on color { ColorAnimation { duration: Theme.motion } }
-                            font.family: Theme.font
+                            // Almost always Theme.font, which carries every
+                            // glyph in this menu. The exception is a row whose
+                            // mark lives somewhere else — the browsers draw
+                            // from Font Awesome Brands, because Brave's lion is
+                            // only there and its codepoint is a DIFFERENT icon
+                            // in the Nerd Font. Settings.qml's _glyphs names the
+                            // family; an empty string means the usual one.
+                            font.family: row.modelData.iconFont ? row.modelData.iconFont : Theme.font
                             font.pixelSize: 17
                         }
                     }
@@ -875,7 +902,9 @@ Rectangle {
                             // cases where you know the number you want.
                             StepButton {
                                 glyph: "−"
-                                shown: row.isSel || rowHover.hovered
+                                // Selected only. It used to appear on hover too,
+                                // and hover is gone from this file entirely.
+                                shown: row.isSel
                                 enabled: row.modelData.value !== row.modelData.min
                                 onTapped: panel.bumpValue(row.modelData, -1)
                             }
@@ -1011,7 +1040,7 @@ Rectangle {
 
                             StepButton {
                                 glyph: "+"
-                                shown: row.isSel || rowHover.hovered
+                                shown: row.isSel
                                 enabled: row.modelData.value !== row.modelData.max
                                 onTapped: panel.bumpValue(row.modelData, 1)
                             }

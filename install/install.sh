@@ -1480,7 +1480,20 @@ phase_verify() {
     # home paths in normal use, and leaving them out is how a broken alias
     # ships while this check reports clean.
     local foreign
-    foreign="$(grep -rhoI --exclude='*.bak*' -E '/home/[A-Za-z0-9_.-]+' \
+    # --exclude backup_configs.sh, for the same reason its OWN greps exclude it:
+    # a scanner cannot scan itself. That script performs the /home/USER
+    # redaction, so the placeholder is necessarily written out in its source,
+    # and this check matched it and reported the machine as carrying another
+    # machine's home. Measured 2026-09-11: the single hit across every deployed
+    # config was backup_configs.sh naming its own replacement string. The map
+    # already records this trap for the script's internal greps; this check is
+    # the same trap one layer out, and had never been given the same exclusion.
+    #
+    # Safe to exclude here in a way excluding an ordinary config would not be,
+    # because the file is source in this repo and the one file whose whole
+    # purpose is to be read before it is trusted.
+    foreign="$(grep -rhoI --exclude='*.bak*' --exclude='backup_configs.sh' \
+                 -E '/home/[A-Za-z0-9_.-]+' \
                  "$HOME/.config"/{hypr,taskbar,macshell,finder,lockscreen,scripts} \
                  "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null \
                | sort -u | grep -vx "/home/$USER" || true)"
@@ -1508,7 +1521,14 @@ phase_verify() {
     # is to catch one that never got deployed, and a glob over what IS there
     # can only ever pass.
     local sm miss_sm=""
-    for sm in ui-prefs.sh list-keybinds.sh icon-index.sh about-system.sh \
+    # keybinds.sh and window-rules.sh joined this list on 2026-09-11 with the
+    # pages they serve. Both are reached only from QML — Settings.qml calls
+    # `window-rules.sh list` to draw the Window rules page at all, and
+    # keybinds.sh is what writes a reassignment back — so both fail in exactly
+    # the silent way this check exists for: the page opens, empty or inert, and
+    # nothing is logged anywhere.
+    for sm in ui-prefs.sh list-keybinds.sh keybinds.sh window-rules.sh \
+              icon-index.sh about-system.sh \
               privileged-run.sh change-password.sh firewall.sh fingerprint.sh \
               webapp-install.sh webapp-remove.sh nightlight.sh ocr-region.sh; do
         [ -x "$HOME/.config/scripts/$sm" ] || miss_sm="$miss_sm $sm"
@@ -1516,7 +1536,7 @@ phase_verify() {
     if [ -n "$miss_sm" ]; then
         bad "settings-menu back end missing or not executable:$miss_sm"
     else
-        chk "settings-menu back end deployed and executable (12 scripts)"
+        chk "settings-menu back end deployed and executable (14 scripts)"
     fi
 
     # ── the authentication surface ─────────────────────────────────────
@@ -1555,14 +1575,30 @@ phase_verify() {
     else
         bad "the polkit agent cannot import its bindings — install python-gobject (and polkit, which ships the typelibs)"
     fi
-    # The setuid helper is the only thing on the machine allowed to answer
-    # polkitd, and the agent drives it through PolkitAgent.Session. Without the
-    # setuid bit it refuses to run at all ("needs to be setuid root"), which
-    # would make every password look wrong.
-    if [ -u /usr/lib/polkit-1/polkit-agent-helper-1 ]; then
-        chk "polkit-agent-helper-1 present and setuid"
+    # polkit-agent-helper-1 is the only thing on the machine allowed to answer
+    # polkitd, and the agent drives it through PolkitAgent.Session.
+    #
+    # This used to assert the SETUID BIT, and that assertion is obsolete as of
+    # polkit 127 — it failed on this very machine on 2026-09-11 while polkit was
+    # working perfectly. Arch's polkit 127-3 ships the helper 0755 and starts it
+    # through SOCKET ACTIVATION instead (polkit-agent-helper.socket and
+    # polkit-agent-helper@.service, both in the package), so systemd launches it
+    # as root and the setuid bit is no longer how it gains privilege.
+    # `pacman -Qkk polkit` confirms the 0755 mode is the packaged one, and the
+    # journal shows the helper running and doing PAM auth.
+    #
+    # So the check follows the mechanism: the executable must exist, and it must
+    # be reachable EITHER way — setuid on older polkit, or via the socket on
+    # 127+. Asserting only one of the two is what turned a working machine into
+    # a red line, and a check that cries wolf is a check that gets switched off.
+    if [ ! -x /usr/lib/polkit-1/polkit-agent-helper-1 ]; then
+        bad "/usr/lib/polkit-1/polkit-agent-helper-1 is missing — no password can ever be accepted by polkit"
+    elif [ -u /usr/lib/polkit-1/polkit-agent-helper-1 ]; then
+        chk "polkit-agent-helper-1 present and setuid (pre-127 mechanism)"
+    elif systemctl is-active --quiet polkit-agent-helper.socket; then
+        chk "polkit-agent-helper-1 present, privileged by socket activation"
     else
-        bad "/usr/lib/polkit-1/polkit-agent-helper-1 is missing or not setuid — no password can ever be accepted by polkit"
+        bad "polkit-agent-helper-1 is neither setuid nor socket-activated — no password can ever be accepted by polkit"
     fi
     # Running, finally — but only worth reporting inside a live session: on a
     # fresh rebuild from a TTY nothing has autostarted yet, and saying so would
@@ -1633,12 +1669,36 @@ phase_verify() {
 
     # ── battery cap privilege model ────────────────────────────────────
     if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
-        local th="/sys/class/power_supply/${HW_BATTERY}/charge_control_end_threshold"
+        local bp="/sys/class/power_supply/${HW_BATTERY}"
+        local th="$bp/charge_control_end_threshold"
         if [ -w "$th" ]; then
             chk "charge cap is writable without sudo"
         else
             warn "charge cap not yet writable — expected until you log out and back in"
             warn "(group membership does not apply to an already-running session)"
+        fi
+
+        # The watchdog does not trust the cap it wrote — it watches the PACK to
+        # decide whether the EC is honouring it, because sysfs only ever echoes
+        # the last value written (see apply-battery-threshold.sh note 1, and
+        # the charge-cap section of the system map). That test needs two
+        # readings, and a battery that exposes neither pair leaves --check
+        # permanently unable to conclude: no warning is ever raised, the panel
+        # goes on looking correct, and the pack quietly fills. Precisely the
+        # silent failure this phase exists for, so it is asserted rather than
+        # assumed. Both are checked as a PAIR because the script accepts either
+        # unit convention: charge_* in uAh, energy_* in uWh.
+        if [ -r "$bp/charge_now" ] || [ -r "$bp/energy_now" ]; then
+            chk "battery reports a charge level the cap watchdog can measure"
+        else
+            warn "no charge_now/energy_now on ${HW_BATTERY} — the watchdog can"
+            warn "re-assert the cap but can never verify the EC is honouring it"
+        fi
+        if [ -r "$bp/current_now" ] || [ -r "$bp/power_now" ]; then
+            chk "battery reports current flow, so a lapsed cap is caught in one check"
+        else
+            warn "no current_now/power_now on ${HW_BATTERY} — a lapsed cap is still"
+            warn "caught, but from the slow charge-gain window rather than in one check"
         fi
     fi
 

@@ -211,6 +211,11 @@ Scope {
     // hardware is honouring it, which is what the warning below follows.
     property int batThreshold: 100
     property bool batEnforced: true
+    // WHY the cap is not holding, not just that it isn't. "Not enforced" is
+    // three different situations that want three different sentences on
+    // screen, and the one that matters asks the user to do something physical.
+    // Values come straight from --state: ok | drift | replug | plugback.
+    property string batReason: "ok"
     // Set optimistically on click and defended until --state confirms it landed.
     // Without it a poll can fire while the script is still queued behind its
     // lock and drag the highlight back to the old box — the same "never fight
@@ -231,6 +236,8 @@ Scope {
             }
             root.batThreshold = want;
             root.batEnforced = /enforced=1/.test(out);
+            var r = /reason=(\w+)/.exec(out);
+            root.batReason = r ? r[1] : "ok";
         } }
     }
     Timer { interval: 2000; running: root.batVisible; repeat: true; triggeredOnStart: true
@@ -251,6 +258,7 @@ Scope {
         root.batThresholdPending = v;
         // A fresh choice clears any standing warning; the watchdog re-decides.
         root.batEnforced = true;
+        root.batReason = "ok";
         root.run("~/.config/scripts/apply-battery-threshold.sh " + v +
                   " && notify-send 'Battery' 'Charging capped at " + v + "%' " +
                   "|| notify-send -u critical 'Battery' 'Failed to set charge threshold " +
@@ -4782,8 +4790,18 @@ Scope {
                     // in the caption style the time-to-full label uses — the
                     // same weight of remark, and it reads as part of the panel
                     // rather than as an alert stuck to the bottom of it.
-                    // Clears by itself on unplug, and again on replug once the
-                    // cap has been re-armed.
+                    // It used to clear itself the moment the charger came out
+                    // and again on any replug. That was wrong in both halves:
+                    // going blank mid-gesture read as "unplugging fixed it"
+                    // when nothing had been tested yet, and clearing on the
+                    // replug itself claimed success for a replug that may have
+                    // achieved nothing — which is how a 90% cap reached 100%
+                    // with a panel that looked perfectly correct. The script
+                    // now MEASURES the EC on the replug (it drops the cap below
+                    // the current charge and watches whether current actually
+                    // stops), so this line follows the user through the gesture
+                    // and only goes away when the cap has been observed to
+                    // hold. Hence three sentences rather than one.
                     //
                     // Kept to one line at the default ncScale — ~205px of text
                     // against 268px of content width. It wraps cleanly if a
@@ -4799,7 +4817,15 @@ Scope {
                     // panel and it was not; it was simply the wrong weight.
                     Text {
                         visible: !root.batEnforced
-                        text: "Not enforced \u2014 replug to re-arm"
+                        // Each one names the single next action, so the caption
+                        // is always something the user can act on from where
+                        // they are standing. "replug" while the charger is
+                        // already out is not.
+                        text: root.batReason === "plugback"
+                                  ? "Plug the charger back in to re-arm the limit"
+                              : root.batReason === "drift"
+                                  ? "Limit was overwritten \u2014 restoring it"
+                                  : "Not enforced \u2014 unplug and replug the charger"
                         color: root.alpha(root.ncText, 0.5)
                         horizontalAlignment: Text.AlignHCenter
                         Layout.fillWidth: true
