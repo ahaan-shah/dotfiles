@@ -80,22 +80,66 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # ── reads: never able to prompt, never able to hang ──────────────────────
 
-# The one D-Bus call, always time-boxed. Output looks like:
-#     public (default)
-#       interfaces: wlan0
-active_zone() {
-    local out z con
-    out="$(timeout 3 firewall-cmd --get-active-zones 2>/dev/null)" || out=""
-    z="$(printf '%s' "$out" | head -1 | sed 's/ .*//')"
-    if [ -z "$z" ]; then
-        con="$(nmcli -t -f NAME connection show --active 2>/dev/null | head -1)"
-        [ -n "$con" ] && z="$(nmcli -t -f connection.zone connection show "$con" 2>/dev/null | cut -d: -f2)"
-    fi
-    printf '%s' "${z:-public}"
+# This machine's own interface: the wifi or ethernet one, chosen BY TYPE and
+# never by "whichever came first". A libvirt bridge is an active connection
+# too, and virbr0 outlives the VM that needed it — libvirt's default network is
+# autostart, so the bridge is up at every boot whether or not a guest ever
+# runs. Picking the first row is what let a shut-down VM's interface stand in
+# for the network the laptop is actually on.
+active_iface() {
+    local rows r t
+    rows="$(nmcli -t -f DEVICE,TYPE connection show --active 2>/dev/null)"
+    for t in 802-11-wireless wifi 802-3-ethernet ethernet; do
+        r="$(printf '%s\n' "$rows" | awk -F: -v t="$t" '$2 == t { print $1; exit }')"
+        [ -n "$r" ] && { printf '%s' "$r"; return 0; }
+    done
+    # No wifi and no ethernet — a tunnel or a dock. Still never loopback, and
+    # still never one of the virtual bridges this function exists to skip.
+    printf '%s\n' "$rows" | awk -F: '
+        $1 == "lo" || $1 == "" { next }
+        $1 ~ /^(virbr|docker|br-|veth|vnet|tun|tap)/ { next }
+        { print $1; exit }'
 }
 
-active_iface() { nmcli -t -f DEVICE connection show --active 2>/dev/null | grep -v '^lo$' | head -1; }
-active_con()   { nmcli -t -f NAME   connection show --active 2>/dev/null | head -1; }
+# Asked for BY DEVICE, so the connection named here is always the one carrying
+# the interface above — and so a connection name is never parsed back out of a
+# colon-separated listing it might itself contain a colon in.
+active_con() {
+    local iface
+    iface="$(active_iface)"
+    [ -n "$iface" ] || return 0
+    nmcli -g GENERAL.CONNECTION device show "$iface" 2>/dev/null
+}
+
+# The one D-Bus call, always time-boxed. It lists EVERY active zone, two lines
+# each, and a VM bridge sorts above the real one:
+#     libvirt
+#       interfaces: virbr0
+#     public (default)
+#       interfaces: wlan0
+# So the zone is the one HOLDING this machine's interface. head -1 read that
+# output as "libvirt", which is why the panel insisted on libvirt no matter
+# what public was set to — public was already correct, only the report was not.
+active_zone() {
+    local out z con iface
+    iface="$(active_iface)"
+    out="$(timeout 3 firewall-cmd --get-active-zones 2>/dev/null)" || out=""
+    if [ -n "$out" ] && [ -n "$iface" ]; then
+        z="$(printf '%s\n' "$out" | awk -v want="$iface" '
+            /^[^[:space:]]/ { zone = $1; next }
+            /^[[:space:]]+interfaces:/ {
+                for (i = 2; i <= NF; i++) if ($i == want) { print zone; exit }
+            }')"
+    fi
+    # Then whatever NetworkManager has pinned on the connection — which is where
+    # set-zone persists it — and only then firewalld's default.
+    if [ -z "$z" ]; then
+        con="$(active_con)"
+        [ -n "$con" ] && z="$(nmcli -g connection.zone connection show "$con" 2>/dev/null)"
+    fi
+    [ -z "$z" ] && z="$(timeout 3 firewall-cmd --get-default-zone 2>/dev/null)"
+    printf '%s' "${z:-public}"
+}
 
 zone_file() {
     local z="$1"
@@ -107,7 +151,10 @@ zone_services() {
     local zf
     zf="$(zone_file "$1")"
     [ -n "$zf" ] || return 0
-    sed -n 's/.*<service name="\([^"]*\)".*/\1/p' "$zf"
+    # Both quote styles. The zones firewall-cmd writes use double quotes, the
+    # ones firewalld ships use single ones (libvirt.xml does), and matching only
+    # double meant a shipped zone always counted zero services allowed.
+    sed -n "s/.*<service name=[\"']\([^\"']*\)[\"'].*/\1/p" "$zf"
 }
 
 # Services turned off from this menu, "<zone> <service>" per line. They stay

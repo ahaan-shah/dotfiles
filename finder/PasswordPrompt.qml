@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Quickshell.Io
 import Quickshell.Services.Pam
 
@@ -193,6 +194,27 @@ Rectangle {
 
     readonly property bool alarm: prompt.failed || prompt.mismatch
 
+    // Driven from `succeeded` rather than from each of the three places that
+    // set it — polkit accepting, PAM accepting, and the command coming back —
+    // so a fourth one cannot forget to play it.
+    SequentialAnimation {
+        id: okAnim
+        NumberAnimation {
+            target: okMark; property: "pop"; from: 0.35; to: 1
+            duration: 240; easing.type: Easing.OutBack; easing.overshoot: 2.4
+        }
+        NumberAnimation {
+            target: okMark; property: "prog"; from: 0; to: 1
+            duration: 300; easing.type: Easing.OutCubic
+        }
+    }
+    onSucceededChanged: {
+        okAnim.stop()
+        okMark.pop = 0.35
+        okMark.prog = 0
+        if (prompt.succeeded) okAnim.start()
+    }
+
     // Held for a beat on success before the box goes. Authenticating used to
     // just fade out, which is indistinguishable from the box being dismissed —
     // there was nothing that said the password had been accepted.
@@ -366,7 +388,10 @@ Rectangle {
     // Long enough to register, short enough not to be in the way.
     property var _doneTimer: Timer {
         id: doneTimer
-        interval: 700
+        // 700 while success was a word and a tinted chip. The mark takes 540ms
+        // to pop and then draw, and closing at 700 cut the stroke off partway.
+        // 1000 lets it finish and be seen finished.
+        interval: 1000
         repeat: false
         onTriggered: prompt.finished(true)
     }
@@ -380,10 +405,11 @@ Rectangle {
         // A Quickshell Process hands its child a PIPE. With nothing reading the
         // far end, the child blocks the moment it has written a pipe buffer's
         // worth (64K) and never exits, so onExited never fires and `busy` is
-        // never cleared. `hyprbars.sh … --persist` runs `hyprpm enable`, which
-        // REBUILDS the plugin and prints steadily while it does — which is
-        // exactly how this was hit. Same family as the SIGPIPE rule: the child
-        // and the pipe have to be dealt with deliberately, one way or the other.
+        // never cleared. Hit with a command that rebuilt a Hyprland plugin and
+        // printed steadily while it did — that particular caller is gone, but
+        // any command here that is chatty enough will do it again. Same family
+        // as the SIGPIPE rule: the child and the pipe have to be dealt with
+        // deliberately, one way or the other.
         //
         // Collected rather than redirected to /dev/null, so stderr can say what
         // went wrong when a command fails.
@@ -436,7 +462,7 @@ Rectangle {
     radius: Theme.cardRadius
     color: Theme.bg
     // Thicker while green: at 1px the success state was easy to miss entirely.
-    border.width: prompt.succeeded ? 2.5 : 1
+    border.width: prompt.succeeded ? 3 : Theme.cardBorder
     border.color: prompt.succeeded ? Theme.alpha(Theme.good, 0.85)
                 : prompt.alarm ? Theme.alpha(Theme.danger, 0.55) : Theme.line
     Behavior on border.color { ColorAnimation { duration: 160 } }
@@ -478,8 +504,11 @@ Rectangle {
                 Behavior on color { ColorAnimation { duration: 160 } }
                 Text {
                     anchors.centerIn: parent
-                    // The lock closes into a tick the moment it is accepted.
-                    text: prompt.succeeded ? "󰄬" : "󰌾"
+                    // Stays a lock, and goes green. It used to become a tick,
+                    // which was the only success mark there was — now the field
+                    // below draws one at four times the size, and two ticks in a
+                    // 260px card is one of them saying nothing.
+                    text: "󰌾"
                     color: prompt.succeeded ? Theme.good
                          : prompt.alarm ? Theme.danger : Theme.text
                     font.family: Theme.font
@@ -524,12 +553,95 @@ Rectangle {
         // ── the field ─────────────────────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
+            // FIXED. The mark is 52px in a 42px slot and simply overhangs it by
+            // 5px top and bottom, into the column's own 14px spacing — nothing
+            // clips here, and nothing else is drawn in that gap. Growing the
+            // slot to enclose the mark instead meant the whole card resized on
+            // success, which is a second animation nobody asked for on top of
+            // the one that is the point.
             implicitHeight: 42
             radius: 12
-            color: Theme.alpha(Theme.col7, 0.07)
+            // The field disappears entirely rather than turning green: on
+            // success there is nothing to type into, and a box drawn around a
+            // confirmation mark frames it as an input that has been filled in.
+            // What is left is the mark alone on the card.
+            color: prompt.succeeded ? "transparent" : Theme.alpha(Theme.col7, 0.07)
             border.width: 1
-            border.color: field.activeFocus ? Theme.alpha(Theme.accent, 0.55) : Theme.hairline
-            Behavior on border.color { ColorAnimation { duration: 140 } }
+            border.color: prompt.succeeded ? "transparent"
+                        : field.activeFocus ? Theme.alpha(Theme.accent, 0.55) : Theme.hairline
+            Behavior on color { ColorAnimation { duration: 200 } }
+            Behavior on border.color { ColorAnimation { duration: 200 } }
+
+            // ── the mark ──────────────────────────────────────────────────
+            // A disc that pops, then a check that DRAWS itself inside it, in
+            // that order — the shape of the thing iOS does when Face ID approves
+            // a purchase, and the reason this is a sequence of two animations
+            // rather than one fade.
+            //
+            // The stroke grows by MOVING ITS ENDPOINT, not by uncovering a
+            // finished path with a dash pattern. The dash trick is the usual way
+            // to do this and it silently does nothing here: Shape.CurveRenderer
+            // ignores dashed strokes, so the check rendered complete on its
+            // first frame and the animation was invisible. Falling back to the
+            // geometry renderer would have got the dashes working and lost the
+            // analytic antialiasing that makes a 5px diagonal stroke look drawn
+            // rather than stepped — so the geometry animates instead, which
+            // needs no renderer feature at all.
+            //
+            // `prog` walks 0..1 along the two segments end to end. While the
+            // first is still growing the second is pinned to the first's tip and
+            // has zero length: without that it would draw from the tip to the
+            // corner and the short arm would appear complete instantly.
+            Item {
+                id: okMark
+                anchors.centerIn: parent
+                width: 52; height: 52
+                visible: prompt.succeeded
+
+                property real pop:  0.35   // disc scale
+                property real prog: 0      // 0 undrawn -> 1 fully drawn
+
+                // The check, in this item's own 64px coordinates.
+                readonly property real ax: 14.5; readonly property real ay: 26.5
+                readonly property real bx: 22.5; readonly property real by: 34.5
+                readonly property real cx: 38.0; readonly property real cy: 18.0
+                readonly property real s1: Math.hypot(bx - ax, by - ay)
+                readonly property real s2: Math.hypot(cx - bx, cy - by)
+                readonly property real t:  okMark.prog * (okMark.s1 + okMark.s2)
+                readonly property real k1: Math.max(0, Math.min(1, okMark.t / okMark.s1))
+                readonly property real k2: Math.max(0, Math.min(1, (okMark.t - okMark.s1) / okMark.s2))
+                readonly property real e1x: okMark.ax + (okMark.bx - okMark.ax) * okMark.k1
+                readonly property real e1y: okMark.ay + (okMark.by - okMark.ay) * okMark.k1
+                readonly property real e2x: okMark.k1 < 1 ? okMark.e1x
+                                          : okMark.bx + (okMark.cx - okMark.bx) * okMark.k2
+                readonly property real e2y: okMark.k1 < 1 ? okMark.e1y
+                                          : okMark.by + (okMark.cy - okMark.by) * okMark.k2
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: Theme.good
+                    scale: okMark.pop
+                }
+
+                Shape {
+                    anchors.fill: parent
+                    preferredRendererType: Shape.CurveRenderer
+                    // Scaled with the disc, so the check is never hanging in
+                    // space over a circle that has not finished arriving.
+                    scale: okMark.pop
+                    ShapePath {
+                        strokeColor: Theme.bg
+                        strokeWidth: 4.2
+                        fillColor: "transparent"
+                        capStyle: ShapePath.RoundCap
+                        joinStyle: ShapePath.RoundJoin
+                        startX: okMark.ax; startY: okMark.ay
+                        PathLine { x: okMark.e1x; y: okMark.e1y }
+                        PathLine { x: okMark.e2x; y: okMark.e2y }
+                    }
+                }
+            }
 
             // Dots rather than the field's own echo: the lock screen shows the
             // same feedback, and it keeps the caret out of a field whose
@@ -539,6 +651,12 @@ Rectangle {
                 anchors.leftMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 7
+                // The dots, the placeholder and the "checking…" note all clear
+                // out together on success. This is the fix for the box that sat
+                // there empty under the word "Authenticated": the field was
+                // still a field, just with nothing in it.
+                opacity: prompt.succeeded ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 120 } }
                 Repeater {
                     model: dots.count
                     Rectangle {
@@ -558,6 +676,8 @@ Rectangle {
                 anchors.leftMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
                 visible: dots.count === 0
+                opacity: prompt.succeeded ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 120 } }
                 text: "Password"
                 color: Theme.dimmer
                 font.family: Theme.font
@@ -571,6 +691,8 @@ Rectangle {
                 anchors.rightMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
                 visible: prompt.busy
+                opacity: prompt.succeeded ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 120 } }
                 text: "checking…"
                 color: Theme.dimmer
                 font.family: Theme.font
@@ -606,6 +728,9 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: 14
+            // Neither key does anything once it has been accepted.
+            opacity: prompt.succeeded ? 0 : 1
+            Behavior on opacity { NumberAnimation { duration: 140 } }
             Text {
                 text: "↵ confirm"
                 color: Theme.dimmer

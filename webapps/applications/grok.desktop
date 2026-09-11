@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Grok
+Exec=chromium --app=https://grok.com/
+StartupWMClass=chrome-grok.com__-Default
+Icon=/home/USER/.local/share/icons/webapps/grok.svg
+Type=Application
+Categories=Network;
+Keywords=grok;webapp;

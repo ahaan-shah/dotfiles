@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # list-keybinds.sh — every keybind, one per line, as
-#   <combo> <TAB> <what it does> <TAB> <the call it makes>
+#   <declared combo> <TAB> <combo in force> <TAB> <what it does> <TAB> <the call>
 # for finder's settings menu (Setup -> Keybindings).
+#
+# TWO combos, because a bind can be reassigned. The DECLARED one is what
+# hyprland.lua says and it is the identity of the bind — it is what
+# keybinds.conf keys an override on, and it never changes. The one IN FORCE is
+# what is actually pressed, which is the override where there is one. The page
+# shows the second and reassigns against the first.
 #
 # ── Why this parses the config and not `hyprctl binds` ────────────────────
 # `hyprctl binds` is authoritative about WHAT IS BOUND, and useless about what
@@ -123,15 +129,72 @@ parse() {
     ' "$CONF"
 }
 
-ROWS="$(parse)"
-FILE_N="$(printf '%s\n' "$ROWS" | grep -c . || true)"
+# ── the overrides ─────────────────────────────────────────────────────────
+# Same file and the same key derivation as hyprland.lua's wrapper and
+# keybinds.sh: upper-cased, every run of non-alphanumeric collapsed to one
+# underscore, prefixed KB_. The three deriving it identically is the entire
+# interface between them.
+KBCONF="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/keybinds.conf"
+
+apply_overrides() {
+    if [ ! -f "$KBCONF" ]; then
+        awk -F'\t' 'BEGIN{OFS="\t"} { print $1, $1, $2, $3 }'
+        return
+    fi
+    awk -F'\t' -v conf="$KBCONF" '
+        BEGIN {
+            OFS = "\t"
+            while ((getline line < conf) > 0) {
+                if (line !~ /^[[:space:]]*[A-Z_][A-Z0-9_]*[[:space:]]*=/) continue
+                k = line; sub(/[[:space:]]*=.*$/, "", k); gsub(/[[:space:]]/, "", k)
+                v = line; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/"[[:space:]]*$/, "", v)
+                if (v != "") ov[k] = v
+            }
+            close(conf)
+        }
+        function kb_key(c,   s) {
+            s = toupper(c); gsub(/[^A-Z0-9]+/, "_", s)
+            sub(/^_+/, "", s); sub(/_+$/, "", s)
+            return "KB_" s
+        }
+        # "@unbound" is hyprland.lua'"'"'s sentinel for a bind whose combo was
+        # taken by something else. It comes through as an EMPTY combo in force,
+        # which is what the page renders as unassigned — and what the count
+        # check below has to know about, since such a bind is deliberately not
+        # registered with the compositor at all.
+        {
+            k = kb_key($1)
+            eff = (k in ov) ? ov[k] : $1
+            if (eff == "@unbound") eff = ""
+            print $1, eff, $2, $3
+        }
+    '
+}
+
+ROWS="$(parse | apply_overrides)"
+# Binds the config declares AND registers. An unbound one is declared here and
+# deliberately never reaches Hyprland, so counting it would make the cross-check
+# below report a discrepancy on every reassignment that displaced something.
+FILE_N="$(printf '%s\n' "$ROWS" | awk -F'\t' '$2 != "" { n++ } END { print n+0 }')"
 
 # The count cross-check. Captured first, never piped straight into grep -c.
 if command -v hyprctl >/dev/null; then
     BINDS="$(hyprctl binds 2>/dev/null || true)"
-    LIVE_N="$(printf '%s' "$BINDS" | grep -c '^bind' || true)"
+    # Only the DEFAULT submap. hyprland.lua also defines a `capture` submap
+    # holding one emergency-exit bind — see the end of that file — and the
+    # compositor counts it while this parser, which reads hl.bind( lines in the
+    # default map, cannot see it. Counting all of them made this warning fire on
+    # every open, reporting a discrepancy that was the submap and nothing else.
+    #
+    # Every bind prints exactly one "submap:" line, empty for the default map,
+    # so counting the empty ones counts the default map. grep -c rather than a
+    # block-matching awk: the first attempt at this tried to pair each "bind"
+    # header with the blank line after it and undercounted by seven, and there
+    # is no reason to track state for something that is one line per record.
+    LIVE_N="$(printf '%s\n' "$BINDS" | grep -c '^[[:space:]]*submap:[[:space:]]*$' || true)"
+
     if [ -n "$BINDS" ] && [ "${LIVE_N:-0}" -ne "$FILE_N" ]; then
-        printf '!\tWARNING: compositor has %s binds, this config defines %s — see: hyprctl configerrors\t\n' \
+        printf '!\t!\tWARNING: compositor has %s binds, this config defines %s — see: hyprctl configerrors\t\n' \
             "$LIVE_N" "$FILE_N"
     fi
 fi

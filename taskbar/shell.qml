@@ -30,6 +30,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import QtQuick.Effects
+import QtQuick.Shapes
 
 Scope {
     id: root
@@ -196,14 +197,41 @@ Scope {
     readonly property real batTimeSeconds: root.batCharging ? (batDev ? batDev.timeToFull : 0) : (batDev ? batDev.timeToEmpty : 0)
     readonly property string batTimeLabel: root.batCharging ? "Time to Full Charge" : "Time Remaining"
 
-    // current charge_control_end_threshold, polled from sysfs while the panel is open
+    // What the charge cap is SET to, and whether it is actually holding.
+    //
+    // Read from apply-battery-threshold.sh --state, not from sysfs. The sysfs
+    // attribute is asus-wmi's own cache of the last value written to it, so it
+    // answers "what did someone last write" and not "what did the user ask
+    // for" — and those diverge exactly when something has gone wrong: a write
+    // that lost a race to a concurrent one, or an EC that dropped the cap.
+    // Polling it is what made the picker snap back to 80 after a click on 90:
+    // the panel was faithfully reporting a write that had been clobbered, with
+    // nothing to say so. --state reports the saved intent, which is what the
+    // highlight should follow, plus the watchdog's verdict on whether the
+    // hardware is honouring it, which is what the warning below follows.
     property int batThreshold: 100
+    property bool batEnforced: true
+    // Set optimistically on click and defended until --state confirms it landed.
+    // Without it a poll can fire while the script is still queued behind its
+    // lock and drag the highlight back to the old box — the same "never fight
+    // the user's input" rule as brightPending on the brightness slider.
+    property int batThresholdPending: -1
     Process {
         id: batThresholdRead
-        command: ["bash", "-c", root.batResolve +
-                  "cat \"$B/charge_control_end_threshold\" 2>/dev/null"]
+        command: ["bash", "-c", "~/.config/scripts/apply-battery-threshold.sh --state"]
         stdout: StdioCollector { onStreamFinished: {
-            var v = parseInt((this.text || "").trim()); if (!isNaN(v)) root.batThreshold = v; } }
+            var out = this.text || "";
+            var m = /want=(\d+)/.exec(out);
+            if (!m) return;                       // no battery, or the script is missing
+            var want = parseInt(m[1]);
+            if (root.batThresholdPending >= 0) {
+                if (want !== root.batThresholdPending) return;   // click has not landed yet
+                root.batThresholdPending = -1;
+                batThresholdSettle.stop();
+            }
+            root.batThreshold = want;
+            root.batEnforced = /enforced=1/.test(out);
+        } }
     }
     Timer { interval: 2000; running: root.batVisible; repeat: true; triggeredOnStart: true
             onTriggered: batThresholdRead.running = true }
@@ -215,21 +243,29 @@ Scope {
     // a no-op at the driver level, which is why re-clicking the same percentage
     // did nothing after a hibernate had silently reset the EC. See the script.
     function setBatteryThreshold(v) {
-        // update the highlighted box immediately — don't wait on the shell
-        // round-trip (write + notify-send) before the UI reflects the click.
-        // The periodic batThresholdRead poll re-syncs from real sysfs state
-        // shortly after anyway, so this optimistic set self-corrects if the
-        // write actually failed (e.g. permission denied pre-relogin).
+        // Update the highlighted box immediately — the script takes a lock and
+        // then makes two EC writes 0.3s apart, so the round trip is most of a
+        // second even when it succeeds, and the picker must not sit on the old
+        // value for that long.
         root.batThreshold = v;
+        root.batThresholdPending = v;
+        // A fresh choice clears any standing warning; the watchdog re-decides.
+        root.batEnforced = true;
         root.run("~/.config/scripts/apply-battery-threshold.sh " + v +
                   " && notify-send 'Battery' 'Charging capped at " + v + "%' " +
                   "|| notify-send -u critical 'Battery' 'Failed to set charge threshold " +
                   "(see $XDG_RUNTIME_DIR/battery-threshold.log)'");
         batThresholdReapply.restart();
+        batThresholdSettle.restart();
     }
-    // re-read shortly after a click to confirm/correct the optimistic update
-    // above against the real sysfs value
-    Timer { id: batThresholdReapply; interval: 400; onTriggered: batThresholdRead.running = true }
+    // Confirm the optimistic value against --state once the script has had time
+    // to take its lock and record the choice.
+    Timer { id: batThresholdReapply; interval: 900; onTriggered: batThresholdRead.running = true }
+    // ...and stop defending it after that. If the write genuinely failed, the
+    // panel has to show the truth rather than the click forever. 20s covers the
+    // worst case the script allows: a full 15s wait on the lock plus the writes.
+    Timer { id: batThresholdSettle; interval: 20000
+            onTriggered: { root.batThresholdPending = -1; batThresholdRead.running = true; } }
 
 
     //========================================================================//
@@ -2282,6 +2318,121 @@ Scope {
         Tooltip { target: lbl; text: lbl.tip; shown: hover.hovered && lbl.tip !== "" }
     }
 
+    // The battery module: a ring, and nothing else.
+    //
+    // What this replaces was "90%" plus one of six battery glyphs. The glyph
+    // was a five-step quantisation of the percentage printed beside it — at bar
+    // size the difference between two adjacent steps is about two pixels of
+    // fill — so between them they said one thing twice and neither said it
+    // precisely. The arc is continuous: it is the same information the six
+    // glyphs were approximating, at the size the icon already occupied. The
+    // exact figure is one click away in the battery panel.
+    //
+    // The sweep starts at 12 o'clock and runs ANTICLOCKWISE, so half charge is
+    // a half ring down the left side and three quarters is three quarters of a
+    // ring. PathAngleArc measures from 3 o'clock with positive = clockwise,
+    // which is why that is startAngle -90 and a NEGATIVE sweep.
+    component BatteryRing: Item {
+        id: bring
+        property int cap: 0
+        property bool charging: false
+        property color ringColor: root.col7
+        property color hoverColor: root.col9
+        signal leftClicked()
+
+        // Sized to the icon it stands in for, not to a number it no longer
+        // holds. Measured white-on-black at this font and size: the wifi glyph
+        // beside it paints 17.5 x 12.5px, and a 16px ring paints 16.5 x 16.0 —
+        // so it matches the neighbour it sits next to on WIDTH, which is the
+        // dimension a fan-shaped glyph and a circle can actually share. 14 was
+        // also tried and read visibly small; 18 out-weighed every other glyph
+        // on the bar. Stroke 2 rather than 2.5 for the same reason: 2.5 came
+        // out heavier than the Nerd Font icons either side of it.
+        //
+        // The item still claims the 20px a BarLabel occupies, so the island
+        // geometry is exactly what it was when this was a text label.
+        readonly property int ringSize: 16
+        readonly property real stroke: 2
+        implicitHeight: 20
+        implicitWidth: ringSize + 10             // BarLabel's 5px padding, both sides
+
+        // Not readonly: a Behavior cannot be attached to a read-only property,
+        // and the 200ms hover fade is the same one BarLabel has.
+        property color liveColor: (hover.hovered ? hoverColor : ringColor)
+        Behavior on liveColor { ColorAnimation { duration: 200; easing.type: Easing.InOutQuad } }
+
+        Shape {
+            id: ringShape
+            anchors.centerIn: parent
+            width: bring.ringSize
+            height: bring.ringSize
+            // The curve renderer antialiases the arc analytically. Without it a
+            // 2px stroke at this diameter needs scene-wide multisampling to stop
+            // the ring looking like a bitten coin, and the bar does not enable
+            // that.
+            preferredRendererType: Shape.CurveRenderer
+
+            // The unfilled remainder. Drawn as a full circle underneath rather
+            // than as the complement arc, so there is no seam where the two
+            // meet and no second arc to keep in sync.
+            ShapePath {
+                strokeWidth: bring.stroke
+                strokeColor: root.alpha(bring.liveColor, track.a)
+                fillColor: "transparent"
+                PathAngleArc {
+                    centerX: bring.ringSize / 2; centerY: bring.ringSize / 2
+                    radiusX: (bring.ringSize - bring.stroke) / 2
+                    radiusY: (bring.ringSize - bring.stroke) / 2
+                    startAngle: -90; sweepAngle: 360
+                }
+            }
+
+            // The charge itself.
+            ShapePath {
+                // A zero-length path still paints a dot under a round cap, and a
+                // dot at 12 o'clock on a flat battery reads as a rendering fault
+                // rather than as empty. So 0% draws nothing at all.
+                strokeWidth: bring.stroke
+                strokeColor: bring.cap > 0 ? bring.liveColor : "transparent"
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathAngleArc {
+                    centerX: bring.ringSize / 2; centerY: bring.ringSize / 2
+                    radiusX: (bring.ringSize - bring.stroke) / 2
+                    radiusY: (bring.ringSize - bring.stroke) / 2
+                    startAngle: -90
+                    sweepAngle: -3.6 * Math.max(0, Math.min(100, bring.cap))
+                    // Animated so a percentage tick is a short slide rather than
+                    // a jump, and so plugging in walks the ring up visibly.
+                    Behavior on sweepAngle { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
+                }
+            }
+        }
+
+        // The track carries the charging state, because the glyph that used to
+        // is gone and there is no longer a number to colour either: while
+        // charging it breathes, so the module is alive at a glance.
+        QtObject {
+            id: track
+            property real a: 0.18
+            property real base: 0.18
+        }
+        SequentialAnimation {
+            running: bring.charging
+            loops: Animation.Infinite
+            onStopped: track.a = track.base
+            NumberAnimation { target: track; property: "a"; from: 0.18; to: 0.45; duration: 900; easing.type: Easing.InOutSine }
+            NumberAnimation { target: track; property: "a"; from: 0.45; to: 0.18; duration: 900; easing.type: Easing.InOutSine }
+        }
+
+        HoverHandler { id: hover }
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: false
+            onClicked: bring.leftClicked()
+        }
+    }
+
     // Waybar-style tooltip: separate popup surface, styled like `tooltip{}`.
     component Tooltip: PopupWindow {
         id: ttip
@@ -3710,20 +3861,14 @@ Scope {
                 }
 
                 //=== battery ==================================================
-                BarLabel {
+                BatteryRing {
                     id: battery
-                    property int cap: root.batCap
-                    property bool charging: root.batCharging
-                    property var icons: ["󰁻", "󰁼", "󰁾", "󰂀", "󰂂", "󰁹"]
-                    property string icon: icons[Math.min(icons.length - 1, Math.max(0, Math.floor(cap / (100 / icons.length))))]
-
-                    // format:"{capacity}% {icon}"  format-charging:"{capacity}% 󰂄"
-                    text: charging ? (cap + "% 󰂄") : (cap + "% " + icon)
-                    baseColor: charging ? root.colCharging
+                    cap: root.batCap
+                    charging: root.batCharging
+                    ringColor: charging ? root.colCharging
                                : cap <= 20 ? root.colCritical
                                : cap <= 30 ? root.colWarning
                                : root.col7
-
                     onLeftClicked: root.togglePanel("bat")
 
                     // #battery.critical:not(.charging) blink (0.5s alternate)
@@ -4620,6 +4765,47 @@ Scope {
                                 MouseArea { anchors.fill: parent; onClicked: root.setBatteryThreshold(capBox.modelData) }
                             }
                         }
+                    }
+                    // The cap is enforced by the EC, and the EC drops it
+                    // silently — sysfs keeps reading the right number because
+                    // it is only the driver's cache of what was written. A 90%
+                    // cap once ended a session at 100% with nothing anywhere
+                    // saying so. The watchdog can tell (it watches the charge
+                    // keep climbing past the cap), so when it has, say it here
+                    // instead of letting the panel look correct while the
+                    // battery fills.
+                    //
+                    // A notification was the first attempt and was wrong: this
+                    // is a standing condition, not an event, so a toast fired
+                    // once and then left nothing behind, while the panel that
+                    // could have shown it permanently looked fine. It is drawn
+                    // in the caption style the time-to-full label uses — the
+                    // same weight of remark, and it reads as part of the panel
+                    // rather than as an alert stuck to the bottom of it.
+                    // Clears by itself on unplug, and again on replug once the
+                    // cap has been re-armed.
+                    //
+                    // Kept to one line at the default ncScale — ~205px of text
+                    // against 268px of content width. It wraps cleanly if a
+                    // larger ncScale or a wider ui.conf font pushes it over,
+                    // and the card grows to hold it: a wrapping Text recomputes
+                    // its own implicitHeight once the layout has assigned it a
+                    // width, so the plain construction is correct here. Checked
+                    // rather than assumed — a three-line version of this string
+                    // sits inside the card with the card taller to match, and
+                    // adding an explicit Layout.preferredHeight binding changed
+                    // the rendering not at all. Noted because the amber block
+                    // this replaced *looked* like it was falling out of the
+                    // panel and it was not; it was simply the wrong weight.
+                    Text {
+                        visible: !root.batEnforced
+                        text: "Not enforced \u2014 replug to re-arm"
+                        color: root.alpha(root.ncText, 0.5)
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.family: root.ncFont
+                        font.pixelSize: root.ns(10)
                     }
                 }
             }

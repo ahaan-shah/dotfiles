@@ -369,7 +369,7 @@ Rectangle {
     implicitHeight: col.implicitHeight + Theme.pad * 2
     radius: Theme.cardRadius
     color: Theme.bg
-    border.width: fp.done ? 2.5 : 1
+    border.width: fp.done ? 3 : Theme.cardBorder
     border.color: fp.done ? Theme.alpha(Theme.good, 0.85)
                 : fp.alarm ? Theme.alpha(Theme.danger, 0.55) : Theme.line
     Behavior on border.color { ColorAnimation { duration: 160 } }

@@ -123,6 +123,7 @@ sudo
 swtpm
 syntax-highlighting
 system-config-printer
+tailscale
 tealdeer
 terminus-font
 tesseract-data-eng

@@ -2,14 +2,26 @@
 Description=Watchdog for the BAT0 charge cap
 
 # Why a watchdog and not just "set it once": the cap is enforced by the EC, and
-# the EC drops it silently. sysfs keeps reading the correct number, so nothing
-# short of watching the battery charge past the cap reveals it. Known triggers:
-# resume from hibernate (the kernel's cached value survives in the restored
-# image while the EC has reset), and an upstream asus-wmi issue where
-# asus_wmi_set_devstate() fails to reach the EC with no error reported.
+# the EC drops it silently. sysfs keeps reading the correct number — it is only
+# asus-wmi's cache of the last value written, never a question put to the EC —
+# so nothing short of watching the battery charge past the cap reveals it. Known
+# triggers: resume from suspend/hibernate (the cached value survives while the
+# EC has reset), and an upstream asus-wmi issue where asus_wmi_set_devstate()
+# fails to reach the EC with no error reported.
+#
+# Why it re-asserts rather than only reacting: on 2026-09-09 a 90% cap ended the
+# session at 100%. The old check only acted when sysfs disagreed with the saved
+# value, or when capacity was already 2% over AND status still read "Charging" —
+# and neither holds during the failure that matters. sysfs agrees (it is a
+# cache), and the EC stops reporting "Charging" well before the pack is full
+# while still filling it. So --check now re-arms the cap on a schedule whenever
+# the machine is on AC, and gates the alarm on AC rather than on the status
+# string. See the script for the full argument.
 #
 # 1 minute is comfortably tight: charging 80% -> 100% takes far longer, so a
-# lapse is caught well before it meaningfully overcharges.
+# lapse is caught well before it meaningfully overcharges. The routine re-arm is
+# throttled to once every 3 minutes inside the script, so this interval costs
+# one sysfs read a minute in the common case.
 #
 # Note this is a MONOTONIC timer, so the clock does not advance while suspended
 # and the first post-resume run can be up to a minute late. That is fine for the

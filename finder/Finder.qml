@@ -680,6 +680,40 @@ Item {
         anchors.centerIn: parent
         shown: root.shown && root.settingsMode
         onRequestClose: root.close()
+        onRequestRebind: (declared, label, inForce) => keyCapture.begin(declared, label, inForce)
+    }
+
+    // ── Reassigning a keybind ───────────────────────────────────────────
+    // Declared AFTER the settings panel so it draws on top of it, and it takes
+    // the keyboard while it is up — which is the whole point, since the keys
+    // being pressed are the input rather than a shortcut for anything.
+    //
+    // A dimming scrim of its own, rather than reusing finder's: this is a
+    // modal over the menu, not a replacement for it, and the menu has to stay
+    // visible behind it so you can see which row you are rebinding.
+    Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.45)
+        visible: keyCapture.opacity > 0.001
+        opacity: keyCapture.opacity
+        MouseArea { anchors.fill: parent; onClicked: keyCapture.cancelled() }
+    }
+
+    KeyCapture {
+        id: keyCapture
+        anchors.centerIn: parent
+        shown: root.shown && root.settingsMode && keyCapture.target !== ""
+
+        onCommitted: combo => {
+            const declared = keyCapture.target
+            keyCapture.target = ""
+            settingsPanel.focusInput()
+            Settings.setKeybind(declared, combo)
+        }
+        onCancelled: {
+            keyCapture.target = ""
+            settingsPanel.focusInput()
+        }
     }
 
     // ── The password box ────────────────────────────────────────────────

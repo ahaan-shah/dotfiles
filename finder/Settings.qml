@@ -12,7 +12,7 @@ import Quickshell.Io
 //   Install  -> Package / AUR / Web app
 //   Remove   -> Package / Web app
 //   Update
-//   Setup    -> Monitors / Keybindings / Window titlebar (a switch) / Defaults
+//   Setup    -> Monitors / Keybindings / Window rules / Defaults
 //   Fonts    -> every installed family
 //   Icons    -> every installed icon theme
 //   Theme    -> every installed GTK theme
@@ -64,10 +64,8 @@ QtObject {
                 { id: "install", icon: "󰏔", title: "Install", kind: "menu",   sub: "packages, AUR, web apps" },
                 { id: "remove",  icon: "󰩺", title: "Remove",  kind: "menu",   sub: "packages, web apps" },
                 { id: "update",  icon: "󰚰", title: "Update",  kind: "action" },
-                { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, titlebar, defaults" },
-                { id: "fonts",   icon: "󰛖", title: "Fonts",   kind: "menu",   sub: "the font every shell draws with" },
-                { id: "icons",   icon: "󰋩", title: "Icons",   kind: "menu",   sub: "icon theme" },
-                { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "GTK theme" },
+                { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, defaults" },
+                { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "GTK theme, icons, fonts" },
                 { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
                 { id: "about",   icon: "󰋼", title: "About",   kind: "action" }
             ]
@@ -95,11 +93,7 @@ QtObject {
             rows: [
                 { id: "monitors",    icon: "󰍹", title: "Monitors",        kind: "action" },
                 { id: "keybindings", icon: "󰌌", title: "Keybindings",     kind: "menu", sub: "every bind, searchable" },
-                // A switch, not a submenu: there are only two states and the
-                // page that used to hold them was three rows to express one
-                // boolean. Flipping it also makes it the state used at the next
-                // login — see _action("setup/titlebar").
-                { id: "titlebar",    icon: "󰖯", title: "Window titlebar", kind: "toggle" },
+                { id: "windowrules", icon: "󰖯", title: "Window rules",    kind: "menu", sub: "borders, gaps, rounding, opacity, blur, animation" },
                 { id: "defaults",    icon: "󰀻", title: "Defaults",        kind: "menu", sub: "browser, terminal, editor" }
             ]
         },
@@ -167,14 +161,34 @@ QtObject {
             ]
         },
 
+        // ── Theme ─────────────────────────────────────────────────────────
+        // One door for the three preferences that decide how everything LOOKS,
+        // where the root menu used to spend three of its nine rows on them —
+        // Fonts, Icons and Theme sat as siblings of Install and Security, which
+        // put "which typeface" at the same level as "install a package". They
+        // are one subject, so they are one row now.
+        //
+        // The GTK listing keeps its own page rather than being this page's
+        // listing, so all three read the same way: a row that opens a list.
+        // "Theme" as a title would then have meant two different things one
+        // level apart, hence "GTK theme" on the row it actually names.
+        "theme": {
+            title: "Theme", icon: "󰏘",
+            rows: [
+                { id: "gtk",   icon: "󰏘", title: "GTK theme", kind: "menu", sub: "widget style for GTK apps" },
+                { id: "icons", icon: "󰋩", title: "Icons",     kind: "menu", sub: "icon theme" },
+                { id: "fonts", icon: "󰛖", title: "Fonts",     kind: "menu", sub: "the font every shell draws with" }
+            ]
+        },
+
         // ── the listings ──────────────────────────────────────────────────
         // `renderInOwnFont` is the Fonts page's whole point: a list of family
         // names set in the default font tells you nothing about how any of them
         // look. Each row is drawn in the family it names, so the list IS the
         // preview.
-        "fonts":  { title: "Fonts",  icon: "󰛖", list: "fonts",  pref: "UI_FONT", renderInOwnFont: true, width: 560 },
-        "icons":  { title: "Icons",  icon: "󰋩", list: "icons",  pref: "ICON_THEME" },
-        "theme":  { title: "Theme",  icon: "󰏘", list: "themes", pref: "GTK_THEME", width: 560 },
+        "theme/fonts": { title: "Fonts",     icon: "󰛖", list: "fonts",  pref: "UI_FONT", renderInOwnFont: true, width: 560 },
+        "theme/icons": { title: "Icons",     icon: "󰋩", list: "icons",  pref: "ICON_THEME" },
+        "theme/gtk":   { title: "GTK theme", icon: "󰏘", list: "themes", pref: "GTK_THEME", width: 560 },
 
         "setup/defaults/browser":  { title: "Browser",  icon: "󰖟", list: "browsers",  pref: "DEFAULT_BROWSER", showDetail: true },
         "setup/defaults/terminal": { title: "Terminal", icon: "󰆍", list: "terminals", pref: "DEFAULT_TERMINAL" },
@@ -190,7 +204,24 @@ QtObject {
         // "SUPER + · 34 variants" door with nothing in common behind it and
         // buried every bind one level down. A list of binds wants to be a flat
         // list of binds.
-        "setup/keybindings": { title: "Keybindings", icon: "󰌌", list: "keybinds", width: 660, noGroup: true }
+        "setup/keybindings": { title: "Keybindings", icon: "󰌌", list: "keybinds", width: 660, noGroup: true },
+
+        // ── Window rules ──────────────────────────────────────────────────
+        // The only page whose rows are EDITED rather than chosen. Every other
+        // listing here is "pick one of these"; this one is "here is a number,
+        // type a different one", so its rows carry a kind of their own —
+        // "value" — that the panel renders as a box.
+        //
+        // noGroup because grouping collapses variants of ONE thing and these
+        // are thirteen unrelated settings. Wider than the default because each
+        // row is a label, a description, a box and a unit on one line.
+        //
+        // window-rules.sh is the whole back end, which is the same contract
+        // every other page here keeps: this file decides what to offer and
+        // knows none of the hyprctl option paths, none of the bounds, and
+        // nothing about how a value is applied or made to persist.
+        "setup/windowrules": { title: "Window rules", icon: "󰖯", list: "winrules",
+                               width: 620, noGroup: true }
     })
 
     // Raised when a row needs root. Finder closes the menu and puts the
@@ -426,8 +457,7 @@ QtObject {
             return r
         }
         if (r.kind !== "toggle") return r
-        const on = (key === "setup" && r.id === "titlebar") ? root.barsLoaded
-                 : (key === "security/firewall" && r.id === "enabled")
+        const on = (key === "security/firewall" && r.id === "enabled")
                      ? (root.fwState.AVAILABLE === undefined ? null
                         : root.fwState.RUNNING === "yes")
                  : false
@@ -551,7 +581,8 @@ QtObject {
         root._buf = ""
         const p = root.pages[key]
         const q = root._q(root.scriptDir)
-        const cmd = (p.list === "keybinds")        ? q + "/list-keybinds.sh"
+        const cmd = (p.list === "winrules")        ? q + "/window-rules.sh list"
+                  : (p.list === "keybinds")        ? q + "/list-keybinds.sh"
                   : (p.list === "fw-zones")        ? q + "/firewall.sh zones"
                   : (p.list === "fw-services")     ? q + "/firewall.sh services"
                   : (p.list === "fingerprints")    ? q + "/fingerprint.sh list"
@@ -595,12 +626,52 @@ QtObject {
         for (let i = 0; i < lines.length; i++) {
             if (!lines[i].trim()) continue
             const f = lines[i].split("\t")
+            if (p.list === "winrules") {
+                // key  label  description  kind  value  unit  min  max  step
+                //
+                // The description stays a SUBTITLE here, against this file's
+                // rule that a subtitle only earns its place on a row that
+                // nests. That rule holds where the label already says what the
+                // row does — "Fonts", "Remove" — and "Blur passes" does not:
+                // the number means nothing without knowing it costs GPU per
+                // pass. This is the one page where the subtitle is the
+                // documentation.
+                const kind = f[3] || "int"
+                out.push({
+                    id: f[0], icon: "", title: f[1] || f[0], sub: f[2] || "",
+                    kind: kind === "bool" ? "toggle" : "value",
+                    value: f[4] || "", unit: f[5] || "",
+                    min: f[6] || "", max: f[7] || "", step: f[8] || "",
+                    // A toggle reads its state from `active`, like every other
+                    // toggle in this file, rather than from the string.
+                    active: f[4] === "true"
+                })
+                continue
+            }
             if (p.list === "keybinds") {
-                // The description IS the point of this page — a list of combos
-                // with nothing beside them says what is bound and not what any
-                // of it does.
-                out.push({ id: f[0], icon: "󰌌", title: f[0], sub: f[1] || "",
-                           kind: "keybind", value: f[0], detail: f[1] || "" })
+                // declared <TAB> in force <TAB> description <TAB> the call
+                //
+                // The DESCRIPTION is the title. A list of combos reads as a
+                // list of keys, and what anyone is actually scanning for is the
+                // thing they want to do — the combo is the answer, so it goes
+                // where an answer goes, in a box on the right.
+                //
+                // `id` is the DECLARED combo and never the one in force: it is
+                // the identity keybinds.conf keys an override on, so a bind that
+                // has already been reassigned once is still reassigned against
+                // the same name rather than against its own last answer.
+                out.push({ id: f[0], icon: "󰌌",
+                           title: f[2] || f[0], sub: "",
+                           // f[1] EXACTLY, never `f[1] || f[0]`. An empty combo
+                           // in force is a bind whose key was taken by
+                           // something else, and falling back to the declared
+                           // one there showed a key that is no longer bound —
+                           // the row said SUPER + Q while SUPER + Q did nothing.
+                           kind: "keybind", value: f[1] === undefined ? "" : f[1],
+                           detail: f[3] || "",
+                           // set when the combo in force is not the declared
+                           // one, which is what the page marks as changed
+                           rebound: (f[1] || "") !== "" && f[1] !== f[0] })
                 continue
             }
             out.push({
@@ -630,13 +701,7 @@ QtObject {
         root.ensure(key)
     }
 
-    // ── hyprbars state ────────────────────────────────────────────────────
-    // null until asked, so the switch renders as pending rather than as a
-    // confident "off" while the query is in flight.
-    property var barsLoaded: null
-
     function refreshState() {
-        barsProc.running = true
         root.refreshFirewall()
         // Cheap (fprintd-list over D-Bus, no authorisation) and the Security
         // row's subtitle is a live count, so it has to be known before the
@@ -676,8 +741,9 @@ QtObject {
         id: fwProc
         command: ["bash", "-c", root._q(root.scriptDir + "/firewall.sh") + " status 2>/dev/null"]
         running: false
-        // StdioCollector, not SplitParser + a Connections on running: the same
-        // shape barsProc below uses and the one that actually delivers here.
+        // StdioCollector, not SplitParser + a Connections on running: the
+        // latter spawned the process and produced the output, but the buffer
+        // was still empty when `running` went false.
         // The SplitParser version spawned the process and produced the output,
         // but the buffer was still empty by the time `running` went false, so
         // fwState stayed `{}` and the switch rendered as not-yet-known.
@@ -699,20 +765,6 @@ QtObject {
         return out
     }
     function _parseFw(raw) { root.fwState = root._parseKv(raw) }
-
-    property var _barsProc: Process {
-        id: barsProc
-        // `hyprctl plugin list`, not `hyprpm list`: what matters is whether a
-        // bar is being drawn on windows right now, not what hyprpm intends to do
-        // at the next login. Same distinction hyprbars.sh draws between
-        // is_loaded and is_enabled.
-        command: ["bash", "-c", "hyprctl plugin list 2>/dev/null | grep -c hyprbars"]
-        running: false
-        stdout: StdioCollector {
-            id: barsOut
-            onStreamFinished: root.barsLoaded = parseInt(barsOut.text.trim(), 10) > 0
-        }
-    }
 
     // ── activation ────────────────────────────────────────────────────────
     // Returns true when the menu should close. A choice or a switch keeps it
@@ -779,10 +831,18 @@ QtObject {
 
         if (row.kind === "toggle") { root._toggle(key, row); return false }
 
-        if (row.kind === "keybind") {
-            root._sh("printf '%s' " + root._q(row.value) + " | wl-copy")
-            return true
-        }
+        // A "value" row is EDITED, not activated: Enter opens its box and the
+        // panel owns everything after that. Returning here rather than falling
+        // through matters — the fallthrough is _action(), which would be asked
+        // to run "setup/windowrules/WIN_ROUNDING" as if it were a command.
+        if (row.kind === "value") return false
+
+        // A keybind row is reassigned, not activated. Enter opens the capture
+        // box, exactly as it opens the editor on a window-rules row — the panel
+        // owns that, so nothing happens here. Copying the combo to the clipboard
+        // is what this used to do and it is gone: it was the only thing the row
+        // could do, and it is not what anyone opens this page for.
+        if (row.kind === "keybind") return false
 
         // _action answers whether the menu should close. Change password must
         // NOT: it raises the password box in this same window, and closing here
@@ -848,29 +908,204 @@ QtObject {
                                        : "Turning the firewall off", want)
             return
         }
-        if (key === "setup" && row.id === "titlebar") {
-            const want = (root.barsLoaded === true) ? "off" : "on"
-            // --persist, so the switch also decides what happens at the next
-            // login — Ahaan's "autosets to the default startup selection".
-            // That half writes to root-owned /var/cache/hyprpm through hyprpm's
-            // own sudo, which is why it needs a password at all; the runtime
-            // half takes effect immediately either way.
-            root.authRequired(
-                (want === "on" ? "Enabling" : "Disabling") + " window title bars at login",
-                root._q(root.scriptDir + "/hyprbars.sh") + " " + want + " --persist")
+        if (key === "setup/windowrules") {
+            // A window rule needs no password: everything it touches is this
+            // user's own compositor and this user's own config file.
+            root.setWindowRule(row.id, row.active === true ? "false" : "true")
         }
+    }
+
+    // ── window rules ──────────────────────────────────────────────────────
+    // One entry point for both kinds of row — the toggles above and the boxes
+    // in the panel — because both are the same operation: hand a key and a
+    // value to the script and re-read the page from what it reports back.
+    //
+    // The page is refreshed rather than patched in place. window-rules.sh
+    // REFUSES an out-of-range value instead of clamping it, and it reports the
+    // live figure rather than the one it was given, so re-reading is what makes
+    // a rejected edit snap back to what is actually in force — a box that keeps
+    // showing a number the compositor never accepted is the failure worth
+    // designing against here.
+    property string winError: ""
+
+    // ── window rules ──────────────────────────────────────────────────────
+    // The cached listing IS the state. A set patches the affected row in place
+    // and the script runs behind it; nothing re-reads the page on the way
+    // through. That replaces an optimistic-value map plus a re-run of
+    // `window-rules.sh list` per step, and it is both simpler and a whole
+    // subprocess cheaper on every press.
+    //
+    // The page is only ever re-read on a REFUSAL, where the row has to snap
+    // back to what is actually in force, and on a reset, where the values come
+    // from re-parsing hyprland.lua and this side cannot predict them.
+    //
+    // In-flight requests are QUEUED and coalesced, never dropped: the
+    // intermediate values of a held-down key are not worth a subprocess each,
+    // but the one it stops on always is.
+    readonly property string winKey: "setup/windowrules"
+
+    property string _winQueuedKey: ""
+    property string _winQueuedVal: ""
+
+    function setWindowRule(key, value) {
+        root.winError = ""
+        root._patchWinRow(key, value)
+        if (winProc.running) {
+            root._winQueuedKey = key
+            root._winQueuedVal = value
+            return
+        }
+        root._runWindowRule(key, value)
+    }
+
+    function _runWindowRule(key, value) {
+        root._winWasReset = false
+        winProc.command = ["bash", "-c",
+            root._q(root.scriptDir + "/window-rules.sh") + " set " + root._q(key) + " " + root._q(value)
+            + " 2>&1 >/dev/null"]
+        winProc.running = true
+    }
+
+    // One row, one field. Rebuilding the whole listing from the script is what
+    // made the selection jump: reassigning the model resets the ListView, and
+    // for the frame in which its delegates are being rebuilt currentItem is
+    // null — which sent the selection band to the top of the list and then back
+    // down again. The band holds its place through that now, and this keeps the
+    // rebuild down to the one row that actually changed.
+    function _patchWinRow(key, value) {
+        const cur = root.lists[root.winKey]
+        if (!cur) return
+        const next = ({})
+        for (const k in root.lists) next[k] = root.lists[k]
+        next[root.winKey] = cur.map(function (r) {
+            if (r.id !== key) return r
+            const c = ({})
+            for (const f in r) c[f] = r[f]
+            c.value = value
+            c.active = (value === "true")
+            return c
+        })
+        root.lists = next
+        root._setGrouped(root.winKey, root._regroup(root.winKey))
+    }
+
+    // ── keybinds ──────────────────────────────────────────────────────────
+    // Nothing optimistic here, unlike the window rules. A reassignment ends in
+    // `hyprctl reload`, which re-parses the whole config — the listing has to
+    // be re-read afterwards because that is the only thing that knows what the
+    // compositor came back with, and patching a row in place would just be
+    // overwritten by it a moment later.
+    readonly property string kbKey: "setup/keybindings"
+    property string kbError: ""
+    // Separate from kbError because it is not a failure: the reassignment
+    // HAPPENED, and something else lost its key as a result. keybinds.sh marks
+    // it with a `warn:` prefix on the same stream, since a command has only the
+    // two, and the prefix is what tells them apart.
+    property string kbWarn: ""
+
+    function setKeybind(declared, combo) {
+        if (kbProc.running) return
+        root.kbError = ""
+        root.kbWarn = ""
+        kbProc.command = ["bash", "-c",
+            root._q(root.scriptDir + "/keybinds.sh") + " set " + root._q(declared)
+            + " " + root._q(combo) + " 2>&1 >/dev/null"]
+        kbProc.running = true
+    }
+
+    function resetKeybind(declared) {
+        if (kbProc.running) return
+        root.kbError = ""
+        root.kbWarn = ""
+        kbProc.command = ["bash", "-c",
+            root._q(root.scriptDir + "/keybinds.sh") + " reset " + root._q(declared)
+            + " 2>&1 >/dev/null"]
+        kbProc.running = true
+    }
+
+    property var _kbProc: Process {
+        id: kbProc
+        running: false
+        stdout: StdioCollector {
+            id: kbOut
+            onStreamFinished: {
+                const raw = (kbOut.text || "").trim()
+                if (raw.indexOf("warn:") === 0) {
+                    root.kbWarn = raw.replace(/^warn:\s*/, "")
+                    root.kbError = ""
+                } else {
+                    root.kbError = raw.replace(/^keybinds:\s*/, "")
+                    root.kbWarn = ""
+                }
+                // 300ms: keybinds.sh ends in `hyprctl reload`, and the config is
+                // not re-parsed the instant the command returns. Re-reading too
+                // early lists the binds from before the change and the page
+                // looks like it refused.
+                kbSettle.restart()
+            }
+        }
+    }
+
+    property var _kbSettle: Timer {
+        id: kbSettle
+        interval: 300
+        repeat: false
+        onTriggered: root.refresh(root.kbKey)
+    }
+
+    property bool _winWasReset: false
+    function resetWindowRules() {
+        if (winProc.running) return
+        root.winError = ""
+        root._winWasReset = true
+        winProc.command = ["bash", "-c",
+            root._q(root.scriptDir + "/window-rules.sh") + " reset --all 2>&1 >/dev/null"]
+        winProc.running = true
+    }
+
+    property var _winProc: Process {
+        id: winProc
+        running: false
+        // stderr only — the script prints the resulting value on stdout and its
+        // complaint on stderr, and the command sends stdout to /dev/null, so
+        // anything arriving here is a refusal worth showing.
+        stdout: StdioCollector {
+            id: winOut
+            onStreamFinished: {
+                root.winError = (winOut.text || "").trim().replace(/^window-rules:\s*/, "")
+
+                // A queued press goes now; its own completion decides what
+                // happens after. So a burst costs one subprocess per press and
+                // no page reads at all.
+                if (root._winQueuedKey !== "") {
+                    const k = root._winQueuedKey, v = root._winQueuedVal
+                    root._winQueuedKey = ""; root._winQueuedVal = ""
+                    root._runWindowRule(k, v)
+                    return
+                }
+                // A refusal leaves the patched row showing a value that was
+                // never applied, and a reset produces values only hyprland.lua
+                // knows. Both need the page read back; nothing else does.
+                if (root.winError !== "" || root._winWasReset) winSettle.restart()
+            }
+        }
+    }
+
+    property var _winSettleTimer: Timer {
+        id: winSettle
+        // A reset re-parses hyprland.lua, and the values that produces are not
+        // readable until it has. 250ms is one reload on this machine with room
+        // to spare; re-reading earlier showed the old numbers and made the reset
+        // look like it had failed. A refusal needs no wait at all, but one timer
+        // with the longer interval is simpler than two.
+        interval: 250
+        repeat: false
+        onTriggered: root.refresh(root.winKey)
     }
 
     // Called by the password box once the command has actually succeeded, so
     // the switch reflects what happened rather than what was asked for.
-    function toggleSettled() { barsRecheck.restart(); root.refreshFirewall() }
-
-    property var _barsRecheck: Timer {
-        id: barsRecheck
-        interval: 2500
-        repeat: false
-        onTriggered: root.refreshState()
-    }
+    function toggleSettled() { root.refreshFirewall() }
 
     // Returns true when the menu should close after the action.
     function _action(path) {

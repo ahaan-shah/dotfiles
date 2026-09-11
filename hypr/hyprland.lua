@@ -78,6 +78,100 @@ local hw = read_env_file("hardware.env")
 -- time, so ui-prefs.sh runs `hyprctl reload` after changing one.
 local ui = read_env_file("ui.conf")
 
+-- window.conf holds the LOOK: borders, gaps, rounding, opacity, blur, shadow
+-- and animation speed, written by scripts/window-rules.sh from the settings
+-- menu's Window rules page. A third file rather than more keys in ui.conf,
+-- for the same reason ui.conf is not hardware.env: different writer, different
+-- lifetime. All four Quickshell shells hold an inotify watch on ui.conf, and
+-- every write to it wakes four processes to re-read a font they do not care
+-- about — these keys are read here and nowhere else.
+--
+-- The settings menu applies a change to the RUNNING compositor itself, with
+-- `hyprctl eval 'hl.config{...}'`. This file is what makes it survive the next
+-- reload, which is a thing that happens for unrelated reasons several times a
+-- session — a wallpaper change, a monitor being plugged in, a font being
+-- picked. Without the file a rule would hold until one of those and then
+-- silently revert.
+local win = read_env_file("window.conf")
+
+-- Every fallback below is the value this config hardcoded before the page
+-- existed, so a machine with no window.conf comes up looking exactly like this
+-- repo's committed defaults. tonumber() on a missing or malformed key yields
+-- nil, which is what makes `or fallback` the whole validation this side needs —
+-- window-rules.sh refuses anything out of range before it ever reaches the file.
+local function wnum(key, fallback)
+    return tonumber(win[key]) or fallback
+end
+local function wbool(key, fallback)
+    if win[key] == nil then return fallback end
+    return win[key] == "true"
+end
+
+
+------------------------------------------------------------------
+-- KEYBIND OVERRIDES
+------------------------------------------------------------------
+-- keybinds.conf remaps a bind without editing this file, and the settings
+-- menu's Keybindings page is what writes it. One line per reassigned bind,
+-- keyed by the combo THIS FILE declares:
+--
+--     KB_SUPER_Q="SUPER + T"
+--
+-- ── Why a remap and not a rewrite ────────────────────────────────────────
+-- The obvious implementation is to edit the hl.bind line in place. This file
+-- is the one thing on the machine that cannot afford a bad edit: a config that
+-- fails to parse drops every bind after the failure and Hyprland falls back to
+-- three emergency ones, which is a session you cannot use to fix it. A
+-- key=value file read at parse time cannot do that — the worst a malformed line
+-- can do is fail to match and leave the original bind in place.
+--
+-- It also keeps this file the list of what the desktop DOES. A reassignment is
+-- a preference, and preferences live beside ui.conf and window.conf.
+local kbmap = read_env_file("keybinds.conf")
+
+-- The key a combo is stored under. Upper-cased, and every run of anything that
+-- is not a letter or a digit becomes one underscore — so "SUPER + SHIFT + 1"
+-- is KB_SUPER_SHIFT_1 and "SUPER + mouse:272" is KB_SUPER_MOUSE_272. Both
+-- scripts/keybinds.sh and scripts/list-keybinds.sh derive it the same way, and
+-- that agreement is the whole interface between them and this.
+local function kb_key(combo)
+    local s = string.upper(combo):gsub("[^A-Z0-9]+", "_")
+    s = s:gsub("^_+", ""):gsub("_+$", "")
+    return "KB_" .. s
+end
+
+-- hl.bind is WRAPPED rather than every call site being changed. There are 69 of
+-- them, some built inside a loop, and a wrapper is one place to be wrong
+-- instead of 69 — it also leaves the file's own `hl.bind(` lines intact, which
+-- is what list-keybinds.sh reads to build the page this feature is for.
+--
+-- Verified assignable against the running compositor before relying on it:
+-- `hl.bind = hl.bind` through hyprctl eval returns ok rather than raising, so
+-- hl is an ordinary table.
+local _hl_bind = hl.bind
+hl.bind = function(combo, ...)
+    local override = kbmap[kb_key(combo)]
+
+    -- UNBOUND. Written when a reassignment takes this bind's combo for
+    -- something else: the key now belongs to the other action, and this one has
+    -- nothing until it is given a new one from the settings menu.
+    --
+    -- The sentinel is deliberately not a possible combo — keybinds.sh will only
+    -- accept [A-Za-z0-9_:+ ] from the capture box, so "@unbound" cannot be
+    -- typed, and a bind cannot be silently lost by someone pressing something
+    -- odd. Registering nothing is the point: there is no combo that means "no
+    -- key" to Hyprland, so the bind simply never happens.
+    if override == "@unbound" then return end
+
+    -- An override that is empty or identical is not one. Falling through rather
+    -- than binding "" matters: hl.bind with an empty combo is a parse error,
+    -- and a parse error here is the emergency-mode session described above.
+    if override ~= nil and override ~= "" and override ~= combo then
+        return _hl_bind(override, ...)
+    end
+    return _hl_bind(combo, ...)
+end
+
 -- Hyprland wants a number for a numeric scale but the string "auto" for the
 -- automatic mode, so pass through only what is genuinely numeric.
 local function num_or_string(v, fallback)
@@ -296,9 +390,9 @@ end)
 ------------------------------------------------------------------
 hl.config({
     general = {
-        gaps_in          = 3,
-        gaps_out         = 5,
-        border_size      = 2,
+        gaps_in          = wnum("WIN_GAPS_IN",     3),
+        gaps_out         = wnum("WIN_GAPS_OUT",    5),
+        border_size      = wnum("WIN_BORDER_SIZE", 2),
         -- col.active_border in hyprlang becomes a nested col table here.
         col = {
             active_border = color7, -- was $color7
@@ -309,29 +403,29 @@ hl.config({
     },
 
     decoration = {
-        rounding          = 16,
-        active_opacity    = 0.95,
-        inactive_opacity  = 0.85,
+        rounding          = wnum("WIN_ROUNDING",         16),
+        active_opacity    = wnum("WIN_ACTIVE_OPACITY",   0.95),
+        inactive_opacity  = wnum("WIN_INACTIVE_OPACITY", 0.85),
         fullscreen_opacity = 1,
         dim_special       = 0.1,
         blur = {
-            enabled          = true,
-            size             = 3,
-            passes           = 5,
+            enabled          = wbool("WIN_BLUR_ENABLED", true),
+            size             = wnum("WIN_BLUR_SIZE",     3),
+            passes           = wnum("WIN_BLUR_PASSES",   5),
             new_optimizations = true,
             ignore_opacity   = true,
             xray             = false,
             popups           = true,
         },
         shadow = {
-            enabled      = true,
-            range        = 5,
+            enabled      = wbool("WIN_SHADOW_ENABLED", true),
+            range        = wnum("WIN_SHADOW_RANGE",    5),
             render_power = 2,
         },
     },
 
     animations = {
-        enabled = true,
+        enabled = wbool("WIN_ANIM_ENABLED", true),
     },
 
     dwindle = {
@@ -355,125 +449,57 @@ hl.curve("swirl",  { type = "bezier", points = { {0.02, 1}, {0.2, 1.2} } })
 
 -- animation = NAME, ONOFF, SPEED, CURVE[, STYLE]  →  hl.animation({...})
 -- A style like "popin 0%" goes in the `style` field.
-hl.animation({ leaf = "windows",            enabled = true, speed = 3, bezier = "swirl",  style = "popin 0%" })
-hl.animation({ leaf = "windowsOut",         enabled = true, speed = 3, bezier = "linear", style = "popin 0%" })
-hl.animation({ leaf = "fade",               enabled = true, speed = 2, bezier = "linear" })
-hl.animation({ leaf = "workspaces",         enabled = true, speed = 2, bezier = "linear" })
-hl.animation({ leaf = "specialWorkspaceIn", enabled = true, speed = 6, bezier = "swirl",  style = "slidefadevert -50%" })
-hl.animation({ leaf = "specialWorkspaceOut",enabled = true, speed = 6, bezier = "swirl",  style = "fade" })
+--
+-- The settings menu offers ONE animation speed rather than six, because the
+-- six are already balanced against each other — a special workspace slides at
+-- twice the rate a window pops for a reason. So WIN_ANIM_SPEED multiplies all
+-- of them and the relationship survives. The base numbers below stay the
+-- reference; window-rules.sh repeats them to apply a change live without a
+-- reload, and that is the one place the two files have to agree.
+--
+-- Floored at a tenth: Hyprland treats a speed of 0 as a dead animation rather
+-- than an instant one, so a multiplier small enough to round there would
+-- freeze windows mid-open instead of making them snappy.
+local aspd = wnum("WIN_ANIM_SPEED", 1)
+local function spd(base)
+    local v = base * aspd
+    if v < 0.1 then v = 0.1 end
+    return v
+end
+
+hl.animation({ leaf = "windows",            enabled = true, speed = spd(3), bezier = "swirl",  style = "popin 0%" })
+hl.animation({ leaf = "windowsOut",         enabled = true, speed = spd(3), bezier = "linear", style = "popin 0%" })
+hl.animation({ leaf = "fade",               enabled = true, speed = spd(2), bezier = "linear" })
+hl.animation({ leaf = "workspaces",         enabled = true, speed = spd(2), bezier = "linear" })
+hl.animation({ leaf = "specialWorkspaceIn", enabled = true, speed = spd(6), bezier = "swirl",  style = "slidefadevert -50%" })
+hl.animation({ leaf = "specialWorkspaceOut",enabled = true, speed = spd(6), bezier = "swirl",  style = "fade" })
 
 
 ------------------------------------------------------------------
 -- PLUGINS
 ------------------------------------------------------------------
--- IMPORTANT: plugin OPTIONS go through hl.config under a `plugin`
--- table, exactly like every other config section. (hl.plugin.<name>
--- is a NAMESPACE holding plugin *functions* such as add_button — it
--- is NOT itself callable. Calling it errors with
--- "attempt to call a table value".)
+-- Nothing here. hyprbars was the only plugin this config ever configured and
+-- it is gone — removed 2026-09-11 because the title bars were not wanted, not
+-- because anything about them failed. It is a hyprpm plugin, so getting it
+-- back is `hyprpm enable hyprbars` plus the block this replaced, which is in
+-- the history rather than commented out here.
 --
--- Per the hyprbars README:
---   options -> hl.config({ plugin = { hyprbars = { ... } } })
---   buttons -> hyprbars.add_button({ ... }) one per button
+-- What was worth keeping from it is the shape of the gate it needed, because
+-- it applies to ANY plugin added later. Measured 2026-09-02 with the plugin
+-- disabled: hl.plugin is always a table but hl.plugin.<name> is nil, and
+-- indexing it — `hl.plugin.hyprbars.add_button(...)` — raises "attempt to
+-- index a nil value", which aborts the parse where it stands. Nothing after
+-- that point is registered, and Hyprland trips EMERGENCY MODE: `hyprctl binds`
+-- went from 67 to 3, replaced by its own SUPER+Q / SUPER+R / SUPER+M. So a
+-- plugin block must be gated on `local p = hl.plugin and hl.plugin.<name>`,
+-- and the gate has to wrap the OPTIONS too, not just the calls — options do
+-- not raise but they do record one `unknown config key` per key straight to
+-- the error overlay.
 --
--- ...but ONLY when the plugin is actually loaded. Everything hyprbars is
--- gated on that, because `hyprpm disable hyprbars` otherwise takes the whole
--- session down. Measured 2026-09-02 with the plugin disabled:
---
---   * hl.plugin is ALWAYS a table; hl.plugin.hyprbars is nil.
---   * hl.config{ plugin = { hyprbars = ... } } does NOT raise. It records one
---     `unknown config key 'plugin.hyprbars.<key>'` per key — 15 of them, all
---     against the hl.config line — and they go straight to the error overlay.
---   * hl.plugin.hyprbars.add_button(...) DOES raise:
---     "attempt to index a nil value (field 'hyprbars')". That aborts the parse
---     where it stands, so NOTHING after it is registered. Hyprland then trips
---     EMERGENCY MODE: all 67 binds gone, replaced by its own SUPER+Q (terminal)
---     / SUPER+R (hyprland-run) / SUPER+M (exit). Measured: `hyprctl binds`
---     went from 67 to 3.
---
--- So the gate wraps the options too, not just the buttons: the buttons are
--- what kills the session, but the options are what fills the overlay.
---
--- The gate is equally correct when hyprbars IS enabled. hyprpm loads plugins
--- from the startup hook — i.e. AFTER this file is first parsed — so on that
--- first pass hl.plugin.hyprbars is nil and the block is skipped in silence;
--- loading the plugin makes Hyprland re-parse, and the block applies then.
---
--- `hl.plugin and ...` rather than a bare index: same fail-safe reasoning as the
--- GPU block at the top of this file. A missing namespace must degrade to "no
--- bars", never to a config that cannot finish parsing.
-local hyprbars = hl.plugin and hl.plugin.hyprbars
-if hyprbars then
-
-hl.config({
-    plugin = {
-        hyprbars = {
-            bar_height               = 22,
-            bar_blur                 = false,
-            bar_part_of_window       = true,
-            bar_precedence_over_border = true,
-
-            bar_color = "rgba(106, 107, 105, 0.4)", -- was $color2 in pywal comments
-
-            -- `col.text` was the hyprlang key for title text color.
-            -- Kept under a nested col table; if hyprbars rejects it,
-            -- the title is disabled anyway (bar_title_enabled = false).
-            col = {
-                text = "rgba(255, 255, 255, 0)",
-            },
-
-            bar_text_size    = 10,
-            bar_text_font    = ui.UI_FONT or "JetBrainsMono Nerd Font Propo",
-            bar_text_align   = "center",
-            bar_title_enabled = false,
-
-            bar_button_padding = 5,
-            bar_padding        = 8,
-            icon_on_hover      = true,
-
-            bar_buttons_alignment = "left",
-        },
-    },
-})
-
--- Buttons are added individually. The Lua field names come from the
--- hyprbars README: bg_color, fg_color, size, icon, action.
--- Original hyprlang form was:  hyprbars-button = COLOR, SIZE, ICON, ON_CLICK
--- (fg_color is the optional 5th arg; your originals had a blank icon).
---
--- IMPORTANT: `action` is still a raw shell command (hyprbars just execs it),
--- but since Hyprland 0.55 `hyprctl dispatch` itself takes a Lua expression
--- (it's shorthand for `eval 'hl.dispatch(...)'`), not the old
--- `dispatchname arg1 arg2` string. The old-style commands here
--- (`hyprctl dispatch killactive`, `... resizeactive exact ...`) would now
--- fail to parse as Lua and silently no-op — quoted as 'hl.dsp...(...)' below.
-hyprbars.add_button({
-    bg_color = "rgb(ff5f57)",
-    fg_color = "rgb(ffffff)",
-    size     = 12,
-    icon     = "",
-    action   = "hyprctl dispatch 'hl.dsp.window.close()'",
-})
-hyprbars.add_button({
-    bg_color = "rgb(febb2e)",
-    fg_color = "rgb(ffffff)",
-    size     = 12,
-    icon     = "",
-    action   = "~/.config/scripts/hyprbars.sh minimize",
-})
-hyprbars.add_button({
-    bg_color = "rgb(28c840)",
-    fg_color = "rgb(ffffff)",
-    size     = 12,
-    icon     = "",
-    action   = "hyprctl dispatch 'hl.dsp.window.resize({ x = 1425, y = 733 })' && hyprctl dispatch 'hl.dsp.window.move({ x = 7, y = 69 })'",
-})
-
-end  -- if hyprbars
-
--- hymission had an empty block in the original — no options to set, so
--- there is simply nothing to emit here. (Do NOT call hl.plugin.hymission;
--- same "call a table value" trap.)
+-- hymission had an empty block in the original — no options to set, so there
+-- is nothing to emit for it either. (Do NOT call hl.plugin.hymission; a plugin
+-- namespace is a table, and calling it errors with "attempt to call a table
+-- value".)
 
 
 ------------------------------------------------------------------
@@ -526,15 +552,16 @@ hl.bind("ALT + F", hl.dsp.exec_cmd("echo \"open:filesearch\" | socat - UNIX-CONN
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 -- desc: Toggles floating on the focused window
 hl.bind(mainMod .. " + W", hl.dsp.window.float({ action = "toggle" }))
--- Native dispatch calls instead of shelling out to `hyprctl dispatch` with
--- the old positional syntax (`resizeactive exact W H`), which no longer
--- parses under 0.55's `hyprctl dispatch 'hl.dsp...(...)'` calling convention.
--- Geometry moved into hyprbars.sh: it differs by whether the title bars are
--- loaded (a bar pushes the window down under the taskbar otherwise), and that
--- is a runtime fact this file cannot see — it is parsed once, while the plugin
--- is loaded and unloaded underneath it. See the zoom() comment in that script.
+-- Still a script rather than a dispatch pair, and the reason changed with
+-- hyprbars: it used to be that the geometry depended on whether title bars
+-- were loaded, which this file cannot see. What remains is that the numbers
+-- depend on the MONITOR — the dispatchers refuse the "(monitor_w*0.99)"
+-- expressions the window rules accept (measured 2026-09-03: the call silently
+-- no-ops and the window keeps the size its rule gave it), so a bind has to
+-- arrive with pixels already computed, and computing them means asking
+-- hyprctl which monitor has focus and how big it is.
 -- desc: Fills the screen with the focused window
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("~/.config/scripts/hyprbars.sh zoom"))
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("~/.config/scripts/window-zoom.sh"))
 -- desc: Toggles fullscreen
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
 
@@ -605,8 +632,8 @@ hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
 -- desc: Resizes the window with the mouse
 hl.bind(mainMod .. " + R",         hl.dsp.window.resize(), { mouse = true })
 -- SUPER + A removed: it ran ~/.config/scripts/hymission-fix.sh, which does
--- not exist (never written), and the hymission plugin is not loaded either —
--- hyprpm lists only hyprbars. The key was doing nothing at all.
+-- not exist (never written), and the hymission plugin is not loaded either.
+-- The key was doing nothing at all. No plugin is loaded now.
 
 -- Toggle Layout (the old plugin:xtd:throwunfocused bind on this same key
 -- in the .conf is dead/superseded — SUPER + T is toggle-layout only)
@@ -779,7 +806,7 @@ hl.bind("SUPER + G", hl.dsp.exec_cmd("nautilus \"" .. studyDir .. "\""))
 --
 -- The DISPATCHERS do not take these expressions -- hl.dsp.window.resize with a
 -- "(monitor_w*0.5)" string silently no-ops. That is why SUPER+D's geometry is
--- computed in scripts/hyprbars.sh instead of written here.
+-- computed in scripts/window-zoom.sh instead of written here.
 
 -- Remember the size you manually resized for floating windows (per class + title)
 hl.window_rule({
@@ -848,7 +875,7 @@ hl.window_rule({
 hl.window_rule({
     name   = "settings-tools-float",
     match  = { class = "^(kitty)$",
-               title = "^(pkg-install|pkg-aur-install|pkg-remove|system-update|webapp-install|webapp-remove|hyprbars-persist)$" },
+               title = "^(pkg-install|pkg-aur-install|pkg-remove|system-update|webapp-install|webapp-remove)$" },
     center = true,
     size   = {"(monitor_w*0.72)", "(monitor_h*0.75)"},
 })
@@ -1073,3 +1100,40 @@ hl.window_rule({
     size   = {"(monitor_w*0.833)", "(monitor_h*0.802)"},
     center = true,
 })
+
+
+------------------------------------------------------------------
+-- THE CAPTURE SUBMAP
+------------------------------------------------------------------
+-- A submap holding one bind. While it is active every OTHER key falls through
+-- to whatever has keyboard focus — which is what lets finder's reassign box see
+-- a combo that is already bound instead of watching that bind fire. Hyprland
+-- matches binds before forwarding a key to any client, and exclusive keyboard
+-- focus does not change that: without this, rebinding fullscreen to SUPER+Q
+-- opened a terminal behind the box.
+--
+-- LAST IN THE FILE on purpose. Everything above is already registered in the
+-- default map by the time this runs, so even if define_submap misbehaves it
+-- cannot take the real binds with it — and hl.submap-style helpers that leave
+-- the parser "inside" a submap would otherwise swallow every bind after them.
+--
+-- The one bind is an EMERGENCY EXIT, not a feature. If whatever entered the
+-- submap dies while holding it, every bind on the machine is gone and this is
+-- the way back. SUPER+SHIFT+Escape rather than plain Escape, because plain
+-- Escape has to REACH the box — a bind consumes its key, so binding Escape here
+-- would mean the box never learns it was cancelled and would sit there with the
+-- submap already reset under it.
+--
+-- Bound with the ORIGINAL hl.bind, below the wrapper, so no keybinds.conf line
+-- can reassign the escape hatch out of existence.
+--
+-- Guarded, and the guard is the point: this file cannot afford to raise. A
+-- Hyprland without define_submap must degrade to "already-bound combos are not
+-- capturable", never to a session with three emergency binds.
+if type(hl.define_submap) == "function" then
+    pcall(function()
+        hl.define_submap("capture", function()
+            _hl_bind("SUPER + SHIFT + Escape", hl.dsp.submap("reset"))
+        end)
+    end)
+end

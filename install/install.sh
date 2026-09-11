@@ -37,7 +37,7 @@ ONLY=""
 SKIP=""
 LOGFILE="/tmp/hyprahaan-install-$(date +%Y%m%d-%H%M%S).log"
 
-ALL_PHASES="preflight packages configs hardware nvidia apps usersystemd system network virt theming plugins hibernation fingerprint verify"
+ALL_PHASES="preflight packages configs hardware nvidia apps usersystemd system network virt theming hibernation fingerprint verify"
 
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
@@ -356,10 +356,14 @@ phase_configs() {
     # Scripts that were merged into another script. deploy_scripts uses rsync
     # WITHOUT --delete (an install must never eat files it does not own), so a
     # superseded script would otherwise sit in ~/.config/scripts forever, still
-    # executable and still findable — and hyprbars-minimize.sh in particular was
-    # a live keybind target until 2026-09-02. Both are now hyprbars.sh.
+    # executable and still findable. hyprbars-minimize.sh and
+    # toggle-hyprbars.sh merged into hyprbars.sh on 2026-09-02; hyprbars.sh
+    # itself is gone as of 2026-09-11, with the plugin. The one part of it a
+    # keybind still reaches — SUPER+D's zoom — is window-zoom.sh now, so an
+    # existing machine has to lose the old file or SUPER+D keeps finding it.
     run rm -f "$HOME/.config/scripts/hyprbars-minimize.sh"
     run rm -f "$HOME/.config/scripts/toggle-hyprbars.sh"
+    run rm -f "$HOME/.config/scripts/hyprbars.sh"
 
     # Every launcher and script must be executable — rsync preserves the bit,
     # but a git checkout on a fresh clone may not.
@@ -1293,105 +1297,6 @@ HP
 # ═══════════════════════════════════════════════════════════════════════
 # 12 · HYPRLAND PLUGINS
 # ═══════════════════════════════════════════════════════════════════════
-# hyprpm_has <plugin>      — is the plugin known to hyprpm at all?
-# hyprpm_enabled <plugin>   — is it marked enabled?
-#
-# Two things make the obvious one-liner wrong, and both bit the version of this
-# phase that shipped before 2026-09-02:
-#
-#   1. hyprpm COLOURS its output. The bytes are `enabled: \e[31mfalse`, so a
-#      literal `grep 'enabled: true'` can never match even when it is enabled —
-#      the success branch was dead code and every clean install warned that
-#      hyprbars had failed. Strip ANSI first.
-#   2. `hyprpm list | grep -q` is the repo's oldest trap: grep -q exits on the
-#      first match, hyprpm dies of SIGPIPE, and pipefail turns a successful
-#      check into a failure. awk reads all of its input.
-#
-# Same awk predicate as scripts/hyprbars.sh, deliberately — one definition of
-# "is hyprbars enabled" that both the installer and the runtime toggle agree on.
-hyprpm_strip() { sed 's/\x1b\[[0-9;]*m//g'; }
-
-hyprpm_has() {
-    [ "$(hyprpm list 2>/dev/null | hyprpm_strip | grep -c "Plugin $1\$")" -gt 0 ]
-}
-
-hyprpm_enabled() {
-    hyprpm list 2>/dev/null | hyprpm_strip | awk -v p="$1" '
-        $0 ~ ("Plugin " p "$") { hit = 1; next }
-        hit && /enabled:/      { if ($0 ~ /true/) found = 1; hit = 0 }
-        END { exit !found }
-    '
-}
-
-# hyprpm_so <plugin> — the built shared object, or nothing. This is the real
-# precondition for scripts/hyprbars.sh: hyprpm knowing about a plugin is not the
-# same as having compiled it, and the toggle loads the .so directly.
-# Same lookup the script uses, including -print -quit rather than `| head -1`.
-hyprpm_so() {
-    find "/var/cache/hyprpm/$USER" -name "$1.so" -print -quit 2>/dev/null
-}
-
-phase_plugins() {
-    phase "Hyprland plugins (hyprbars)"
-    have hyprpm || { skip "hyprpm not available"; return 0; }
-
-    # hyprbars draws the title bar buttons hyprland.lua configures. It is BUILT
-    # here and deliberately left DISABLED.
-    #
-    # That is a choice, not an oversight: this desktop's default is no title
-    # bars, and turning them on is a decision made per session with
-    # scripts/hyprbars.sh — which loads the built .so through `hyprctl plugin
-    # load`, needs no password, and takes effect immediately. Leaving hyprpm's
-    # own enable flag off means `hyprpm reload` in the startup hook loads
-    # nothing, so a fresh login comes up bare.
-    #
-    # Building it anyway is the point: `hyprbars.sh on` can only work if the .so
-    # exists, and compiling it needs hyprpm, root, and the Hyprland headers —
-    # everything this phase already has and a keybind does not.
-    #
-    # A failure here must not fail the install. Since 2026-09-02 hyprland.lua
-    # gates its whole hyprbars block on the plugin actually being loaded, so an
-    # absent plugin really is inert — no title bars and nothing else. That gate
-    # was not always there: before it, `hl.plugin.hyprbars.add_button(...)`
-    # raised, aborting the config parse and dropping every bind after it, and
-    # Hyprland fell back to emergency mode with three. See hypr/hyprland.lua.
-    if [ "$DRY_RUN" = 1 ]; then
-        printf '  %sDRY%s hyprpm update && hyprpm add hyprland-plugins   %s(built, left disabled)%s\n' \
-               "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
-        return 0
-    fi
-    {
-        hyprpm update || true
-        hyprpm_has hyprbars || hyprpm add https://github.com/hyprwm/hyprland-plugins || true
-    } || true
-
-    # Assert the default rather than trusting it: some hyprpm versions enable
-    # what they add. This is the only step here that needs root, and it is a
-    # no-op on the ordinary path.
-    if hyprpm_enabled hyprbars; then
-        hyprpm disable hyprbars >/dev/null 2>&1 || true
-    fi
-
-    local so; so="$(hyprpm_so hyprbars)"
-    if [ -n "$so" ] && ! hyprpm_enabled hyprbars; then
-        ok "hyprbars built and left disabled — the default"
-        info "  bars on, this session:  ~/.config/scripts/hyprbars.sh on"
-        info "  ...and at every login:  ~/.config/scripts/hyprbars.sh on --persist"
-    elif [ -n "$so" ]; then
-        warn "hyprbars is built but still marked enabled, and disabling it failed."
-        warn "It will load at your next login. Turn it off with:"
-        warn "  ~/.config/scripts/hyprbars.sh off --persist"
-    else
-        warn "hyprbars was not built — the title bars cannot be turned on yet."
-        warn "Not fatal: hyprland.lua parses cleanly either way and nothing else"
-        warn "depends on it. hyprpm compiles against the Hyprland headers, which"
-        warn "is the usual thing to fail on a first install from a bare TTY."
-        warn "Retry after your first Hyprland login:"
-        warn "  $SCRIPT_DIR/install.sh --only plugins"
-    fi
-}
-
-# ═══════════════════════════════════════════════════════════════════════
 # 13 · HIBERNATION  (opt-in — this one edits the bootloader)
 # ═══════════════════════════════════════════════════════════════════════
 phase_hibernation() {
@@ -2008,7 +1913,7 @@ main() {
         # prime covers it, but `--only plugins` skipped priming and hyprpm's own
         # prompt then had no tty to read from, so `hyprpm enable` failed silently
         # and the phase reported the plugin as not enabled. Measured 2026-09-02.
-        case "$ONLY" in system|network|virt|hibernation|packages|nvidia|plugins) sudo_prime ;; esac
+        case "$ONLY" in system|network|virt|hibernation|packages|nvidia) sudo_prime ;; esac
     fi
 
     want_phase preflight   && phase_preflight
@@ -2022,7 +1927,6 @@ main() {
     want_phase network     && phase_network
     want_phase virt        && phase_virt
     want_phase theming     && phase_theming
-    want_phase plugins     && phase_plugins
     want_phase hibernation && phase_hibernation
     want_phase fingerprint && phase_fingerprint
     want_phase verify      && phase_verify
