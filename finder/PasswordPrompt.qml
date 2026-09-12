@@ -1,8 +1,9 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Layouts
-import QtQuick.Shapes
+// No QtQuick.Layouts and no QtQuick.Shapes any more. The box is four items
+// anchored to each other rather than a ColumnLayout of six, and the Shape was
+// the success check's animated stroke.
 import Quickshell.Io
 import Quickshell.Services.Pam
 
@@ -10,6 +11,29 @@ import Quickshell.Services.Pam
 // and this takes its place, rather than throwing a terminal on screen whose
 // first line is a bare "[sudo] password for ahaan:" with no indication of what
 // asked or why.
+//
+// ── 2026-09-12: it is now a plain box, and nothing else ───────────────────
+// Ahaan sent four reference shots of a single bordered rectangle with one
+// centred line in it — "Enter Password", then dots with a caret, then
+// "Checking…", then an italic "Authentication failed (2)" — and asked for
+// exactly that: "a simple plain box for me to type the password into … no need
+// for the green check authenticated text or any of that extra shit. If it
+// works the box just goes away cuz pass was correct and if wrong you have the
+// image to show authentication failed and i can just type again."
+//
+// So the box is four items: a centred row of dots with a caret after them, one
+// centred line of text shown only while the field is empty, and an invisible
+// TextInput over the whole thing. Gone: the lock glyph in its tinted square,
+// the headline, the two-line subline, the inset field with its own fill and
+// focus border, the hairline, the "↵ confirm / esc cancel" footer, the red
+// failure border, and the entire success state — a green 3px edge, a green
+// lock, and a check mark that popped and then drew itself.
+//
+// This is every flow it serves: sudo through the settings menu, polkit's
+// prompts, changing the login password, and verify-only. Ahaan: "this is for
+// all of them, polkit, firewall, etc etc." Nothing below the UI changed — the
+// vlock pre-check, the PAM handling and the three flows are exactly as they
+// were, and the notes on them are still accurate.
 //
 // Terminal work — update, install, remove — deliberately keeps its own prompt.
 // Those open a terminal anyway because the output IS the point, and a password
@@ -100,11 +124,13 @@ Rectangle {
     property string _current: ""     // flow "passwd": the verified current one
     property string _newpw: ""       // flow "passwd": the new one, awaiting confirm
 
-    readonly property var _passwdSteps: [
-        { head: "Current password",     hint: "Confirm it is you before changing it" },
-        { head: "New password",         hint: "" },
-        { head: "Confirm new password", hint: "Type it once more" }
-    ]
+    // Three words, where there used to be a head and a hint each. The hints
+    // ("Confirm it is you before changing it", "Type it once more") explained
+    // the step the head had already named, and there is nowhere on this box to
+    // put a second line any more — the placeholder IS the label. Same rule the
+    // reminder prompt follows: which step you are on is said by what it asks
+    // for, and by nothing else.
+    readonly property var _passwdSteps: ["Current password", "New password", "Confirm new password"]
 
     signal finished(bool ok)
     signal cancelled()
@@ -160,6 +186,10 @@ Rectangle {
         // the identity is someone else there was nothing to pre-check against,
         // and then it IS a typo.
         prompt.commandFailed = prompt.polkitSelf
+        // Only the not-us case is a wrong guess; ours was already vetted by
+        // vlock, so a "no" from polkit is a locked or expired account and does
+        // not advance the counter.
+        if (!prompt.polkitSelf) prompt.attempts += 1
         prompt.failed = true
         shakeAnim.restart()
         field.forceActiveFocus()
@@ -168,8 +198,9 @@ Rectangle {
     function polkitAccepted() {
         prompt.busy = false
         prompt._pending = ""
-        prompt.succeeded = true
-        doneTimer.restart()
+        // Straight out. No held beat, no mark — see the note where `succeeded`
+        // used to be declared.
+        prompt.finished(true)
     }
 
     function beginChangePassword() {
@@ -184,7 +215,7 @@ Rectangle {
     }
 
     function _reset() {
-        prompt.succeeded = false
+        prompt.attempts = 0
         prompt.busy = false
         prompt.failed = false
         prompt.commandFailed = false
@@ -194,47 +225,57 @@ Rectangle {
 
     readonly property bool alarm: prompt.failed || prompt.mismatch
 
-    // Driven from `succeeded` rather than from each of the three places that
-    // set it — polkit accepting, PAM accepting, and the command coming back —
-    // so a fourth one cannot forget to play it.
-    SequentialAnimation {
-        id: okAnim
-        NumberAnimation {
-            target: okMark; property: "pop"; from: 0.35; to: 1
-            duration: 240; easing.type: Easing.OutBack; easing.overshoot: 2.4
-        }
-        NumberAnimation {
-            target: okMark; property: "prog"; from: 0; to: 1
-            duration: 300; easing.type: Easing.OutCubic
-        }
-    }
-    onSucceededChanged: {
-        okAnim.stop()
-        okMark.pop = 0.35
-        okMark.prog = 0
-        if (prompt.succeeded) okAnim.start()
-    }
-
-    // Held for a beat on success before the box goes. Authenticating used to
-    // just fade out, which is indistinguishable from the box being dismissed —
-    // there was nothing that said the password had been accepted.
-    property bool succeeded: false
+    // There is no success state at all any more, and that is the ask: "if it
+    // works the box just goes away cuz pass was correct".
+    //
+    // What went with it: a `succeeded` flag, a 1000ms hold on a doneTimer, a
+    // two-part okAnim that popped a green disc and then DREW a check inside it
+    // by walking the endpoint of a two-segment stroke (the dash-offset trick
+    // silently does nothing under Shape.CurveRenderer, which is why it was
+    // built that way), a green 3px border, a green lock glyph, and the
+    // co-ordinated fade that cleared the dots and the placeholder out from
+    // under the word "Authenticated". All of it to say a thing the box
+    // disappearing says by itself.
+    //
+    // The check mark is not gone from the codebase — the fingerprint box still
+    // morphs into one, because there the enrolment finishing is genuinely not
+    // obvious from anything else on screen.
 
     // The confirm step disagreeing with the new password is neither an
     // authentication failure nor a command failure, and saying "Authentication
     // failed" there would be simply wrong.
     property bool mismatch: false
 
-    // What the box says right now, for either flow.
-    readonly property string headline: {
-        if (prompt.succeeded)     return prompt.flow === "passwd" ? "Password changed" : "Authenticated"
-        if (prompt.mismatch)      return "Passwords do not match"
-        if (prompt.failed)        return prompt.commandFailed ? "That did not work" : "Authentication failed"
-        if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex].head
+    // The (2) in "Authentication failed (2)". Counted only for attempts that
+    // were actually WRONG — a command that failed after a correct password is
+    // not a wrong guess and must not advance it. Reset by _reset(), so it
+    // counts within one raising of the box rather than forever.
+    property int attempts: 0
+
+    // ── the one line this box has ─────────────────────────────────────────
+    // It used to have three: a headline, a subline, and a footer of keybind
+    // hints, plus a lock glyph in a tinted square. Ahaan's ask was a plain box
+    // with one thing in it, so there is one string and it changes by state.
+    //
+    // It is only drawn when the field is EMPTY, which is what makes the four
+    // states read as one line rather than as a stack: the field is cleared the
+    // instant Enter is pressed, so "Checking…" and a failure both land in a box
+    // that has just emptied itself, and the first keystroke after either
+    // replaces the line with dots.
+    readonly property string message: {
+        if (prompt.busy)     return "Checking…"
+        if (prompt.mismatch) return "Passwords do not match"
+        if (prompt.failed)   return prompt.commandFailed
+                                    ? "That did not work"
+                                    : "Authentication failed (" + prompt.attempts + ")"
+        if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex]
         // A polkit action that wants somebody else's password says so. Every
         // action on this machine resolves to this user, so this is the branch
         // that never fires — and it is here so that the day one does not, the
-        // box is not quietly asking for the wrong password.
+        // box is not quietly asking for the wrong password. It is also the one
+        // piece of polkit's own wording that survives: the REASON it supplies
+        // ("Authentication is required to…") is gone with the subline, and
+        // whose password is wanted is the part that changes what you type.
         if (prompt.flow === "polkit" && !prompt.polkitSelf)
             return "Password for " + prompt.polkitUser
         // "Enter Password", not "Administrator password": the password this
@@ -245,17 +286,13 @@ Rectangle {
         // exist on this machine.
         return "Enter Password"
     }
-    readonly property string subline: {
-        // Nothing under the headline on success: "Authenticated" and "Password
-        // changed" already say it, and the notification carries the detail.
-        if (prompt.succeeded)     return ""
-        if (prompt.mismatch)      return "Type the new password again"
-        if (prompt.failed)        return !prompt.commandFailed ? "Try again, or press esc to cancel"
-                                : prompt.flow === "polkit" ? "The password was accepted here, but polkit refused it"
-                                                           : "The password was accepted, but the command failed"
-        if (prompt.flow === "passwd") return prompt._passwdSteps[prompt.stepIndex].hint
-        return prompt.reason
-    }
+
+    // Italic for anything that went wrong, upright for everything else. It is
+    // the whole of the failure styling — there is no red border and no red
+    // text, because the reference Ahaan gave has neither: the box keeps its
+    // own edge and the words lean.
+    readonly property bool messageItalic: prompt.alarm
+
     function focusInput() { field.forceActiveFocus() }
 
     // Held only between PAM saying yes and the spawn that consumes it, then
@@ -316,6 +353,7 @@ Rectangle {
         prompt._pending = ""
         prompt.busy = false
         prompt.commandFailed = false
+        prompt.attempts += 1
         prompt.failed = true
         shakeAnim.restart()
         field.forceActiveFocus()
@@ -344,13 +382,13 @@ Rectangle {
                     prompt._pending = ""
                     prompt.polkitPassword(pw)
                 } else if (prompt.flow === "verify") {
-                    // Verified and done. No command, no sudo — the same
-                    // "Authenticated" beat as flow "auth", and then finished()
-                    // hands off to whatever asked.
+                    // Verified and done. No command, no sudo — finished() hands
+                    // straight off to whatever asked, which for the fingerprint
+                    // flow means this box disappears and the enrol box takes
+                    // its place on the next frame.
                     prompt.busy = false
                     prompt._pending = ""
-                    prompt.succeeded = true
-                    doneTimer.restart()
+                    prompt.finished(true)
                 } else {
                     prompt._run()
                 }
@@ -385,16 +423,10 @@ Rectangle {
         prompt._newpw = ""
     }
 
-    // Long enough to register, short enough not to be in the way.
-    property var _doneTimer: Timer {
-        id: doneTimer
-        // 700 while success was a word and a tinted chip. The mark takes 540ms
-        // to pop and then draw, and closing at 700 cut the stroke off partway.
-        // 1000 lets it finish and be seen finished.
-        interval: 1000
-        repeat: false
-        onTriggered: prompt.finished(true)
-    }
+    // There is no doneTimer. It held the box open for 1000ms so the success
+    // mark had time to pop and then draw itself; with no mark to watch, that
+    // 1000ms is just the box refusing to leave after it has been told the
+    // password was right.
 
     property var _authProc: Process {
         id: authProc
@@ -420,8 +452,7 @@ Rectangle {
             if (code === 0) {
                 if (prompt.flow === "passwd")
                     Settings.notify("Password changed", "Your login and sudo password is updated")
-                prompt.succeeded = true
-                doneTimer.restart()
+                prompt.finished(true)
                 return
             }
             // Whatever the command complained about, so a failure is
@@ -435,6 +466,7 @@ Rectangle {
                 // chpasswd failing, and saying "try again" would be a lie.
                 prompt.failed = true
                 prompt.commandFailed = (code !== 77)
+                if (!prompt.commandFailed) prompt.attempts += 1
                 prompt.stepIndex = 0
                 prompt._current = ""
                 prompt._newpw = ""
@@ -456,24 +488,40 @@ Rectangle {
         }
     }
 
-    // ── card ──────────────────────────────────────────────────────────────
+    // ── the box ───────────────────────────────────────────────────────────
+    // One rectangle with one line of text centred in it, and nothing else.
+    //
+    // What this replaces: a 38px lock glyph in a tinted rounded square, a
+    // headline, a two-line subline, a separate inset field with its own fill
+    // and its own focus border, a hairline, and a footer reading "↵ confirm"
+    // and "esc cancel". Ahaan, with four reference shots of exactly this shape:
+    // "a simple plain box for me to type the password into … no need for the
+    // green check authenticated text or any of that extra shit."
+    //
+    // The edge is this repo's, not the reference's — Theme.cardRadius and
+    // Theme.cardBorder, the same 2px of alpha(col7, 0.8) the settings card and
+    // every taskbar dropdown draw. "Of course borders and ui matches my style."
     width: Theme.cardWidth
-    implicitHeight: col.implicitHeight + Theme.pad * 2
+    // FIXED, and that is the point of the whole redesign: every state — empty,
+    // typing, checking, failed — is one line of text in a box of one size, so
+    // nothing on screen moves as you go between them. The old card grew by a
+    // line when polkit supplied a long reason and shrank again afterwards.
+    height: 68
     radius: Theme.cardRadius
     color: Theme.bg
-    // Thicker while green: at 1px the success state was easy to miss entirely.
-    border.width: prompt.succeeded ? 3 : Theme.cardBorder
-    border.color: prompt.succeeded ? Theme.alpha(Theme.good, 0.85)
-                : prompt.alarm ? Theme.alpha(Theme.danger, 0.55) : Theme.line
-    Behavior on border.color { ColorAnimation { duration: 160 } }
+    border.width: Theme.cardBorder
+    // One colour, always. The border used to go red on a failure and green at
+    // 3px on success; the reference does neither, and with the failure said in
+    // words inside the box a coloured edge is the same thing said twice.
+    border.color: Theme.line
 
-    opacity: prompt.shown ? 1 : 0
-    scale:   prompt.shown ? 1 : 0.97
-    visible: opacity > 0.001
-    Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-    Behavior on scale   { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+    // Appears and goes, like the settings card — see the note in
+    // SettingsPanel.qml. It used to fade over 130ms.
+    visible: prompt.shown
 
-    // A wrong password should be felt, not just read.
+    // A wrong password should be felt, not just read. Kept when the red went:
+    // this is the one failure signal that is not a word, it costs nothing to
+    // read, and it fires on the same frame the message changes.
     SequentialAnimation {
         id: shakeAnim
         NumberAnimation { target: prompt; property: "anchors.horizontalCenterOffset"; to:  9; duration: 45 }
@@ -484,266 +532,110 @@ Rectangle {
 
     MouseArea { anchors.fill: parent }   // swallow clicks; the scrim is behind
 
-    ColumnLayout {
-        id: col
-        anchors.fill: parent
-        anchors.margins: Theme.pad
-        spacing: 14
+    // ── the dots, centred, with the caret riding after them ───────────────
+    // Centred rather than left-aligned, which is the reference and is also the
+    // only arrangement that works in a box with no other content: a row of
+    // dots starting 16px from the left edge of an otherwise empty 430px box
+    // reads as text that has been cut off.
+    Row {
+        id: dotRow
+        anchors.centerIn: parent
+        spacing: 7
+        visible: dots.count > 0
 
-        // ── who is asking, and what for ───────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-
+        Repeater {
+            model: dots.count
             Rectangle {
-                implicitWidth: 38; implicitHeight: 38
-                radius: 12
-                color: prompt.succeeded ? Theme.alpha(Theme.good, 0.20)
-                       : prompt.alarm ? Theme.alpha(Theme.danger, 0.16)
-                       : Theme.alpha(Theme.accent, 0.20)
-                Behavior on color { ColorAnimation { duration: 160 } }
-                Text {
-                    anchors.centerIn: parent
-                    // Stays a lock, and goes green. It used to become a tick,
-                    // which was the only success mark there was — now the field
-                    // below draws one at four times the size, and two ticks in a
-                    // 260px card is one of them saying nothing.
-                    text: "󰌾"
-                    color: prompt.succeeded ? Theme.good
-                         : prompt.alarm ? Theme.danger : Theme.text
-                    font.family: Theme.font
-                    font.pixelSize: 18
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 1
-                Text {
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                    text: prompt.headline
-                    color: prompt.succeeded ? Theme.good
-                         : prompt.alarm ? Theme.danger : Theme.text
-                    font.family: Theme.font
-                    font.pixelSize: Theme.fsRow + 1
-                    font.weight: Font.Medium
-                }
-                Text {
-                    Layout.fillWidth: true
-                    // Two lines, not one. Every subline this box wrote itself
-                    // fits on one — but polkit's do not: it supplies its own
-                    // wording for the action, and "Authentication is required
-                    // to run a program as another user" was cut at "as ano…"
-                    // in the very first screenshot of this flow. The card
-                    // grows by a line when it needs to and is unchanged
-                    // otherwise.
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    visible: text.length > 0
-                    text: prompt.subline
-                    color: Theme.dim
-                    font.family: Theme.font
-                    font.pixelSize: Theme.fsSub
-                }
+                width: 7; height: 7; radius: 3.5
+                anchors.verticalCenter: parent.verticalCenter
+                color: Theme.alpha(Theme.text, 0.75)
             }
         }
 
-        // ── the field ─────────────────────────────────────────────────────
+        // The caret. The field's own is suppressed (cursorDelegate is an empty
+        // Item) because the field draws no glyphs either — so the caret has to
+        // be drawn here, at the end of the dots, or there is nothing at all
+        // saying the box is taking input. It is in the reference shot.
         Rectangle {
-            Layout.fillWidth: true
-            // FIXED. The mark is 52px in a 42px slot and simply overhangs it by
-            // 5px top and bottom, into the column's own 14px spacing — nothing
-            // clips here, and nothing else is drawn in that gap. Growing the
-            // slot to enclose the mark instead meant the whole card resized on
-            // success, which is a second animation nobody asked for on top of
-            // the one that is the point.
-            implicitHeight: 42
-            radius: 12
-            // The field disappears entirely rather than turning green: on
-            // success there is nothing to type into, and a box drawn around a
-            // confirmation mark frames it as an input that has been filled in.
-            // What is left is the mark alone on the card.
-            color: prompt.succeeded ? "transparent" : Theme.alpha(Theme.col7, 0.07)
-            border.width: 1
-            border.color: prompt.succeeded ? "transparent"
-                        : field.activeFocus ? Theme.alpha(Theme.accent, 0.55) : Theme.hairline
-            Behavior on color { ColorAnimation { duration: 200 } }
-            Behavior on border.color { ColorAnimation { duration: 200 } }
-
-            // ── the mark ──────────────────────────────────────────────────
-            // A disc that pops, then a check that DRAWS itself inside it, in
-            // that order — the shape of the thing iOS does when Face ID approves
-            // a purchase, and the reason this is a sequence of two animations
-            // rather than one fade.
+            width: 2
+            height: 17
+            anchors.verticalCenter: parent.verticalCenter
+            color: Theme.alpha(Theme.text, 0.85)
+            // OPACITY, not visible. The Row is centred on the box, so a caret
+            // that stops being laid out every half second makes the whole row
+            // of dots step left and back — measured in the harness before this
+            // was written, and it is the kind of jitter that is only obvious
+            // once you have seen it. Its width is always reserved; only the ink
+            // blinks.
             //
-            // The stroke grows by MOVING ITS ENDPOINT, not by uncovering a
-            // finished path with a dash pattern. The dash trick is the usual way
-            // to do this and it silently does nothing here: Shape.CurveRenderer
-            // ignores dashed strokes, so the check rendered complete on its
-            // first frame and the animation was invisible. Falling back to the
-            // geometry renderer would have got the dashes working and lost the
-            // analytic antialiasing that makes a 5px diagonal stroke look drawn
-            // rather than stepped — so the geometry animates instead, which
-            // needs no renderer feature at all.
-            //
-            // `prog` walks 0..1 along the two segments end to end. While the
-            // first is still growing the second is pinned to the first's tip and
-            // has zero length: without that it would draw from the tip to the
-            // corner and the short arm would appear complete instantly.
-            Item {
-                id: okMark
-                anchors.centerIn: parent
-                width: 52; height: 52
-                visible: prompt.succeeded
-
-                property real pop:  0.35   // disc scale
-                property real prog: 0      // 0 undrawn -> 1 fully drawn
-
-                // The check, in this item's own 64px coordinates.
-                readonly property real ax: 14.5; readonly property real ay: 26.5
-                readonly property real bx: 22.5; readonly property real by: 34.5
-                readonly property real cx: 38.0; readonly property real cy: 18.0
-                readonly property real s1: Math.hypot(bx - ax, by - ay)
-                readonly property real s2: Math.hypot(cx - bx, cy - by)
-                readonly property real t:  okMark.prog * (okMark.s1 + okMark.s2)
-                readonly property real k1: Math.max(0, Math.min(1, okMark.t / okMark.s1))
-                readonly property real k2: Math.max(0, Math.min(1, (okMark.t - okMark.s1) / okMark.s2))
-                readonly property real e1x: okMark.ax + (okMark.bx - okMark.ax) * okMark.k1
-                readonly property real e1y: okMark.ay + (okMark.by - okMark.ay) * okMark.k1
-                readonly property real e2x: okMark.k1 < 1 ? okMark.e1x
-                                          : okMark.bx + (okMark.cx - okMark.bx) * okMark.k2
-                readonly property real e2y: okMark.k1 < 1 ? okMark.e1y
-                                          : okMark.by + (okMark.cy - okMark.by) * okMark.k2
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: width / 2
-                    color: Theme.good
-                    scale: okMark.pop
-                }
-
-                Shape {
-                    anchors.fill: parent
-                    preferredRendererType: Shape.CurveRenderer
-                    // Scaled with the disc, so the check is never hanging in
-                    // space over a circle that has not finished arriving.
-                    scale: okMark.pop
-                    ShapePath {
-                        strokeColor: Theme.bg
-                        strokeWidth: 4.2
-                        fillColor: "transparent"
-                        capStyle: ShapePath.RoundCap
-                        joinStyle: ShapePath.RoundJoin
-                        startX: okMark.ax; startY: okMark.ay
-                        PathLine { x: okMark.e1x; y: okMark.e1y }
-                        PathLine { x: okMark.e2x; y: okMark.e2y }
-                    }
-                }
-            }
-
-            // Dots rather than the field's own echo: the lock screen shows the
-            // same feedback, and it keeps the caret out of a field whose
-            // contents can never be read back.
-            Row {
-                anchors.left: parent.left
-                anchors.leftMargin: 16
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 7
-                // The dots, the placeholder and the "checking…" note all clear
-                // out together on success. This is the fix for the box that sat
-                // there empty under the word "Authenticated": the field was
-                // still a field, just with nothing in it.
-                opacity: prompt.succeeded ? 0 : 1
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-                Repeater {
-                    model: dots.count
-                    Rectangle {
-                        width: 7; height: 7; radius: 3.5
-                        color: Theme.alpha(Theme.text, 0.75)
-                    }
-                }
-            }
-            // An INT model, not a JS array. Qt grows and shrinks an integer
-            // model by the difference; rebinding an array destroys and recreates
-            // every delegate on each keystroke, which this repo has been bitten
-            // by twice (notification popups, and the lock screen's own dots).
-            QtObject { id: dots; property int count: 0 }
-
-            Text {
-                anchors.left: parent.left
-                anchors.leftMargin: 16
-                anchors.verticalCenter: parent.verticalCenter
-                visible: dots.count === 0
-                opacity: prompt.succeeded ? 0 : 1
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-                text: "Password"
-                color: Theme.dimmer
-                font.family: Theme.font
-                font.pixelSize: Theme.fsInput
-            }
-
-            // Non-blocking, and off to one side: it reports that something is
-            // happening without taking the field away from you.
-            Text {
-                anchors.right: parent.right
-                anchors.rightMargin: 16
-                anchors.verticalCenter: parent.verticalCenter
-                visible: prompt.busy
-                opacity: prompt.succeeded ? 0 : 1
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-                text: "checking…"
-                color: Theme.dimmer
-                font.family: Theme.font
-                font.pixelSize: Theme.fsSub
-            }
-
-            TextInput {
-                id: field
-                anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
-                verticalAlignment: TextInput.AlignVCenter
-                echoMode: TextInput.Password
-                // Nothing of the text is drawn — the dots above are the
-                // feedback — so the glyphs and the caret are both invisible.
-                color: "transparent"
-                cursorDelegate: Item {}
-                font.family: Theme.font
-                font.pixelSize: Theme.fsInput
-                onTextChanged: {
-                    dots.count = Math.min(text.length, 32)
-                    if (prompt.failed && text.length > 0) prompt.failed = false
-                }
-                onAccepted: prompt.submit()
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Escape) { prompt.cancelled(); event.accepted = true }
-                }
-            }
+            // Blinks only while the field actually has the keyboard, so a box
+            // that has lost focus does not look like it is still listening.
+            opacity: (field.activeFocus && caretBlink.on) ? 1 : 0
         }
+    }
+    Timer {
+        id: caretBlink
+        property bool on: true
+        interval: 530          // the X11/Qt default cursorFlashTime, halved
+        running: prompt.shown && field.activeFocus
+        repeat: true
+        onTriggered: caretBlink.on = !caretBlink.on
+        // Restarted from zero on every keystroke, so the caret is solid while
+        // you type rather than winking out mid-word — which is what every text
+        // field does and what its absence would look like a bug.
+        function kick() { caretBlink.on = true; caretBlink.restart() }
+    }
 
-        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.hairline }
+    // An INT model, not a JS array. Qt grows and shrinks an integer model by
+    // the difference; rebinding an array destroys and recreates every delegate
+    // on each keystroke, which this repo has been bitten by twice (notification
+    // popups, and the lock screen's own dots).
+    QtObject { id: dots; property int count: 0 }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 14
-            // Neither key does anything once it has been accepted.
-            opacity: prompt.succeeded ? 0 : 1
-            Behavior on opacity { NumberAnimation { duration: 140 } }
-            Text {
-                text: "↵ confirm"
-                color: Theme.dimmer
-                font.family: Theme.font
-                font.pixelSize: Theme.fsHint
-            }
-            Item { Layout.fillWidth: true }
-            Text {
-                text: "esc cancel"
-                color: Theme.dimmer
-                font.family: Theme.font
-                font.pixelSize: Theme.fsHint
-            }
+    // ── the line ──────────────────────────────────────────────────────────
+    // Shown only with the field empty, so it never shares the box with the
+    // dots. See `message` for what it says in each of the four states.
+    Text {
+        anchors.centerIn: parent
+        visible: dots.count === 0
+        width: prompt.width - Theme.pad * 2
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+        text: prompt.message
+        color: Theme.dim
+        font.family: Theme.font
+        font.pixelSize: Theme.fsInput
+        font.italic: prompt.messageItalic
+    }
+
+    // The field itself is invisible in every respect: no glyphs (colour
+    // transparent), no caret (empty cursorDelegate), no fill and no border of
+    // its own. It exists to hold the keyboard and the text; the dots and the
+    // line above are the entire visible box.
+    TextInput {
+        id: field
+        anchors.fill: parent
+        anchors.leftMargin: Theme.pad
+        anchors.rightMargin: Theme.pad
+        verticalAlignment: TextInput.AlignVCenter
+        horizontalAlignment: TextInput.AlignHCenter
+        echoMode: TextInput.Password
+        color: "transparent"
+        cursorDelegate: Item {}
+        font.family: Theme.font
+        font.pixelSize: Theme.fsInput
+        onTextChanged: {
+            dots.count = Math.min(text.length, 32)
+            caretBlink.kick()
+            // Typing clears the failure, which is what makes "and i can just
+            // type again" true: the line goes back to dots on the first key
+            // rather than sitting there saying the last attempt was wrong.
+            if (prompt.failed)   prompt.failed = false
+            if (prompt.mismatch) prompt.mismatch = false
+        }
+        onAccepted: prompt.submit()
+        Keys.onPressed: event => {
+            if (event.key === Qt.Key_Escape) { prompt.cancelled(); event.accepted = true }
         }
     }
 }

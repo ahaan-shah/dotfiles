@@ -61,16 +61,11 @@ Item {
     // ── Open / close ─────────────────────────────────────────────────
     function openMode(m) {
         if (root.shown && root.mode === m) { close(); return }
-        // What is on screen right now, measured BEFORE the mode changes: the
-        // size the next card grows out of. Only when something is actually
-        // visible — opening settings from a closed finder has nothing to morph
-        // from, and pinning to a stale size would make the card jump.
-        const fromSettings = root.shown && root.settingsMode
-        const fromBox      = root.shown && !root.settingsMode
-                             && !root.passwordMode && !root.fingerprintMode
-        const boxW = box.width,             boxH = box.height
-        const setW = settingsPanel.width,   setH = settingsPanel.height
-
+        // There is no longer anything to measure here. Four consts used to
+        // capture what was on screen BEFORE the mode changed — the size the
+        // next card grew out of — and both halves of that morph are gone:
+        // neither direction between the launcher box and the settings card
+        // animates any more. See the settings branch below.
         root.mode = m
         root.query = ""
         root.selectedIndex = 0
@@ -86,21 +81,27 @@ Item {
         if (m === "wallpaper") { Wallpapers.refresh(); root._rebuild() }
         if (m === "settings") {
             settingsPanel.reset()
-            // The launcher box becomes the settings card rather than being
-            // replaced by it. Ahaan asked for this both ways round.
-            if (fromBox) settingsPanel.enterFrom(boxW, boxH)
+            // The box-becomes-card morph is gone from this direction.
+            // settingsPanel.enterFrom() no longer exists: the settings card
+            // appears complete, in one frame, and the launcher box is dropped
+            // in that same frame rather than fading out behind it — see the
+            // box's own opacity Behavior, which is disabled in settings mode
+            // for exactly this. Two surfaces crossfading is the opposite of
+            // what Ahaan pointed at in omarchy.
+            //
             // Every listing is fetched up front, not on the page that shows it:
             // search reaches the whole subtree, so a font has to be findable
             // from the root without ever opening Fonts. They arrive one at a
             // time, so this does not hold up the panel appearing.
             Settings.prefetchAll()
             Settings.refreshState()
-        } else if (fromSettings) {
-            // And the way back: apps, wallpapers, emoji, clipboard, the power
-            // menus — whichever mode is being opened, its box starts at the
-            // size of the settings card it is taking over from.
-            box.enterFrom(setW, setH)
         }
+        // And there is no `else if (fromSettings)` branch any more. It used to
+        // pin the incoming launcher box to the outgoing settings card's size,
+        // the mirror of the morph above. The settings card is gone on the frame
+        // the mode changes rather than shrinking away at a size anything could
+        // grow out of, so there is nothing left to grow out of; the box appears
+        // at its own size with its own fade.
         inputFocusTimer.start()
     }
 
@@ -453,18 +454,38 @@ Item {
         // adds a mode with its own surface has to come back to this line.
         opacity: (root.shown && !root.settingsMode && !root.passwordMode && !root.fingerprintMode) ? 1 : 0
         scale: (root.shown && !root.settingsMode && !root.passwordMode && !root.fingerprintMode) ? 1 : 0.94
-        visible: opacity > 0.001
-        // Theme.motionPage, the same number and curve the settings card fades
-        // and resizes on, so a switch between the two is one movement. See
-        // SettingsPanel's enterFrom for the other half.
+        // The box is DROPPED for settings, not faded out.
+        //
+        // The settings card appears complete in one frame now, and a box fading
+        // out over 190ms underneath something already fully drawn is 190ms of
+        // two cards on screen at once. Gating `visible` is what makes it go on
+        // the same frame the card arrives — and it is gated HERE, on a plain
+        // binding, rather than by disabling the Behavior below. Both would
+        // read the same, but `enabled` on a Behavior is itself a binding, and
+        // whether it re-evaluates before or after the opacity change it is
+        // meant to govern is not something QML promises. This cannot race: the
+        // moment settingsMode is true the box is not drawn, whatever its
+        // opacity is doing underneath.
+        //
+        // The condition is settingsMode rather than "is settings involved":
+        // closing finder FROM settings leaves mode at "settings" while shown
+        // goes false, so the box stays undrawn there too, and every other close
+        // still fades.
+        visible: opacity > 0.001 && !root.settingsMode
+        // Theme.motionPage, for the password and fingerprint cards — those ARE
+        // replacements for this box and still read better as a crossfade.
         Behavior on opacity { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
         Behavior on scale   { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
         Behavior on color   { ColorAnimation { duration: 300 } }
 
-        // heldW/heldH are the settings card's trick, mirrored: coming BACK from
-        // a card of a different size, the box is pinned to that size for one
-        // frame so the Behaviors below have somewhere to animate from. Zero
-        // means "not holding", which is why neither can legitimately be 0.
+        // heldW/heldH pin the box to the size of the card it is taking over
+        // from for one frame, so the Behaviors below have somewhere to animate
+        // from. Zero means "not holding", which is why neither can legitimately
+        // be 0.
+        //
+        // Only the password and fingerprint cards use this now. The settings
+        // card used to mirror it and no longer does — it neither morphs into
+        // this box nor out of it.
         property real heldW: 0
         property real heldH: 0
         width:  box.heldW > 0 ? box.heldW : content.width + 40
@@ -478,9 +499,9 @@ Item {
             box.heldH = h
             boxRelease.restart()
         }
-        // One frame, the same as SettingsPanel's slideStart: long enough for the
-        // new mode's rows to exist, so the animation starts from a known size
-        // towards a settled one rather than at a moving goalpost.
+        // One frame: long enough for the new mode's rows to exist, so the
+        // animation starts from a known size towards a settled one rather than
+        // at a moving goalpost.
         Timer { id: boxRelease; interval: 16; onTriggered: { box.heldW = 0; box.heldH = 0 } }
 
         Column {
@@ -558,15 +579,18 @@ Item {
                     currentIndex: root.selectedIndex
                     highlightFollowsCurrentItem: true
 
-                    // The selection SLIDES; it used to blink. Each delegate drew
-                    // its own fill and faded it over 100ms, so moving one row was
-                    // two crossfades in different places and never a movement —
-                    // which is what "not smooth" was. One highlight item that the
-                    // view animates between rows is the fix, and it is also the
-                    // settings menu's model: the same fill, outline, radius and
-                    // weight out of Theme, so apps, files, emoji, clipboard,
-                    // wallpapers and the power menus all mark a selection the way
-                    // Settings does.
+                    // One highlight item the view places, rather than a fill
+                    // drawn by each delegate — the launcher used to blink
+                    // between two crossfades a row apart, and this is still the
+                    // fix for that. It also still takes its look from Theme, so
+                    // apps, files, emoji, clipboard, wallpapers and the power
+                    // menus mark a selection the way the settings menu does.
+                    //
+                    // What changed on 2026-09-12 is what Theme now says: a 10%
+                    // wash and no outline, measured off omarchy's menu. The
+                    // border lines that used to be here are gone with
+                    // Theme.rowBorder and Theme.rowSelLine, which no longer
+                    // exist.
                     highlight: Rectangle {
                         // The view sets y and height; width is ours, and binding
                         // it to the view keeps the mark the full width of a row
@@ -574,29 +598,27 @@ Item {
                         width: listCol.width
                         radius: Theme.rowRadius
                         color: Theme.rowSel
-                        border.width: Theme.rowBorder
-                        border.color: Theme.rowSelLine
                     }
-                    // Theme.motion, the same number the settings band travels
-                    // on, so the two lists move at one speed. Resize matters as
-                    // much as move here: these rows are not one height (a result
-                    // with a subtitle is taller), so a step can change the mark's
-                    // shape as well as its place, and both have to take the same
-                    // time or the box appears to snap and then settle.
-                    highlightMoveDuration: Theme.motion
-                    highlightResizeDuration: Theme.motion
+                    // Zero, both of them, and that is not the same as leaving
+                    // them unset: unset means highlightMoveVelocity's default of
+                    // 400px/s takes over and the mark glides anyway. Duration 0
+                    // WITH velocity -1 is what actually pins the highlight to
+                    // the current row on the frame the selection changes.
+                    //
+                    // This used to be Theme.motion in both, to match the
+                    // settings band. It still matches it — the settings band
+                    // does not travel any more either.
+                    highlightMoveDuration: 0
+                    highlightResizeDuration: 0
                     // Velocity and duration are alternatives and velocity is the
                     // default; -1 is what hands the timing to the durations
-                    // above, otherwise a long jump moves at 400px/s and takes
-                    // however long it takes.
+                    // above.
                     highlightMoveVelocity: -1
                     highlightResizeVelocity: -1
-                    // The list scrolls itself to keep the selection in view. With
-                    // no range applied that scroll is instant, so stepping past
-                    // the bottom row teleported the whole list under a highlight
-                    // that was still gliding. ApplyRange animates the content
-                    // with the same duration, so the rows and the mark move
-                    // together.
+                    // The list still scrolls itself to keep the selection in
+                    // view, and ApplyRange is still how: it is the range that
+                    // makes the view scroll the least it can, which is what
+                    // stops a step past the bottom row jumping the whole list.
                     highlightRangeMode: ListView.ApplyRange
                     preferredHighlightBegin: 0
                     preferredHighlightEnd: listCol.height

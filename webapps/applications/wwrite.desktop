@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=wwrite
+GenericName=Markdown Editor
+Comment=Distraction-free Markdown writing that follows your pywal theme
+Exec=/home/USER/.local/bin/wwrite %f
+TryExec=/home/USER/.local/bin/wwrite
+Icon=wwrite
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/markdown;text/x-markdown;text/plain;
+Keywords=markdown;write;writing;notes;text;editor;md;
+StartupNotify=true
+StartupWMClass=wwrite
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Document
+Exec=/home/USER/.local/bin/wwrite

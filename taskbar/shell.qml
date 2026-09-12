@@ -1052,7 +1052,8 @@ Scope {
         robotOn:  String.fromCodePoint(0xf06a9),   // md-robot         (agents, live)
         refresh:  String.fromCodePoint(0xf0450),   // md-refresh
         monitor:  String.fromCodePoint(0xf0379),   // md-monitor (external display)
-        check:    String.fromCodePoint(0xf012c)    // md-check   (selected display)
+        check:    String.fromCodePoint(0xf012c),   // md-check   (selected display)
+        plus:     String.fromCodePoint(0xf0415)    // md-plus    (add a reminder)
     })
 
     function wifiIcon(sig) {
@@ -2063,6 +2064,331 @@ Scope {
         for (var i = list.length - 1; i >= 0; i--) list[i].dismiss();
     }
 
+    //========================================================================//
+    //  REMINDERS                                                             //
+    //========================================================================//
+    //  SUPER+SHIFT+R (or the + in the calendar panel) asks for a delay, then
+    //  for a message; at the due time a card appears in the popup stack that
+    //  DOES NOT time out. It sits there until it is clicked. That is the whole
+    //  point of the feature — everything else in that stack self-dismisses
+    //  after a few seconds, and a reminder you can miss by looking away for
+    //  four seconds is not a reminder.
+    //
+    //  One JSON file is the source of truth for both halves of the UI (the
+    //  popup and the calendar panel's list), stored beside the agents usage
+    //  records under XDG_STATE_HOME:
+    //
+    //      [ { "id": "1789...-42", "at": 1789200000000,
+    //          "text": "drink water", "fired": false } ]
+    //
+    //      at     epoch ms the reminder is due
+    //      fired  set once the card has been shown. The row is DELETED when
+    //             that card is clicked, never merely marked — so "fired but
+    //             still present" means "shown and not yet acknowledged", and
+    //             remSweep() can rebuild the on-screen stack from the file
+    //             alone after a shell restart.
+    //
+    //  Two behaviours fall out of storing `fired` rather than deleting on
+    //  fire, and both are deliberate: a reminder that came due while the
+    //  machine was suspended fires on the next tick instead of being silently
+    //  skipped, and one that was never clicked comes back after SUPER+K.
+    property var reminders: []
+
+    readonly property string remindersPath:
+        (Quickshell.env("XDG_STATE_HOME") || root.homeDir + "/.local/state")
+        + "/hyprahaan/reminders.json"
+
+    // watchChanges is what keeps a repo instance and the live one agreeing on
+    // the same list while both are up (CLAUDE.md step 2 runs them side by
+    // side). printErrors is off because the file legitimately does not exist
+    // until the first reminder is made, and an ENOENT on every startup is
+    // noise, not a fault.
+    FileView {
+        id: remFile
+        path: root.remindersPath
+        watchChanges: true
+        printErrors: false
+        // The store is read by the other instance's watcher, so it must never
+        // be observable half-written.
+        atomicWrites: true
+        // Not root's Component.onCompleted — that one already belongs to
+        // mprisResolve(), and a second handler on the same object replaces it.
+        Component.onCompleted: root.remEnsureDir()
+        onFileChanged: reload()
+        onLoadFailed: root.remApply([])
+        onSaved: root.remSaveRetried = false
+        onSaveFailed: {
+            // In practice this is only ever "the state directory does not
+            // exist yet", which the startup mkdir normally handles — but a
+            // reminder added in the first few ms of a fresh machine's first
+            // session would beat it. Make the directory and write once more; a
+            // second failure is a real one and is logged rather than retried
+            // forever.
+            if (root.remSaveRetried) {
+                console.warn("reminders: could not write", root.remindersPath);
+                return;
+            }
+            root.remSaveRetried = true;
+            root.remEnsureDir();
+            remSaveRetry.restart();
+        }
+        onLoaded: {
+            try {
+                var parsed = JSON.parse(remFile.text() || "[]");
+                root.remApply(Array.isArray(parsed) ? parsed : []);
+            } catch (e) {
+                // A store that will not parse is a bug in the writer, not a
+                // reason to take the panel down — keep what is in memory.
+                console.warn("reminders: ignoring unparseable store", e);
+            }
+        }
+    }
+
+    // Normalizes whatever came off disk before it reaches the UI: a record
+    // with no text or no due time is dropped rather than rendering as a blank
+    // row, and the list is kept sorted by due time so the panel, the dot in
+    // the grid and the sweep can all just walk it in order.
+    function remApply(list) {
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var r = list[i];
+            if (!r || typeof r !== "object") continue;
+            var at = Number(r.at);
+            var text = String(r.text || "").trim();
+            if (!isFinite(at) || at <= 0 || text === "") continue;
+            out.push({ id: String(r.id || (at + "-" + i)), at: at, text: text,
+                       fired: r.fired === true });
+        }
+        out.sort(function (a, b) { return a.at - b.at; });
+        root.reminders = out;
+        root.remSweep();
+    }
+
+    // Saving goes through FileView, which owns an ordered job queue, and NOT
+    // through a Process per save. The Process version — kill the last writer,
+    // set a new command, start it — silently lost writes: two `ipc call
+    // reminder add` a few ms apart left the store holding only the first
+    // reminder, because restarting the writer that fast dropped the second
+    // command on the floor. Measured, twice, before this was rewritten.
+    //
+    // The one thing FileView will not do is create the directory, so that is
+    // handled separately either side of this: once at startup, and again from
+    // onSaveFailed above.
+    property bool remSaveRetried: false
+    function remSave() { remFile.setText(JSON.stringify(root.reminders)); }
+
+    Process { id: remMkdir }
+    function remEnsureDir() {
+        remMkdir.running = false;
+        remMkdir.command = ["sh", "-c", 'mkdir -p "$(dirname "$1")"',
+                            "reminders-mkdir", root.remindersPath];
+        remMkdir.running = true;
+    }
+    Timer {
+        id: remSaveRetry
+        interval: 200; repeat: false
+        onTriggered: root.remSave()
+    }
+
+    function remAdd(minutes, text) {
+        var mins = Number(minutes);
+        text = String(text || "").trim();
+        if (!isFinite(mins) || mins <= 0 || text === "") return false;
+        var list = root.reminders.slice();
+        list.push({ id: Date.now() + "-" + Math.floor(Math.random() * 1000000),
+                    at: Date.now() + Math.round(mins * 60000),
+                    text: text, fired: false });
+        root.remApply(list);          // sorts, and sweeps in case mins rounded to now
+        root.remSave();
+        root.remPopNotice("Reminder set", text + " · "
+                          + Qt.formatDateTime(new Date(Date.now() + Math.round(mins * 60000)),
+                                              "hh:mm AP"));
+        return true;
+    }
+
+    // The single removal path: the popup's click, the panel's trash button and
+    // the IPC verb all land here, so a reminder can never survive in one half
+    // of the UI after being dismissed in the other.
+    function remDelete(id) {
+        var list = [];
+        for (var i = 0; i < root.reminders.length; i++)
+            if (root.reminders[i].id !== id) list.push(root.reminders[i]);
+        root.remPopDrop(id);
+        if (list.length === root.reminders.length) return;
+        root.reminders = list;
+        root.remSave();
+    }
+
+    readonly property bool remPending: {
+        for (var i = 0; i < root.reminders.length; i++)
+            if (!root.reminders[i].fired) return true;
+        return false;
+    }
+
+    // 1s is finer than a minutes-granularity feature needs, but it is what
+    // keeps "in 1 minute" honest, and the timer only runs while something is
+    // actually pending — an empty list costs nothing.
+    Timer {
+        interval: 1000; repeat: true; running: root.remPending
+        onTriggered: root.remSweep()
+    }
+
+    // Marks everything due as fired and makes sure every fired reminder has a
+    // card on screen. Called on every tick AND on every load, which is what
+    // makes this recover rather than merely schedule — see the note on `fired`
+    // above. Safe to call repeatedly: remPopPush ignores a reminder that is
+    // already on screen, and the file is only rewritten when something
+    // actually changed, so a load → sweep → save → load cycle terminates.
+    function remSweep() {
+        var now = Date.now();
+        var changed = false;
+        var out = [];
+        for (var i = 0; i < root.reminders.length; i++) {
+            var r = root.reminders[i];
+            var fired = r.fired || r.at <= now;
+            if (fired !== r.fired) changed = true;
+            var n = { id: r.id, at: r.at, text: r.text, fired: fired };
+            out.push(n);
+            if (fired) root.remPopPush(n);
+        }
+        if (!changed) return;
+        root.reminders = out;
+        root.remSave();
+    }
+
+    // The cards currently on screen. A ListModel rather than a reassigned JS
+    // array for exactly the reason the notification popups use one: removing a
+    // row must not rebuild its neighbours' delegates (see popupModel above).
+    ListModel { id: remPopModel }          // { rid, rtitle, rbody, rsticky }
+
+    function remPopPush(r) {
+        for (var i = 0; i < remPopModel.count; i++)
+            if (remPopModel.get(i).rid === r.id) return;
+        remPopModel.append({ rid: r.id, rtitle: "Reminder", rbody: r.text,
+                             rsticky: true });
+    }
+
+    // The "Reminder set" confirmation. Same card, same timeout an ordinary
+    // notification gets, and it owns no reminder — dismissing it cancels
+    // nothing. Its id cannot collide with a reminder's, which are built from
+    // Date.now().
+    property int remNoticeSeq: 0
+    function remPopNotice(title, body) {
+        if (root.dnd) return;              // a courtesy popup obeys DND; a due
+                                           // reminder deliberately does not
+        root.remNoticeSeq++;
+        remPopModel.append({ rid: "notice-" + root.remNoticeSeq, rtitle: title,
+                             rbody: body, rsticky: false });
+    }
+    function remPopDrop(id) {
+        for (var i = 0; i < remPopModel.count; i++)
+            if (remPopModel.get(i).rid === id) { remPopModel.remove(i); return; }
+    }
+
+    // Ticks only while the calendar panel is open — the "in 12m" countdown
+    // beside each row is the only thing that reads it.
+    property double remNow: Date.now()
+    Timer {
+        interval: 1000; repeat: true; running: root.calVisible; triggeredOnStart: true
+        onTriggered: root.remNow = Date.now()
+    }
+    function remCountdown(at) {
+        var s = Math.round((at - root.remNow) / 1000);
+        if (s <= 0) return "due";
+        if (s < 60) return "in " + s + "s";
+        var m = Math.round(s / 60);
+        if (m < 60) return "in " + m + "m";
+        return "in " + Math.floor(m / 60) + "h " + (m % 60) + "m";
+    }
+
+    // ---- the two-step prompt ------------------------------------------------
+    // The delay is asked FIRST and the message second, because the delay is the
+    // part you already know when you reach for the keybind — the message is
+    // what you are still composing.
+    property bool   remPromptOpen:  false
+    property int    remPromptStage: 0        // 0 = minutes, 1 = message
+    property string remPromptMins:  ""
+    property string remPromptText:  ""
+    property bool   remPromptBad:   false
+
+    function remPromptShow() {
+        root.closePanels();
+        // Fields before stage: the stage change is what reloads the text field
+        // from these, so clearing them afterwards would put the previous
+        // prompt's answer back on screen.
+        root.remPromptMins = "";
+        root.remPromptText = "";
+        root.remPromptBad = false;
+        root.remPromptStage = 0;
+        root.remPromptOpen = true;
+    }
+    function remPromptCancel() { root.remPromptOpen = false; }
+
+    // Read leniently: "10", " 10 ", "10m" and "10 min" all mean the same
+    // thing. Anything else returns -1, which tints the box and keeps the
+    // prompt open rather than throwing away what has been typed.
+    function remParseMinutes(s) {
+        var m = /^\s*(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)?\s*$/i.exec(String(s || ""));
+        if (!m) return -1;
+        var v = parseFloat(m[1]);
+        return (isFinite(v) && v > 0) ? v : -1;
+    }
+
+    function remPromptAccept() {
+        if (root.remPromptStage === 0) {
+            if (root.remParseMinutes(root.remPromptMins) < 0) { root.remPromptBad = true; return; }
+            root.remPromptBad = false;
+            root.remPromptStage = 1;
+            return;
+        }
+        if (root.remPromptText.trim() === "") { root.remPromptBad = true; return; }
+        root.remAdd(root.remParseMinutes(root.remPromptMins), root.remPromptText);
+        root.remPromptOpen = false;
+    }
+
+    // `qs -p <shell> ipc call reminder <fn>` — `prompt` is what SUPER+SHIFT+R
+    // fires. The other three exist for the same reason the display handler's
+    // do: this module is otherwise keyboard- and mouse-only, and a repo-path
+    // instance has to be exercisable without deploying (CLAUDE.md step 2).
+    // `add` and `list` are what verified it before it ever reached ~/.config.
+    IpcHandler {
+        target: "reminder"
+        function prompt(): void { root.remPromptShow(); }
+        function add(minutes: string, text: string): string {
+            var m = root.remParseMinutes(minutes);
+            if (m < 0) return "bad minutes: " + minutes;
+            return root.remAdd(m, text) ? "ok" : "empty text";
+        }
+        function list(): string {
+            if (root.reminders.length === 0) return "(none)";
+            var out = [];
+            for (var i = 0; i < root.reminders.length; i++) {
+                var r = root.reminders[i];
+                out.push(Qt.formatDateTime(new Date(r.at), "yyyy-MM-dd hh:mm:ss")
+                         + (r.fired ? "  [fired]  " : "  [pending] ")
+                         + r.text + "   (" + r.id + ")");
+            }
+            return out.join("\n");
+        }
+        // Acknowledges one reminder — the same call the card's click makes.
+        // Takes the id printed by list(), or "" for the oldest showing card,
+        // which is what a keybind would want.
+        function dismiss(id: string): string {
+            var target = String(id || "");
+            if (target === "") {
+                if (remPopModel.count === 0) return "nothing showing";
+                target = remPopModel.get(0).rid;
+            }
+            root.remDelete(target);
+            return "dismissed " + target;
+        }
+        function clear(): void {
+            root.reminders = [];
+            remPopModel.clear();
+            root.remSave();
+        }
+    }
+
     // ---- active player for the control-center mpris widget --------------------
     //
     // Sticky by design. The old rule was "prefer one that's playing, else the
@@ -2509,20 +2835,64 @@ Scope {
         id: card
         property var notif
         signal closed()
-        implicitHeight: cardRow.implicitHeight + 20
+        signal rightClicked()
+
+        // ---- overrides, so a card can be driven by something that is NOT a
+        //      Notification. Reminders are: both the popup and the calendar
+        //      panel's list are this component with `notif` left null, which
+        //      is the only way to guarantee they match the real thing rather
+        //      than imitating it and drifting. Empty means "read it off notif".
+        property string summaryText: ""
+        property string bodyText: ""
+        property color  bodyColor: root.ncText
+        property int    pad: 10             // .notification-content { padding:10px }
+        property int    textSpacing: 2      // gap between summary and body
+        // Whole card is the dismiss target (a fired reminder), and/or a
+        // right-click dismisses it (the panel's list). Both default off so an
+        // ordinary notification behaves exactly as it always has — in
+        // particular the control center's ListView must keep flicking, which
+        // a MouseArea accepting LeftButton would break.
+        property bool   clickAnywhere: false
+        property bool   rightCloses: false
+
+        readonly property string cardSummary:
+            card.summaryText !== "" ? card.summaryText : (card.notif ? card.notif.summary : "")
+        readonly property string cardBody:
+            card.bodyText !== "" ? card.bodyText : (card.notif ? card.notif.body : "")
+
+        function requestClose() {
+            if (card.notif) card.notif.dismiss();
+            card.closed();
+        }
+
+        implicitHeight: cardRow.implicitHeight + card.pad * 2
         radius: 12
         color: root.ncBg
         border.width: 2
         border.color: root.ncBorder
 
+        // Declared BEFORE cardRow so the close button, which lives inside it,
+        // stays on top of this.
+        MouseArea {
+            anchors.fill: parent
+            visible: card.clickAnywhere || card.rightCloses
+            enabled: visible
+            acceptedButtons: card.clickAnywhere ? (Qt.LeftButton | Qt.RightButton)
+                                                : Qt.RightButton
+            onClicked: (e) => {
+                if (e.button === Qt.RightButton) card.rightClicked();
+                else card.requestClose();
+            }
+        }
+
         RowLayout {
             id: cardRow
             anchors.fill: parent
-            anchors.margins: 10                 // .notification-content { padding:10px }
+            anchors.margins: card.pad
             spacing: 10
 
             Image {
-                source: root.iconFor(card.notif)
+                source: card.notif ? root.iconFor(card.notif) : ""
                 visible: source != ""
                 Layout.preferredWidth: visible ? 40 : 0    // notification-icon-size 40
                 Layout.preferredHeight: 40
@@ -2533,10 +2903,10 @@ Scope {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: card.textSpacing
                 Text {
                     Layout.fillWidth: true
-                    text: card.notif ? card.notif.summary : ""
+                    text: card.cardSummary
                     color: root.ncText
                     font.family: root.ncFont
                     font.pixelSize: root.ns(12); font.weight: Font.Medium   // .summary 0.95rem/500
@@ -2544,9 +2914,9 @@ Scope {
                 }
                 Text {
                     Layout.fillWidth: true
-                    visible: card.notif && card.notif.body !== ""
-                    text: card.notif ? card.notif.body : ""
-                    color: root.ncText
+                    visible: card.cardBody !== ""
+                    text: card.cardBody
+                    color: card.bodyColor
                     font.family: root.ncFont
                     font.pixelSize: root.ns(11)                              // .body 0.85rem
                     textFormat: Text.StyledText                     // pango-ish markup
@@ -2557,14 +2927,19 @@ Scope {
             }
 
             Text {                                                  // .close-button
-                Layout.alignment: Qt.AlignTop
+                // Centred on the card rather than pinned to its top. Pinned
+                // only ever looked right on a one-line card; on a two-line one
+                // — which is every reminder, and most notifications — it sat
+                // level with the title with nothing beside it.
+                Layout.alignment: Qt.AlignVCenter
                 text: "\u00d7"
                 color: root.ncText
                 font.family: root.ncFont
                 font.pixelSize: root.ns(15)
+                font.weight: Font.Bold          // \u00d7 is a hairline otherwise
                 MouseArea {
                     anchors.fill: parent; anchors.margins: -4
-                    onClicked: { if (card.notif) card.notif.dismiss(); card.closed(); }
+                    onClicked: card.requestClose()
                 }
             }
         }
@@ -3907,7 +4282,12 @@ Scope {
         delegate: PanelWindow {
             required property var modelData
             screen: modelData
-            visible: popupModel.count > 0
+            // Reminder cards share this window with the notification popups
+            // rather than getting one of their own: two layer surfaces both
+            // anchored top-left at full screen height would draw over each
+            // other, and stacking them in one Column is also what puts
+            // reminders above notifications instead of interleaved with them.
+            visible: popupModel.count > 0 || remPopModel.count > 0
             color: "transparent"
             anchors { top: true; left: true }
             margins { top: root.panelTopMargin; left: 10 }
@@ -3939,6 +4319,94 @@ Scope {
                 // hit zero, which is what made the cards below jump the last
                 // few pixels after an otherwise smooth collapse.
                 spacing: 0
+
+                // ---- reminders ----
+                // Above the notifications on purpose: a due reminder is the
+                // only card in this stack that will still be here in ten
+                // minutes, so transient traffic must not push it down screen.
+                //
+                // Two kinds ride this one model, and the ONLY difference
+                // between them is whether a timeout runs:
+                //   sticky  — a reminder that has come due. No timer. It goes
+                //             when it is clicked, and clicking it deletes the
+                //             reminder outright.
+                //   notice  — the "Reminder set" confirmation. Times out like
+                //             any other notification and deletes nothing.
+                Repeater {
+                    model: remPopModel
+                    // Same slot-owns-its-gap arrangement as the notification
+                    // cards below, and for the same reason — Column spacing
+                    // would snap shut the instant a collapsing slot hit zero.
+                    delegate: Item {
+                        id: remSlot
+                        required property var model
+                        // Copied off the model row, not read through it, so
+                        // they survive that row being removed out from under
+                        // the delegate mid-collapse.
+                        readonly property string rid:     model.rid
+                        readonly property string rtitle:  model.rtitle
+                        readonly property string rbody:   model.rbody
+                        readonly property bool   rsticky: model.rsticky
+
+                        width: popupCol.width
+                        implicitHeight: remCardItem.implicitHeight + remGap
+                        height: implicitHeight
+                        clip: closing
+
+                        readonly property int remGap: 8
+                        property bool closing: false
+
+                        function close() {
+                            if (closing) return;
+                            closing = true;
+                            remCardItem.opacity = 0;
+                            height = 0;
+                            remReaper.start();
+                        }
+                        Behavior on height {
+                            enabled: remSlot.closing
+                            NumberAnimation { duration: 200; easing.type: Easing.InOutQuad }
+                        }
+                        // Clicking a due reminder is an acknowledgement, so it
+                        // is deleted outright rather than hidden. A notice owns
+                        // nothing and only drops its own row. Either way it
+                        // happens at the END of the collapse, so the row — and
+                        // this delegate — survive the animation.
+                        Timer {
+                            id: remReaper
+                            interval: 220; repeat: false
+                            onTriggered: remSlot.rsticky ? root.remDelete(remSlot.rid)
+                                                         : root.remPopDrop(remSlot.rid)
+                        }
+
+                        // The real notification card, not a lookalike — so
+                        // "matches the system notification style" cannot drift.
+                        NotifCard {
+                            id: remCardItem
+                            width: remSlot.width
+                            summaryText: remSlot.rtitle
+                            bodyText: remSlot.rbody
+                            clickAnywhere: true
+                            onClosed: remSlot.close()
+
+                            opacity: 0
+                            Component.onCompleted: opacity = 1
+                            Behavior on opacity { NumberAnimation { duration: 200 } }
+                        }
+
+                        // A due reminder has NO auto-dismiss timer. That
+                        // absence is the feature. The confirmation notice gets
+                        // the same timeout an ordinary notification gets.
+                        Timer {
+                            interval: root.tNormal
+                            running: !remSlot.rsticky
+                            repeat: false
+                            onTriggered: remSlot.close()
+                        }
+                    }
+                }
+
+                // ---- notifications (self-dismissing) ----
                 Repeater {
                     model: popupModel
                     // Each card sits in a slot that owns the card plus the gap
@@ -4518,10 +4986,19 @@ Scope {
 
         Rectangle {
             id: calPanel
-            width: 300
+            // 580 = 14 margin + 272 month column + 12 + 1 divider + 12 + 255
+            // reminders column + 14 margin. The month column keeps the 272 it
+            // had as a 300px panel, so nothing in the grid or the month header
+            // is any tighter than before — the reminders list is bolted on to
+            // the right of it rather than carved out of it. 255 is what stops
+            // "12:57 AM · in 45m" eliding: at 215 it did.
+            width: 580
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.topMargin: root.panelTopMargin
+            // Driven by the month grid, which is always the taller of the two
+            // columns — so adding reminders never makes this dropdown grow.
+            // The list scrolls inside whatever height the grid dictates.
             implicitHeight: calCol.implicitHeight + 28
             radius: 14
             // was deliberately more opaque than ncBgStrong; now fully opaque
@@ -4532,10 +5009,24 @@ Scope {
 
             MouseArea { anchors.fill: parent }      // swallow clicks (don't close)
 
-            ColumnLayout {
-                id: calCol
+            RowLayout {
+                id: calBody
                 anchors.fill: parent
                 anchors.margins: 14
+                spacing: 12
+
+            ColumnLayout {
+                id: calCol
+                // fillWidth is pinned OFF and the width capped, because
+                // Layout.fillWidth defaults to TRUE for a layout nested in
+                // another layout — not false, as it does for a plain Item. So
+                // preferredWidth alone did not hold: this column ate 99px of
+                // the slack that was meant for the reminders list beside it,
+                // which squeezed that column to 116px and elided every row.
+                Layout.fillWidth: false
+                Layout.preferredWidth: 272
+                Layout.maximumWidth: 272
+                Layout.alignment: Qt.AlignTop
                 spacing: 10
 
                 // ---------- month/year nav ----------
@@ -4558,8 +5049,11 @@ Scope {
                 }
 
                 // ---------- weekday header ----------
+                // Centred rather than filled: the 7x32 grid is 248px wide and
+                // the column is 272, and letting the layout stretch the cells
+                // to close that gap would stop them being circles.
                 RowLayout {
-                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignHCenter
                     spacing: 4
                     Repeater {
                         model: ["S", "M", "T", "W", "T", "F", "S"]
@@ -4578,7 +5072,7 @@ Scope {
 
                 // ---------- day grid ----------
                 GridLayout {
-                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignHCenter
                     columns: 7
                     rowSpacing: 4
                     columnSpacing: 4
@@ -4608,6 +5102,263 @@ Scope {
                             }
                         }
                     }
+                }
+            }
+
+                // ---------- divider between the two columns ----------
+                Rectangle {
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: 1
+                    color: root.alpha(root.ncText, 0.18)
+                }
+
+                //-------------------------------------------------------------//
+                //  REMINDERS COLUMN                                           //
+                //-------------------------------------------------------------//
+                ColumnLayout {
+                    id: remPanelCol
+                    Layout.fillWidth: true          // takes all of the slack now
+                    Layout.fillHeight: true
+                    spacing: 8
+
+                    // Header. Deliberately the SAME text treatment as the
+                    // month name opposite — ns(13) Medium ncText, centred in a
+                    // row of the nav buttons' own height — so the two columns
+                    // read as one panel with two headings on one line, not as
+                    // a calendar with a sidebar bolted to it. That is also why
+                    // it is not a SectionLabel: those are the small grey
+                    // all-caps captions used INSIDE a panel, and this is a
+                    // title. No count beside it, which would break the centring.
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 28          // == CalNavBtn height
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Reminders"
+                            color: root.ncText
+                            font.family: root.ncFont
+                            font.pixelSize: root.ns(13)
+                            font.weight: Font.Medium
+                        }
+                    }
+
+                    // Empty state and list share one box, exactly as the
+                    // control center's notification pane does: the message is
+                    // centred in the whole pane rather than sitting at the top
+                    // of an otherwise blank column.
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 120
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: root.reminders.length === 0
+                            text: "Nothing scheduled"
+                            color: root.alpha(root.ncText, 0.5)
+                            font.family: root.ncFont
+                            font.pixelSize: root.ns(15)     // == "No Notifications"
+                        }
+
+                        Flickable {
+                            id: remFlick
+                            anchors.fill: parent
+                            visible: root.reminders.length > 0
+                            contentWidth: width
+                            contentHeight: remListCol.implicitHeight
+                            clip: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            // Only grabs the wheel once there is more list than
+                            // room for it, so a short list does not swallow
+                            // scrolls meant for the panel.
+                            interactive: contentHeight > height
+
+                            ColumnLayout {
+                                id: remListCol
+                                width: remFlick.width
+                                spacing: 8                  // == the ListView's
+
+                                Repeater {
+                                    model: root.reminders
+                                    // The real notification card again, so the
+                                    // list matches the control center's pane
+                                    // rather than resembling it.
+                                    delegate: NotifCard {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        summaryText: modelData.text
+                                        // pad and textSpacing above the card's
+                                        // defaults: the ask was a taller block
+                                        // with the time sitting lower in it.
+                                        pad: 13
+                                        textSpacing: 7
+                                        bodyText: Qt.formatDateTime(new Date(modelData.at), "hh:mm AP")
+                                                  + " · " + (modelData.fired ? "showing"
+                                                             : root.remCountdown(modelData.at))
+                                        // Smaller comes from the card (.body is
+                                        // ns(11) against the summary's ns(12));
+                                        // dimmer has to be said here.
+                                        bodyColor: root.alpha(root.ncText, 0.5)
+                                        // The x deletes it, and so does a
+                                        // right-click anywhere on the card.
+                                        // Left-click is left alone so a drag
+                                        // still flicks the list.
+                                        rightCloses: true
+                                        onClosed: root.remDelete(modelData.id)
+                                        onRightClicked: root.remDelete(modelData.id)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---------- add button, bottom right ----------
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Item { Layout.fillWidth: true }
+                        PanelIconBtn {
+                            glyph: root.g.plus
+                            // remPromptShow() closes every dropdown, this one
+                            // included — the prompt takes the keyboard
+                            // exclusively and a panel left open behind it would
+                            // be unreachable until the prompt was dismissed.
+                            onClicked: root.remPromptShow()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    //========================================================================//
+    //  REMINDER PROMPT  (SUPER+SHIFT+R, and the + in the calendar panel)     //
+    //========================================================================//
+    //  One field, asked twice: how long, then what. Overlay layer rather than
+    //  Top, so it sits above the notification popups it is about to add to.
+    PanelWindow {
+        id: remPromptWin
+        visible: root.remPromptOpen
+        color: "transparent"
+        anchors { top: true; left: true; right: true; bottom: true }
+        // Ignore, NOT exclusiveZone: 0. Those are different questions —
+        // exclusiveZone says what THIS surface reserves, exclusionMode says
+        // whether it honours what everyone ELSE reserved. At 0 the compositor
+        // still shrank this window out of the bar's 44px zone (measured:
+        // `hyprctl layers` gave y 44, h 766 on an 810-tall output), so the
+        // scrim stopped short and the bar sat there undimmed above a modal.
+        // Ignore maps to exclusive_zone -1, which is "give me the whole
+        // output". Every other full-screen catcher in this file wants the
+        // opposite — they are dropdowns and belong below the bar.
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.namespace: "quickshell-reminder-prompt"
+        // Exclusive, not OnDemand like the dropdowns: this is reached by
+        // pressing a key, so it has to take the keyboard on its own rather
+        // than waiting for a click to hand it over.
+        WlrLayershell.keyboardFocus: root.remPromptOpen ? WlrKeyboardFocus.Exclusive
+                                                        : WlrKeyboardFocus.None
+
+        // Scrim. Also the cancel target — click anywhere off the box.
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.35)
+            MouseArea { anchors.fill: parent; onClicked: root.remPromptCancel() }
+        }
+
+        // One box, nothing else in it. No header, no step counter, no hint
+        // line and — the part that mattered — no inner field box: the panel
+        // WAS the outer box and the TextInput had its own rounded rect inside
+        // it, which read as a box in a box. The border is the panel chrome
+        // every dropdown uses (2px ncBorder, radius 14), so "minimal" still
+        // matches the system theme rather than inventing a look.
+        Rectangle {
+            id: remPromptBox
+            width: 520
+            height: 68
+            anchors.centerIn: parent
+            radius: 14
+            color: root.colBg
+            border.width: 2
+            // The only feedback left for a bad delay, now that the hint line
+            // is gone. It clears on the next keystroke.
+            border.color: root.remPromptBad ? root.ncAccent : root.ncBorder
+            Behavior on border.color { ColorAnimation { duration: 140 } }
+
+            MouseArea { anchors.fill: parent }      // swallow clicks (don't cancel)
+
+            TextInput {
+                id: remField
+                anchors.fill: parent
+                anchors.leftMargin: 22
+                anchors.rightMargin: 22
+                verticalAlignment: TextInput.AlignVCenter
+                color: root.ncText
+                selectionColor: root.alpha(root.ncAccent, 0.6)
+                selectByMouse: true
+                font.family: root.ncFont
+                font.pixelSize: root.ns(15)
+                clip: true
+                focus: true
+
+                // Mirror into root as it is typed, the same way the wifi
+                // password field does — the two steps swap this one field's
+                // contents, so the field cannot be where either answer lives.
+                onTextChanged: {
+                    if (root.remPromptStage === 0) root.remPromptMins = remField.text;
+                    else                           root.remPromptText = remField.text;
+                    root.remPromptBad = false;
+                }
+                onAccepted: root.remPromptAccept()
+                Keys.onEscapePressed: root.remPromptCancel()
+                // Backspace on an empty message walks back to the delay, so a
+                // mistyped number costs one key instead of a cancel and a
+                // restart. Undiscoverable now that the hint line is gone, and
+                // kept anyway because it costs nothing to have.
+                Keys.onPressed: (e) => {
+                    if (e.key === Qt.Key_Backspace && root.remPromptStage === 1
+                        && remField.text === "") {
+                        root.remPromptStage = 0;
+                        e.accepted = true;
+                    }
+                }
+
+                Connections {
+                    target: root
+                    function onRemPromptStageChanged() {
+                        remField.text = root.remPromptStage === 0 ? root.remPromptMins
+                                                                 : root.remPromptText;
+                        remField.cursorPosition = remField.text.length;
+                        remField.forceActiveFocus();
+                    }
+                    function onRemPromptOpenChanged() {
+                        if (!root.remPromptOpen) return;
+                        remField.text = "";
+                        remField.forceActiveFocus();
+                        remFocusRetry.restart();
+                    }
+                }
+                // Same retry the wifi prompt needs: the surface is not always
+                // focusable on the frame it becomes visible.
+                Timer {
+                    id: remFocusRetry
+                    interval: 60
+                    onTriggered: if (root.remPromptOpen && !remField.activeFocus)
+                                     remField.forceActiveFocus()
+                }
+
+                // The placeholder is the only label there is — which step you
+                // are on is said by what it asks for, and nothing else.
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    width: parent.width
+                    visible: remField.text === ""
+                    text: root.remPromptStage === 0 ? "Remind in minutes..."
+                                                    : "Reminder message..."
+                    color: root.alpha(root.ncText, 0.45)
+                    font.family: root.ncFont
+                    font.pixelSize: root.ns(15)
+                    elide: Text.ElideRight
                 }
             }
         }

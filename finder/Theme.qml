@@ -9,17 +9,32 @@ import QtQuick
 // text / accent / border), so the two read as one system — but the *metrics*
 // deliberately are not the taskbar's. A dropdown that hangs off a bar icon is
 // dense on purpose: it is a glance. A settings menu is a place you stop and
-// read, and the first pass at it — a literal copy of the panel chrome, a 1.5px
-// outline around every single row — made a list of eight things look like a
-// spreadsheet.
+// read.
 //
-// So: a drawn edge around the card and nothing around the rows EXCEPT the
-// selected one, which carries both a fill and an accent outline. That outline
-// is a later revision and it overrides what this file used to say — the
-// original pass put a 1.5px line around every row, which is what made eight
-// items read as a spreadsheet. One row is not eight: the outline is what marks
-// the selection, so it never repeats down the list. State that used to be
-// spelled out in a subtitle is a mark on the right instead.
+// ── 2026-09-12: measured against omarchy's menu ───────────────────────────
+// Ahaan's ask was to match it: "minimal and simple like the reminders thing".
+// Two of its properties are what this pass is, and both were MEASURED off a
+// screen recording of it rather than guessed at:
+//
+//   The selection is a wash, not a colour. Sampled from a text-free column of
+//   the recording: card 33,33,45 and the selected row 45,45,57 — a flat +12
+//   on every channel, which is roughly 5% white laid over the card. No
+//   outline, no accent, no gradient. What used to be here was the accent at
+//   0.95 plus a 1.5px outline, which is a button, and a list of eight buttons
+//   is the same mistake as the 1.5px-outline-on-every-row pass before it:
+//   loud repeated down a column reads as chrome.
+//
+//   Nothing moves. Frame-stepping the recording at 60fps: the menu is absent
+//   in one frame and complete in the next, the selection is on one row in one
+//   frame and the next row in the next, and closing is the same single frame
+//   in reverse. There is no fade, no travel, no page slide. That is the whole
+//   of what "snappy" turned out to mean, and it is cheaper than what it
+//   replaces rather than more expensive.
+//
+// So the tokens below carry no motion for anything the selection or a page
+// change does. `motion` survives only for state that is not navigation — a
+// switch flipping, a notice appearing — where an instant cut reads as a
+// glitch rather than as speed.
 QtObject {
     id: root
 
@@ -59,30 +74,34 @@ QtObject {
     // list at all. The mouse still SELECTS and still activates; it just leaves
     // no trail. Anything tempted to add a hover wash back belongs here, and
     // should ask first.
-    // ONE value across the whole row. It was a left-to-right gradient for a
-    // while and the falloff is gone: on a row 430px wide it made the right-hand
-    // end look unfinished rather than shaped, and the page now has a box and a
-    // unit sitting in exactly that end. A selection is one thing, so it is one
-    // colour.
+    // The selection, and it is now a WASH rather than a colour. See the
+    // measurement at the top of this file: omarchy's is +12/255 on every
+    // channel over its card, which is about 5% white.
     //
-    // 0.95, and it is Ahaan's number twice over: he asked for 0.80, tried it on
-    // the running desktop and turned it up here. Before that it was 0.55, and
-    // before that a fifth of the accent, which over a near-black card
-    // desaturated to mud rather than reading as a colour at all. At 0.95 the
-    // selection is the accent, near enough, and the row it marks is
-    // unmistakable from across the screen.
-    readonly property color rowSel:    root.alpha(root.accent, 0.95)
-    // The selected row's outline, and it can no longer BE the accent. At a 0.55
-    // fill a full-strength accent outline stood clear of it; at 0.80 the two
-    // are the same colour four-fifths of the way and the outline vanished into
-    // its own fill — thickening it only made a thicker nothing. So the outline
-    // is drawn in the text colour instead, which is what the taskbar's own
-    // active rows do (`alpha(ncText, 0.85)` in shell.qml) and keeps the mark
-    // legible whatever pywal makes the accent.
-    readonly property color rowSelLine: root.alpha(root.text, 0.85)
+    // 0.10 of the text colour rather than the measured 0.047 of white, and the
+    // difference is deliberate on both axes. A fraction of pywal's `text` keeps
+    // the wash in the palette's own hue instead of introducing a grey the rest
+    // of the card does not have. And it is roughly twice omarchy's strength
+    // because omarchy's card is a fixed near-black, where this one is whatever
+    // pywal made the wallpaper's background — a wash tuned to the darkest case
+    // is the one that vanishes on every lighter one. NOT measured across
+    // wallpapers; if it turns out to be too quiet on a pale palette this single
+    // number is the whole fix.
+    //
+    // This replaces the accent at 0.95 with a 1.5px text outline, which Ahaan
+    // had tuned up twice (0.55 → 0.80 → 0.95) back when the selection was the
+    // only thing marking a row on a page full of other chrome. There is no
+    // other chrome now, so it does not have to shout over any.
+    readonly property color rowSel:    root.alpha(root.text, 0.10)
 
-    readonly property color dim:    root.alpha(root.text, 0.45)   // subtitles, crumbs
-    readonly property color dimmer: root.alpha(root.text, 0.30)   // footer hints, chevrons
+    // "subtitles, crumbs" and "footer hints, chevrons" is what these two used to
+    // say, and half of each is gone: there are no crumbs and no footer hints on
+    // the settings card any more. What is left of `dim` is the subtitle on the
+    // rows that still have one (keybind descriptions, window-rule
+    // documentation) and the prompts' caption text; `dimmer` is the chevron,
+    // the placeholder, and the right-hand trailing slot.
+    readonly property color dim:    root.alpha(root.text, 0.45)
+    readonly property color dimmer: root.alpha(root.text, 0.30)
 
     // ── metrics ───────────────────────────────────────────────────────────
     readonly property int cardWidth:  430
@@ -95,48 +114,40 @@ QtObject {
     readonly property int cardBorder: 2
     readonly property int rowHeight:  44
     readonly property int rowTall:    58   // with a subtitle
-    // On the SELECTED row only, and 1.5 is not a guess: it is the weight the
-    // battery panel's charge-limit buttons carry (taskbar/shell.qml, 1.5px of
-    // alpha(ncText, 0.9) around a solid-accent active button), which is the
-    // same shape doing the same job. Ahaan asked for the two to match. A 2.5px
-    // pass sat between them and read as heavier than anything on the bar.
-    readonly property real rowBorder: 1.5
+    // There is no rowBorder any more. The selected row carried a 1.5px outline
+    // as well as a fill; omarchy's carries a fill and nothing else, and with
+    // the fill down at 0.10 an outline is no longer the junior partner in the
+    // mark — it IS the mark, and a hard line around one row in a list with no
+    // other lines in it is the loudest thing on the card.
     readonly property int rowRadius:  12
     readonly property int iconSlot:   26
 
     // ── motion ────────────────────────────────────────────────────────────
-    // ONE number for everything the selection does, because the complaint that
-    // produced it was that the parts did not match: the highlight slid over
-    // 190ms while the row's own state — the icon coming up to full strength —
-    // switched on its own shorter timing, so a single step looked like two
-    // separate events, one of them slow.
+    // What is NOT here any more is the point of this section.
     //
-    // 180, set by Ahaan on the running desktop. The note this replaces argued
-    // for 120 — "past roughly 150ms the eye stops reading it as the selection
-    // moving and starts waiting for it to arrive" — and that was written when
-    // the launcher's selection did not travel at all. Now that it does, and
-    // over a whole card rather than a 430px column, the slower step is the one
-    // that reads as movement. It drives the settings band, the launcher's
-    // highlight (move AND resize) and every colour fade on a row, which is the
-    // point: they cannot disagree.
+    // There was a `motionLag` — the selection band's two edges left at
+    // different speeds so it stretched into a step — and the band itself, and a
+    // page slide, and a card that resized into the page it was entering, and a
+    // morph between the launcher box and this card. All of it is gone. omarchy
+    // does none of it and is the thing Ahaan pointed at; frame-stepping its
+    // recording, a step of the selection is one frame and a page change is one
+    // frame. The band that stretched was the single most-worked-on thing in
+    // this file and it was work spent making a 180ms delay pleasant instead of
+    // removing it.
+    //
+    // `motion` survives at 180 for the things that are NOT navigation: a switch
+    // moving its knob, a notice banner arriving or leaving. Those are state
+    // changing rather than the cursor moving, and cutting them reads as a
+    // glitch rather than as speed. Nothing in the list or the card's geometry
+    // may use it — if a Behavior is about where the selection is or which page
+    // is shown, it does not belong here at all.
     readonly property int motion: 180
 
-    // The selection band's two edges do not move together: the one facing the
-    // direction of travel leaves on `motion`, the one behind it on `motionLag`,
-    // so the band stretches toward where it is going and is pulled back into
-    // shape as it arrives. A rectangle that merely slides is the same distance
-    // in the same time with none of that, and it is what "flowing" looked like.
-    //
-    // 1.55x rather than 2x: past about that the trailing edge is still visibly
-    // catching up after the leading edge has stopped, which reads as lag rather
-    // than as weight.
-    readonly property int motionLag: Math.round(root.motion * 1.55)
-
-    // A page change is not movement within a page — see SettingsPanel's
-    // jumpTo. The card resizes and the new list slides in over this.
+    // Kept only for the launcher box's own fade, in Finder.qml — the settings
+    // card no longer animates its size, its position or its arrival, so
+    // nothing in SettingsPanel reads this any more.
     readonly property int motionPage: 190
 
-    readonly property int fsTitle: 17
     readonly property int fsInput: 15
     readonly property int fsRow:   14
     readonly property int fsSub:   11

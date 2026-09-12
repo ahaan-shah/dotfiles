@@ -5,38 +5,48 @@ import QtQuick.Layouts
 
 // The settings menu.
 //
-// ── What changed, and why ─────────────────────────────────────────────────
-// The first version of this was a literal copy of the taskbar's dropdown
-// chrome: a 1.5px outline around every row, a fill on every row, a subtitle
-// under most of them. That is right for a panel that hangs off a bar icon — it
-// is dense because it is a glance — and wrong here, because it made a list of
-// eight things read as a spreadsheet.
+// ── 2026-09-12: rebuilt against omarchy's menu ────────────────────────────
+// Ahaan sent a screen recording of it and asked for this to match — "the
+// snappyness and design … so clean … minimal and simple like the reminders
+// thing". What it is now is the result of frame-stepping that recording rather
+// than of reading a description of it; the two measurements are written down
+// in Theme.qml, which is where the numbers they produced live.
 //
-// The rule now: one drawn edge around the card, and nothing around a row
-// EXCEPT the selected one. That last clause is a revision of what this comment
-// used to say, and the distinction it turns on is worth keeping: an outline on
-// EVERY row is what made eight items read as a spreadsheet, and an outline on
-// exactly ONE row is the opposite — it is the cursor. It replaces the short
-// accent bar that used to sit on the leading edge, which said the same thing
-// in a corner of the row instead of around it. State that used to be a
-// subtitle — which value is currently in effect — is a single accent check on
-// the right, so it never competes with the selection for the same pixels.
+// The whole card is now four things:
 //
-// Rows are also one height per page rather than one height per row: a row with
-// a subtitle is 58 and one without is 44, and a page mixing the two (the root
-// menu, where Update and About carry no subtitle) looked like a list with
-// pieces missing. The page takes the taller measure if ANY of its rows needs
-// it — see rowH. Listing pages, where no row has a subtitle, stay dense.
+//   a search line        placeholder text and a caret, no icon, no box, no
+//                        rule under it. It is also the breadcrumb: it reads
+//                        "Search settings…" at the root and "Search setup…"
+//                        inside Setup, which is what omarchy's prompt does
+//                        when it changes from "Go…" to "Install…".
+//   rows                 icon, label, and a › if the row goes somewhere. No
+//                        second line under any of them.
+//   one band             a 10% wash on the selected row. No outline, no
+//                        accent, no travel.
+//   the card's own edge  2px of alpha(col7, 0.8) at radius 20, which is the
+//                        taskbar's, and the one thing Ahaan asked to leave
+//                        exactly as it was.
 //
-// Everything else is spacing: a borderless search line under a hairline, and
-// generous card padding. The palette is unchanged; the tokens live in
-// Theme.qml so this, the password box and the fingerprint box cannot drift.
+// What was removed, all of it on Ahaan's instruction: the header (page icon,
+// page title, breadcrumb), the subtitle under every menu row, and the footer
+// of keybind hints. The keys the footer documented are listed where it used to
+// be, at the bottom of this file, since nothing on screen says them now.
 //
-// ── Still no geometry animation ──────────────────────────────────────────
-// finder's box animates its width and height, so it re-animated on every
-// keystroke. Frames on this machine alternate 8ms/16ms (see the risks section
-// of the system map), and an animation at that cadence is what "choppy" looks
-// like. Fixed width, height bound straight to the layout, no Behavior.
+// ── No animation, anywhere in the navigation ─────────────────────────────
+// This file used to be mostly animation, and mostly FIXES for animation: a
+// selection band whose two edges moved at different speeds, a flag to suppress
+// it across a page change, a page slide, a one-frame size pin so the card's
+// resize did not aim at a contentHeight that was still settling, a gate so
+// that resize did not fire per keystroke, and a morph between this card and
+// the launcher box. Every one of those was a real fix for a real artefact, and
+// every artefact was caused by the animation it fixed. omarchy has none of it:
+// one frame without the menu, the next frame with it, complete. So this has
+// none of it either, and the file went from 711 lines of code to 556 for it —
+// counted with the comments stripped, because the comments grew.
+//
+// `Theme.motion` survives for things that are state rather than navigation —
+// the switch's knob, the notice banner's fade. Nothing about where the
+// selection is or which page is showing may use it.
 Rectangle {
     id: panel
 
@@ -51,32 +61,30 @@ Rectangle {
     readonly property bool searching: panel.query.trim().length > 0
     readonly property var rows: panel.searching ? Settings.search(panel.pageKey, panel.query)
                                                 : Settings.rowsFor(panel.pageKey)
-    readonly property var crumbParts: Settings.crumb(panel.pageKey)
+    // No crumbParts any more. It fed the header's "where you are" text, and
+    // the header is gone — see the card's layout. Settings.crumb still exists
+    // and is still what pageTitle is built from.
 
     // One height for every row on the page, taken from the tallest kind the
-    // page actually contains. Height per ROW made the root menu ragged, because
-    // Update and About have nothing to say under their labels and every other
-    // row does; height per PAGE keeps a listing of 276 font families dense
-    // while making a mixed menu read as one block.
-    readonly property int rowH: panel.rows.some(r => (r.sub || "") !== "")
+    // page actually contains. Height per ROW made a mixed page ragged; height
+    // per PAGE keeps a listing of 276 font families dense while making a menu
+    // read as one block.
+    //
+    // Only rows that are NOT menus can ask for the taller measure now. A menu
+    // row draws no subtitle at all after this pass (see the delegate), so a
+    // page of nothing but menu rows — which is every page you navigate
+    // THROUGH — is always the dense 44. The tall 58 survives for the two
+    // listings that genuinely have a second line to draw: keybindings, where
+    // the sub is what the bind does, and the font groups, where it is the
+    // variant count.
+    readonly property int rowH: panel.rows.some(r => r.kind !== "menu" && (r.sub || "") !== "")
                                 ? Theme.rowTall : Theme.rowHeight
 
-    // Set for the one frame in which the page changes, and it suppresses the
-    // highlight's travel for exactly that frame.
-    //
-    // Ordering sel before pageKey (see enter) stops the NEW page rendering with
-    // the OLD index, but on its own it still leaves motion: assigning sel starts
-    // the highlight gliding from the row you were on up to row 0, and the model
-    // swaps underneath it while it is still travelling. Arriving at a page is
-    // not navigation within one — it should already be at the top, not be seen
-    // getting there — so a page change is the one case that does not animate.
-    property bool jumping: false
-    Timer { id: jumpClear; interval: 40; onTriggered: panel.jumping = false }
-
-    // Which way the selection last moved, +1 down and -1 up. The band's two
-    // edges swap roles on it — see the highlight — so it has to be set BEFORE
-    // sel, or the first frame of the stretch leans the wrong way.
-    property int dir: 1
+    // What used to live here: `jumping`, a flag set for the one frame of a page
+    // change to suppress the selection band's travel, and `dir`, the direction
+    // of the last step, which decided which of the band's two edges led and
+    // which lagged. Both existed only to make a 180ms glide behave; nothing
+    // glides now, so neither has anything to suppress or to lean.
 
     // ── editing a value row ───────────────────────────────────────────────
     // The id of the row whose box has the keyboard, or "". Only the Window
@@ -152,52 +160,32 @@ Rectangle {
         Settings.setWindowRule(r.id, String(v))
     }
 
-    // ── the page transition ───────────────────────────────────────────────
-    // `slide` is the whole thing: the list is translated by it and its opacity
-    // is derived from it, so one animator drives both. Set to ±18 at the moment
-    // the page changes and animated back to zero, which reads as the new page
-    // arriving from the side you are travelling towards — right when you
-    // descend into a submenu, left when you come back out.
+    // ── the page transition, which no longer exists ───────────────────────
+    // Deleted here, in full, and recorded because it was a lot of machinery and
+    // someone will wonder whether it was removed by accident:
     //
-    // 18px and not more because the card's padding is 20: the translate happens
-    // inside a card that does not clip, so a larger offset would put the list
-    // over the rounded corner for a few frames.
-    property real slide: 0
-    readonly property real slideOpacity: 1 - Math.min(1, Math.abs(panel.slide) / 18) * 0.7
-    NumberAnimation {
-        id: slideIn
-        target: panel; property: "slide"; to: 0
-        duration: Theme.motionPage; easing.type: Easing.OutCubic
-    }
-    Timer { id: slideStart; interval: 16; onTriggered: panel.releaseHold() }
-
-    // The card's own width and height animate ONLY across a page change. This
-    // is the exception to the no-geometry-animation rule at the top of this
-    // file, and it is narrow on purpose: that rule exists because finder's box
-    // re-animated its size on every KEYSTROKE, and search still changes the row
-    // count per keystroke. Gating on this flag keeps the box rigid while typing
-    // and lets it grow into the next page when you enter one.
-    property bool pageAnim: false
-    Timer {
-        id: pageAnimClear
-        interval: Theme.motionPage + 40
-        onTriggered: { panel.pageAnim = false; panel.heldW = 0; panel.heldH = 0 }
-    }
-
-    // The card's size across the frame in which the page changes. Zero means
-    // "not holding", which is why nothing here can legitimately be 0.
+    //   slide / slideOpacity / slideIn   the new page translated in by ±18px
+    //                                    and faded up, one animator driving
+    //                                    both, leaning the way you travelled
+    //   heldW / heldH / slideStart       the card pinned to the OUTGOING size
+    //                                    for exactly one frame, so the resize
+    //                                    started from a known size towards a
+    //                                    settled one — swapping the model
+    //                                    rebuilds every delegate, and
+    //                                    contentHeight is only final once they
+    //                                    exist, so an animation begun in that
+    //                                    frame aimed at a moving goalpost
+    //   pageAnim / pageAnimClear         a gate so the card resized on a PAGE
+    //                                    change but stayed rigid per keystroke
     //
-    // This is what makes the resize smooth, and the reason it was not is that
-    // the card was animating towards a target that had not finished moving.
-    // Swapping the model rebuilds every delegate, and contentHeight — which is
-    // what the card's height is ultimately summed from — only reaches its final
-    // value once they exist. Starting the animation in that same frame aimed it
-    // at an intermediate number and then re-aimed it, which is the choppiness:
-    // not a slow animation, a moving goalpost. Holding the old size for that one
-    // frame means the animation starts from a known size, towards a settled one,
-    // on the same frame the slide starts.
-    property real heldW: 0
-    property real heldH: 0
+    // Every one of those was a real fix for a real artefact, and every one of
+    // the artefacts was caused by the animation it was fixing. Removing the
+    // animation removes all four at once. A page change is now what it is in
+    // omarchy: the next frame shows the next page.
+    //
+    // The card's width and height still CHANGE per page — Settings.pageWidth is
+    // per page and the row count differs — they just change instantly, which
+    // also settles the per-keystroke problem the gate existed for.
 
     function jumpTo(key, into) {
         // Leaving the page takes the keyboard back, or the search field on the
@@ -210,62 +198,30 @@ Rectangle {
         Settings.winError = ""
         Settings.kbError = ""
         Settings.kbWarn = ""
-        // Captured BEFORE anything else, while they still describe the page
-        // being left.
-        panel.heldW = panel.width
-        panel.heldH = panel.implicitHeight
-        panel.jumping = true
-        // Off until releaseHold, so the pin itself cannot animate.
-        panel.pageAnim = false
+        // sel BEFORE pageKey, and the order is still load-bearing even with
+        // nothing animating. `rows` is bound to pageKey, so assigning pageKey
+        // swaps the model on the spot while sel still holds the index of the
+        // row selected on the page being left — entering Remove from row 1
+        // would render Remove with ITS row 1 selected for a frame. What used to
+        // be the OTHER half of that fix, the `jumping` flag, is gone with the
+        // animation it suppressed.
         panel.sel = 0
         panel.query = ""
         searchInput.text = ""
         panel.pageKey = key
-
-        // The offset is applied NOW and the animation starts on the NEXT frame,
-        // deliberately. Assigning pageKey swaps the model, which destroys every
-        // delegate on the old page and builds every delegate on the new one —
-        // one genuinely expensive frame. Starting the animation in that same
-        // frame means its first step is the one that gets stretched, and a
-        // stutter at the start of a movement is the part the eye actually
-        // catches. So the heavy frame renders the new page already offset and
-        // faded, and the travel begins after it.
-        panel.slide = into ? 18 : -18
-        slideStart.restart()
-        jumpClear.restart()
-        pageAnimClear.restart()
     }
 
-    // One frame later: the new page's delegates exist, so col.implicitHeight is
-    // final. Release the hold and let both Behaviors run to it.
-    function releaseHold() {
-        panel.pageAnim = true
-        panel.heldW = 0
-        panel.heldH = 0
-        slideIn.restart()
-    }
+    // `into` is now unused — it chose which way the outgoing page slid. Kept in
+    // the signature because both callers pass it and it is the one word at each
+    // call site that says which direction the navigation goes; a reader of
+    // enter()/back() should not have to work that out.
 
-    // Entering the menu from the launcher, and the reason this function exists
-    // at all: the settings card used to appear at its own size while the
-    // launcher box faded out at a different one, which is two cards swapping
-    // rather than one becoming the other. Ahaan: "settings is snappy and like
-    // its own standalone thing".
-    //
-    // It is the PAGE-CHANGE machinery, reused exactly. heldW/heldH pin the card
-    // to the size of the box it is replacing for one frame; slideStart releases
-    // the pin on the next one, and the same Behaviors that grow the card into a
-    // deeper page grow it out of the launcher. Nothing new animates — the
-    // motion is the one this file already had.
-    function enterFrom(w, h) {
-        if (w <= 0 || h <= 0) return
-        panel.heldW = w
-        panel.heldH = h
-        // Off until releaseHold, exactly as in jumpTo: the pin itself must not
-        // animate, or the card slides from wherever it last was.
-        panel.pageAnim = false
-        slideStart.restart()
-        pageAnimClear.restart()
-    }
+    // enterFrom() is gone. It pinned this card to the size of the launcher box
+    // it was replacing for one frame so the two morphed into each other rather
+    // than swapping — Ahaan, at the time: "settings is snappy and like its own
+    // standalone thing". The card now simply appears, which is what omarchy
+    // does and what "standalone" was reaching for; Finder.qml drops the
+    // launcher box in the same frame rather than fading it out behind this one.
 
     function reset() {
         panel.pageKey = ""
@@ -324,7 +280,6 @@ Rectangle {
         // No positionViewAtIndex: highlightRangeMode scrolls the view itself,
         // with easing. Calling it here as well jumped the content out from under
         // that animation on the step that crossed the viewport edge.
-        panel.dir = d
         panel.sel = Math.max(0, Math.min(panel.rows.length - 1, panel.sel + d))
     }
 
@@ -348,8 +303,8 @@ Rectangle {
         // vanishing: a + that disappears at the maximum reads as a glitch,
         // where a dim one reads as a limit.
         opacity: sb.shown ? (sb.enabled ? 1 : 0.3) : 0
-        Behavior on opacity { NumberAnimation { duration: Theme.motion } }
-        Behavior on color   { ColorAnimation  { duration: Theme.motion } }
+        // No Behaviors. `shown` is row.isSel, so this fades in and out with the
+        // selection, and the selection no longer fades.
 
         Text {
             anchors.centerIn: parent
@@ -396,40 +351,34 @@ Rectangle {
 
     // ── card ──────────────────────────────────────────────────────────────
     // Per page: the keybindings listing carries a description as well as a
-    // combo and is unreadable at the default width. Changed only on navigation,
-    // never per keystroke, so it is not the kind of geometry change that made
-    // the old box feel choppy.
-    // Pinned to the OUTGOING size while heldW/heldH are set, which is for
-    // exactly one frame — see jumpTo. Then they go to zero, these fall back to
-    // the real bindings, and the Behaviors animate the difference.
-    width:          panel.heldW > 0 ? panel.heldW : Settings.pageWidth(panel.pageKey)
-    implicitHeight: panel.heldH > 0 ? panel.heldH : col.implicitHeight + Theme.pad * 2
-    // Same duration and same easing as the list's slide, and now started on the
-    // same frame as it, so the card resizing and the content arriving are one
-    // movement rather than two that overlap.
-    Behavior on width {
-        enabled: panel.pageAnim
-        NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic }
-    }
-    Behavior on implicitHeight {
-        enabled: panel.pageAnim
-        NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic }
-    }
+    // combo and is unreadable at the default width.
+    //
+    // Straight bindings, no Behaviors and no pin. Both numbers are exact the
+    // moment the layout settles, and settling takes the one frame the model
+    // swap costs anyway — the elaborate hold that used to wrap these existed
+    // purely so an ANIMATION did not start against a contentHeight that had not
+    // finished being computed. With nothing animating there is no goalpost to
+    // move.
+    width:          Settings.pageWidth(panel.pageKey)
+    implicitHeight: col.implicitHeight + Theme.pad * 2
     radius: Theme.cardRadius
     color: Theme.bg
     border.width: Theme.cardBorder
     border.color: Theme.line
 
-    opacity: panel.shown ? 1 : 0
-    scale:   panel.shown ? 1 : 0.97
-    visible: opacity > 0.001
-    // Theme.motionPage and OutCubic, which is what the launcher box fades on
-    // and what this card resizes on. Three numbers used to meet here — the box
-    // left over 150ms, this arrived over 130, and the size morph runs over 190
-    // — and a crossfade whose two halves disagree is exactly what reads as one
-    // thing being replaced by another instead of turning into it.
-    Behavior on opacity { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
-    Behavior on scale   { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
+    // It appears. It does not arrive.
+    //
+    // This was a fade plus a scale from 0.97 over 190ms, matched against the
+    // launcher box's own fade so the two crossfaded into one another. Stepping
+    // omarchy's recording frame by frame at 60fps: frame 230 is wallpaper,
+    // frame 231 is the complete menu at full opacity and full size, and closing
+    // is the same single frame in reverse. There is no in-between frame to find
+    // — and that, not any easing curve, is what reads as instant.
+    //
+    // `scale` is not set at all now rather than being bound to 1: a scale
+    // binding on a Rectangle this size is a transform Qt applies every frame
+    // for no visual effect.
+    visible: panel.shown
 
     MouseArea { anchors.fill: parent }   // swallow clicks; the scrim is behind
 
@@ -439,50 +388,29 @@ Rectangle {
         anchors.margins: Theme.pad
         spacing: 0
 
-        // ── header ────────────────────────────────────────────────────────
+        // ── there is no header ────────────────────────────────────────────
+        // A page icon, the page title, and a breadcrumb of where you were. All
+        // three are gone, on Ahaan's instruction and for the reason the rest of
+        // this pass exists: omarchy's menu has no title, and the thing a title
+        // would say is already said one line below it. The placeholder in the
+        // search field reads "Search settings…" at the root and "Search
+        // setup…" inside Setup, so the field IS the breadcrumb — which is
+        // exactly what omarchy does with its own prompt ("Go…", then
+        // "Install…" once you are inside Install).
+        //
+        // Settings.pageTitle and Settings.pageIcon still exist and pageTitle is
+        // still read, by that placeholder. Nothing else on this card draws a
+        // title.
+
+        // ── search: a line, not a box, and now not an icon either ─────────
+        // The 󰍉 glyph went with the header. It was the only mark left on the
+        // card that named a control rather than being one, and a search field
+        // whose placeholder starts with the word "Search" does not need a
+        // second thing saying so.
         RowLayout {
             Layout.fillWidth: true
-            Layout.bottomMargin: 14
+            Layout.bottomMargin: 16
             spacing: 10
-
-            Text {
-                text: Settings.pageIcon(panel.pageKey)
-                color: Theme.alpha(Theme.text, 0.8)
-                font.family: Theme.font
-                font.pixelSize: 18
-            }
-            Text {
-                text: Settings.pageTitle(panel.pageKey)
-                color: Theme.text
-                font.family: Theme.font
-                font.pixelSize: Theme.fsTitle
-                font.weight: Font.Medium
-            }
-            Item { Layout.fillWidth: true }
-            // Where you are, only when that is not already obvious from the
-            // title. At the root the title says "Settings" and a crumb
-            // repeating it is exactly the redundancy this pass removed.
-            Text {
-                visible: panel.crumbParts.length > 1
-                text: panel.crumbParts.slice(0, -1).join("  ›  ")
-                color: Theme.dimmer
-                font.family: Theme.font
-                font.pixelSize: Theme.fsSub
-                elide: Text.ElideLeft
-                Layout.maximumWidth: 170
-            }
-        }
-
-        // ── search: a line, not a box ─────────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 10
-            Text {
-                text: "󰍉"
-                color: searchInput.text.length > 0 ? Theme.alpha(Theme.text, 0.7) : Theme.dimmer
-                font.family: Theme.font
-                font.pixelSize: 15
-            }
             TextInput {
                 id: searchInput
                 Layout.fillWidth: true
@@ -585,13 +513,11 @@ Rectangle {
             }
         }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.topMargin: 12
-            Layout.bottomMargin: 8
-            implicitHeight: 1
-            color: Theme.hairline
-        }
+        // No rule under the search line. It was the last divider on the card
+        // once the footer's went, and a single hairline with nothing to pair
+        // with reads as a leftover. The 16px under the search row does the
+        // separating; omarchy's prompt sits over its list with nothing but
+        // space between them.
 
         // ── rows ──────────────────────────────────────────────────────────
         ListView {
@@ -617,11 +543,16 @@ Rectangle {
             // listings still clip, because there it is load-bearing.
             clip: list.contentHeight > list.height + 0.5
 
-            // The page transition, driven entirely by panel.slide. A transform
-            // rather than an x: this is a ColumnLayout child, and the layout
-            // owns x.
-            transform: Translate { x: panel.slide }
-            opacity: panel.slideOpacity
+            // No transform and no opacity. The list used to be translated by
+            // panel.slide and faded by a value derived from it, which is the
+            // page transition described (and buried) up at jumpTo.
+            //
+            // Removing them also removes a cost the clip comment below is all
+            // about: a clipped item that is ALSO translated and ALSO below full
+            // opacity cannot be drawn with a scissor rect, so Qt rendered this
+            // subtree to an offscreen texture. That only ever happened during
+            // the slide, but it happened on every page change, at 430x460, on a
+            // GPU that is downclocked on the balanced profile.
             spacing: 2
             model: panel.rows
             currentIndex: panel.sel
@@ -689,76 +620,54 @@ Rectangle {
             preferredHighlightBegin: 0
             preferredHighlightEnd: list.height
 
-            // The band. It is defined by a TOP EDGE and a BOTTOM EDGE that
-            // chase the current row at two different speeds, rather than by a
-            // position and a fixed height:
+            // The band, and it no longer travels.
             //
-            //   moving down   bottom edge leaves on motion, top edge on
-            //                 motionLag  ->  the band reaches ahead, then the
-            //                 back of it is pulled along after
-            //   moving up     the roles swap
+            // What was here was the most elaborate thing in this file: a top
+            // edge and a bottom edge chasing the current row at two DIFFERENT
+            // speeds, so the band stretched toward where it was going and was
+            // pulled back into shape as it arrived, with both Behaviors
+            // suppressed for the one frame of a page change so it did not
+            // stretch across a list that had just been replaced. It worked. It
+            // was also 180ms of waiting per arrow key, and frame-stepping
+            // omarchy's menu at 60fps shows its selection on one row in one
+            // frame and on the next row in the very next — no travel at all.
+            // That is the whole of what Ahaan meant by snappy, so the band is
+            // a plain rectangle that is simply WHERE the selection is.
             //
-            // So it stretches into the step and settles out of it, and the two
-            // rows involved are briefly connected by the thing travelling
-            // between them. A rectangle that only slides covers the same
-            // distance in the same time and shows none of that.
+            // Everything below survives from that version and still matters:
             //
-            // Both Behaviors are off while `jumping`, because a page change is
-            // not a step: there is nothing to travel between, and stretching
-            // across a list that has just been replaced would draw a band
-            // between two rows that were never both on screen.
+            // COMPUTED FROM THE INDEX, never read off the current delegate.
+            // Reassigning a ListView's model resets it, and a rebuilt delegate
+            // EXISTS before it has been positioned — currentItem is non-null
+            // and its y is still 0. So a guard on `currentItem !== null` does
+            // not help: the band read that 0 as a real position and jumped to
+            // the top of the list. Every row on a page is the same height (see
+            // panel.rowH), so row i sits at i * (rowH + spacing) in content
+            // coordinates — which is the space the highlight is placed in.
+            // That is exact, it is available before any delegate exists, and it
+            // cannot be disturbed by the model being rebuilt underneath it.
+            //
+            // Note that with no animation this is no longer load-bearing for
+            // CORRECTNESS the way it was — a band that snaps to a wrong 0 and
+            // snaps back within one frame would never be seen. It is kept
+            // because it is still the right answer and costs nothing, and
+            // because anything that reintroduces motion here would need it
+            // again immediately.
             highlight: Rectangle {
                 id: band
                 z: 0
                 width: list.width
 
-                // COMPUTED FROM THE INDEX, never read off the current delegate.
-                //
-                // Reassigning a ListView's model resets it, and a rebuilt
-                // delegate EXISTS before it has been positioned — currentItem
-                // is non-null and its y is still 0. So a guard on
-                // `currentItem !== null` does not help: the band read that 0 as
-                // a real position, travelled to the top of the list and back,
-                // and a previous attempt that cached the last good value cached
-                // the 0 as well. The selection itself never moved, which is why
-                // the next arrow key carried on from the right row and sent the
-                // band all the way there again.
-                //
-                // Every row on a page is the same height (see panel.rowH), so
-                // row i sits at i * (rowH + spacing) in content coordinates —
-                // which is the space the highlight is placed in. That is exact,
-                // it is available before any delegate exists, and it cannot be
-                // disturbed by the model being rebuilt underneath it.
                 readonly property real rowPitch: panel.rowH + list.spacing
-                readonly property real tgtTop: panel.sel * band.rowPitch
-                readonly property real tgtBot: band.tgtTop + panel.rowH
 
-                readonly property bool down: panel.dir >= 0
-
-                property real edgeTop: band.tgtTop
-                property real edgeBot: band.tgtBot
-                Behavior on edgeTop {
-                    enabled: !panel.jumping
-                    NumberAnimation {
-                        duration: band.down ? Theme.motionLag : Theme.motion
-                        easing.type: Easing.OutCubic
-                    }
-                }
-                Behavior on edgeBot {
-                    enabled: !panel.jumping
-                    NumberAnimation {
-                        duration: band.down ? Theme.motion : Theme.motionLag
-                        easing.type: Easing.OutCubic
-                    }
-                }
-
-                y: band.edgeTop
-                height: Math.max(0, band.edgeBot - band.edgeTop)
+                y: panel.sel * band.rowPitch
+                height: panel.rowH
 
                 radius: Theme.rowRadius
+                // A fill and nothing else — see Theme.rowSel. No border: the
+                // outline that used to sit around this was the loudest mark on
+                // a card that now has no other marks on it.
                 color: Theme.rowSel
-                border.width: Theme.rowBorder
-                border.color: Theme.rowSelLine
             }
 
             delegate: Item {
@@ -769,7 +678,13 @@ Rectangle {
                 readonly property bool isSel:  row.index === panel.sel
                 readonly property bool isOn:   row.modelData.active === true
                 readonly property bool nests:  row.modelData.kind === "menu"
-                readonly property bool hasSub: (row.modelData.sub || "") !== ""
+                // A menu row never draws one, whatever the model carries — the
+                // gate is here rather than in the data so that Settings.qml's
+                // page definitions stay readable as descriptions of the menu.
+                // Must agree with panel.rowH, which decides the page's height
+                // from the same test.
+                readonly property bool hasSub: row.modelData.kind !== "menu"
+                                               && (row.modelData.sub || "") !== ""
 
                 width: list.width
                 height: panel.rowH
@@ -787,9 +702,6 @@ Rectangle {
                     // top would make the whole row a toggle and fire it twice.
                     enabled: row.modelData.kind !== "toggle"
                     onClicked: {
-                        // A click is a step too, and the band leans on panel.dir
-                        // — without this every click stretched downward.
-                        panel.dir = row.index >= panel.sel ? 1 : -1
                         panel.sel = row.index
                         panel.activate(row.index)
                     }
@@ -815,13 +727,18 @@ Rectangle {
                             text: row.modelData.icon || ""
                             // Dimmer than the label: the icon locates the row,
                             // the label is what is being read.
-                            color: row.isSel ? Theme.text : Theme.alpha(Theme.text, 0.65)
-                            // Theme.motion, like everything else the selection
-                            // does: the icon coming up to full strength is part
-                            // of the same movement, and a hard switch under a
-                            // gliding highlight is the snap the glide was meant
-                            // to remove.
-                            Behavior on color { ColorAnimation { duration: Theme.motion } }
+                            //
+                            // ONE value, the same on every row. It used to come
+                            // up to full strength on the selected row, fading
+                            // over Theme.motion so it moved with the band. With
+                            // the band no longer moving that fade is a 180ms
+                            // flicker chasing an instant step, and omarchy's
+                            // icons do not change on selection at all — the
+                            // wash is the entire mark. Two things saying
+                            // "this row" is one more than is needed, and the
+                            // second one arriving late is worse than not
+                            // arriving.
+                            color: Theme.alpha(Theme.text, 0.65)
                             // Almost always Theme.font, which carries every
                             // glyph in this menu. The exception is a row whose
                             // mark lives somewhere else — the browsers draw
@@ -849,6 +766,28 @@ Rectangle {
                             font.family: row.modelData.font ? row.modelData.font : Theme.font
                             font.pixelSize: row.modelData.font ? Theme.fsRow + 2 : Theme.fsRow
                         }
+                        // The subtitle, and it is now gone from every MENU row.
+                        //
+                        // That is the removal Ahaan asked for — "the subtext in
+                        // each category" — and the categories are exactly the
+                        // menu rows: Install's "packages, AUR, web apps",
+                        // Setup's "monitors, keys, window rules, defaults", and
+                        // fourteen more like them. Every one of those restates
+                        // its own label at greater length. omarchy's rows are a
+                        // word each.
+                        //
+                        // It survives on rows that are NOT menus, because on
+                        // those the second line is not a description of the
+                        // label — it is the only place the information exists:
+                        // a keybind's row says what the bind DOES under the
+                        // action's name, and a font group says how many
+                        // variants it has. Deleting those would delete the page.
+                        //
+                        // The menu rows whose subtitle was live STATE rather
+                        // than description — the firewall's zone, how many
+                        // fingerprints are enrolled — did not lose it. It moved
+                        // to the right-hand slot below; see Settings._decorate,
+                        // which now writes those into `trail`.
                         Text {
                             Layout.fillWidth: true
                             visible: row.hasSub
@@ -860,9 +799,16 @@ Rectangle {
                         }
                     }
 
-                    // Where a search hit lives. Not a subtitle — a right-aligned
-                    // path reads as location rather than as description, and it
-                    // keeps the no-redundant-subtext rule intact.
+                    // The right-hand slot. Two things land here and they are the
+                    // same KIND of thing — something about the row that is not a
+                    // description of it:
+                    //
+                    //   on a search hit   the page the row actually lives on
+                    //   on a menu row     live state, e.g. "3 enrolled"
+                    //
+                    // Right-aligned and dim, so it reads as an annotation rather
+                    // than as a second label, and so it never adds a line to the
+                    // row's height the way a subtitle does.
                     Text {
                         visible: (row.modelData.trail || "") !== ""
                         text: row.modelData.trail || ""
@@ -925,8 +871,12 @@ Rectangle {
                                 border.color: valueBox.editing ? Theme.accent
                                             : row.isSel ? Theme.alpha(Theme.text, 0.22)
                                                         : "transparent"
-                                Behavior on color { ColorAnimation { duration: Theme.motion } }
-                                Behavior on border.color { ColorAnimation { duration: Theme.motion } }
+                                // No Behaviors. Both colours above depend on
+                                // row.isSel, and the selection is instant now —
+                                // a 180ms tint chasing a band that has already
+                                // arrived is the mismatch the old Theme.motion
+                                // comment was written to prevent, just with the
+                                // two halves swapped round.
 
                                 TextInput {
                                     id: valueInput
@@ -1031,7 +981,6 @@ Rectangle {
                                     anchors.fill: parent
                                     enabled: !valueBox.editing
                                     onClicked: {
-                                        panel.dir = row.index >= panel.sel ? 1 : -1
                                         panel.sel = row.index
                                         panel.beginEdit(row.modelData.id)
                                     }
@@ -1097,7 +1046,8 @@ Rectangle {
                                               : row.modelData.rebound
                                                   ? Theme.alpha(Theme.accent, 0.55)
                                               : row.isSel ? Theme.alpha(Theme.text, 0.22) : "transparent"
-                                Behavior on color { ColorAnimation { duration: Theme.motion } }
+                                // No Behavior, for the same reason as the value
+                                // box above: this tint tracks the selection.
 
                                 Text {
                                     id: comboText
@@ -1117,7 +1067,6 @@ Rectangle {
                                 MouseArea {
                                     anchors.fill: parent
                                     onClicked: {
-                                        panel.dir = row.index >= panel.sel ? 1 : -1
                                         panel.sel = row.index
                                         panel.beginRebind(row.index)
                                     }
@@ -1242,36 +1191,36 @@ Rectangle {
             font.pixelSize: Theme.fsSub
         }
 
-        // ── footer ────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.topMargin: 10
-            implicitHeight: 1
-            color: Theme.hairline
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 10
-            spacing: 16
-            readonly property bool nested: panel.pageKey !== "" || panel.searching
-
-            Text { text: "↑↓ navigate"; color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint }
-            Text { color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint
-                   text: panel.editingKey !== "" ? "↵ apply  ·  esc cancel"
-                       : panel.pageKey === "setup/windowrules" ? "↵ edit" : "↵ select" }
-            Text { text: "← back";      color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint
-                   visible: parent.nested }
-            Text { text: "− +  adjust"; color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint
-                   visible: panel.pageKey === "setup/windowrules" && panel.editingKey === "" }
-            Text { text: "⇧E reassign"; color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint
-                   visible: panel.pageKey === "setup/keybindings" }
-            Text { text: "⇧R restore"; color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint
-                   visible: panel.pageKey === "setup/keybindings" }
-            Text { text: "⇧R reset all"; color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint
-                   visible: panel.pageKey === "setup/windowrules" }
-            Item { Layout.fillWidth: true }
-            Text { text: "esc close"
-                   color: Theme.dimmer; font.family: Theme.font; font.pixelSize: Theme.fsHint }
-        }
+        // ── there is no footer ────────────────────────────────────────────
+        // A hairline and up to eight keybind hints — "↑↓ navigate", "↵ select",
+        // "← back", "esc close", and four more that appeared only on the two
+        // pages that need them. Removed on Ahaan's instruction.
+        //
+        // Worth writing down what goes with it, because none of these keys
+        // changed and there is now nothing on screen that says so. Read off the
+        // Keys handler above rather than off the footer that used to be here —
+        // the footer never mentioned →, and never mentioned the caret
+        // conditions that decide whether ← and Backspace edit or navigate:
+        //
+        //   ↑ ↓          move
+        //   ↵            select, or enter a page
+        //   Esc          close, at any depth
+        //   ←            back one page, but only with the caret at position 0
+        //   Backspace    back one page, but only with the field empty
+        //   →            enter a page, but only with the caret at the end
+        //   − + =        step a window rule   (setup/windowrules)
+        //   ⇧E           reassign a keybind   (setup/keybindings)
+        //   ⇧R           restore one bind, or reset every window rule
+        //
+        // The three "but only" clauses are what lets the same keys edit the
+        // search text and navigate the list without a mode: a key is the
+        // list's only when the caret has nothing left to do with it. There is
+        // no Tab binding — → is the only key that descends other than ↵.
+        //
+        // The same trade the reminder prompt made yesterday, and the same
+        // reasoning: its Backspace-walks-back step is undiscoverable now that
+        // its hint line is gone, and it was kept because it costs nothing to
+        // have. This footer was eight lines of chrome on every page to document
+        // four keys most people find by pressing them.
     }
 }

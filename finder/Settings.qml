@@ -342,7 +342,9 @@ QtObject {
             for (let j = 0; j < ms.length; j++) if (ms[j].active) anyActive = true
             top.push({
                 id: g, icon: page.icon || "󰒓", title: g, kind: "menu",
-                sub: ms.length + " variants" + (anyActive ? " · in use" : ""),
+                // The trailing slot, not a subtitle: this is a menu row, and
+                // menu rows draw no second line. Same move as _decorate's.
+                trail: ms.length + " variants" + (anyActive ? " · in use" : ""),
                 // A font group's name is itself a family, so it previews too.
                 font: (page.renderInOwnFont && isName[g]) ? g : ""
             })
@@ -415,31 +417,41 @@ QtObject {
 
     // Adds the state a row cannot carry as a literal: whether a toggle is on,
     // and what the firewall rows currently read.
+    //
+    // Every one of these used to be written into `sub`, and as of 2026-09-12
+    // they go into `trail` instead — the right-aligned slot. The panel draws no
+    // subtitle under a menu row any more (Ahaan: remove "the subtext in each
+    // category"), and these are all menu rows, so writing them to `sub` would
+    // simply lose them. `trail` is the right home regardless: this is live
+    // STATE, not a description of the label, which is exactly the distinction
+    // the trailing slot was introduced for.
+    //
+    // Note that the rows which are NOT decorated still carry their descriptive
+    // `sub` in the page definitions above, and still should — SEARCH reads it
+    // (see root.search), which is how "privacy" finds the Security page. It is
+    // only never drawn.
     function _decorate(key, r) {
         if (key === "security/firewall" && r.kind === "menu") {
-            // These two nest, so they keep a subtitle — and the useful subtitle
-            // is the live value, not a restatement of the label.
             const fw = root.fwState
             if (r.id === "zone" && fw.ZONE)
                 return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                         sub: fw.ZONE + (fw.IFACE ? " on " + fw.IFACE : "") }
+                         trail: fw.ZONE + (fw.IFACE ? " on " + fw.IFACE : "") }
             if (r.id === "services" && fw.ALLOWED !== undefined)
                 return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                         sub: fw.ALLOWED + " allowed"
+                         trail: fw.ALLOWED + " allowed"
                                + (fw.BLOCKED !== "0" ? ", " + fw.BLOCKED + " blocked" : "") }
             return r
         }
         // The Security row and the Fingerprints page both say how many are
-        // enrolled rather than restating what a fingerprint is — the same rule
-        // the firewall rows follow: the useful subtitle is the live value.
+        // enrolled rather than restating what a fingerprint is.
         if (key === "security" && r.id === "fingerprints") {
             const st = root.fpState
             if (st.AVAILABLE === "no")
                 return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                         sub: st.REASON || "no reader" }
+                         trail: st.REASON || "no reader" }
             if (st.COUNT !== undefined)
                 return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                         sub: st.COUNT === "0" ? "none enrolled"
+                         trail: st.COUNT === "0" ? "none enrolled"
                             : st.COUNT === "1" ? "1 enrolled"
                             : st.COUNT + " enrolled" }
             return r
@@ -448,12 +460,12 @@ QtObject {
             const st = root.fpState
             if (r.id === "delete" && st.COUNT !== undefined)
                 return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                         sub: st.COUNT === "0" ? "nothing enrolled yet"
+                         trail: st.COUNT === "0" ? "nothing enrolled yet"
                             : st.COUNT + " enrolled" }
-            // Only worth a subtitle when it is about to stop working.
+            // Only worth saying when it is about to stop working.
             if (r.id === "add" && st.FREE === "0")
                 return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                         sub: "all ten slots are full" }
+                         trail: "all ten slots are full" }
             return r
         }
         if (r.kind !== "toggle") return r

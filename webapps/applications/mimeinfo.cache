@@ -1,2 +1,5 @@
 [MIME Cache]
+text/markdown=wwrite.desktop;
+text/plain=wwrite.desktop;
+text/x-markdown=wwrite.desktop;
 x-scheme-handler/claude-cli=claude-code-url-handler.desktop;

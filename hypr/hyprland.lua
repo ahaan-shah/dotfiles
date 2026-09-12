@@ -681,6 +681,15 @@ hl.bind("F9", hl.dsp.exec_cmd("~/.config/scripts/micmute-led.sh toggle"), { repe
 -- desc: Opens the emoji picker
 hl.bind("SUPER + period", hl.dsp.exec_cmd("echo \"open:emoji\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
+-- Reminders (taskbar/, REMINDERS section). Opens the two-step prompt: how many
+-- minutes, then what to be reminded of. The list itself lives in the calendar
+-- dropdown, so this bind is the only entry point that does not need a mouse.
+-- Routed through the taskbar's IPC socket like the OSD binds above rather than
+-- a script, because the prompt is a layer surface the shell already owns --
+-- anything else would have to spawn a second process to draw a text box.
+-- desc: Opens the reminder prompt
+hl.bind("SUPER + SHIFT + R", hl.dsp.exec_cmd("qs -p ~/.config/taskbar ipc call reminder prompt"))
+
 -- Voice-to-text (voxtype, push-to-talk). Hold to record, release to transcribe
 -- at the cursor. Two hl.bind() calls on one key is safe *here* only because
 -- they differ by the `release` flag, so Hyprland registers them as distinct
@@ -699,12 +708,17 @@ hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record stop"), { release = tru
 hl.bind("F12", hl.dsp.exec_cmd("kitty --title btop -e zsh -i -c btop"))
 
 -- Screenshot Utilities
+-- Routed through screenshot.sh rather than calling hyprshot directly, to
+-- replace hyprshot's own notification (which names the full timestamped path)
+-- with a short one. The script is also where the "did it actually save?" test
+-- lives, because hyprshot's exit status cannot answer it -- see the comment at
+-- the top of the script.
 -- desc: Screenshots a region
-hl.bind("F11",         hl.dsp.exec_cmd("hyprshot -m region -o ~/Pictures/Screenshots"))
+hl.bind("F11",         hl.dsp.exec_cmd("~/.config/scripts/screenshot.sh region"))
 -- desc: Screenshots the focused window
-hl.bind("ALT + Print", hl.dsp.exec_cmd("hyprshot -m window -o ~/Pictures/Screenshots"))
+hl.bind("ALT + Print", hl.dsp.exec_cmd("~/.config/scripts/screenshot.sh window"))
 -- desc: Screenshots the whole screen
-hl.bind("Print",       hl.dsp.exec_cmd("hyprshot -m active -m output -o ~/Pictures/Screenshots"))
+hl.bind("Print",       hl.dsp.exec_cmd("~/.config/scripts/screenshot.sh output"))
 
 -- OCR (scripts/ocr-region.sh). Same region gesture as F11 above, but the text
 -- inside the box lands on the clipboard instead of a PNG landing in Pictures —
@@ -939,6 +953,13 @@ hl.window_rule({
     move  = {"(monitor_w*0.685)", "(monitor_h*0.127)"},
 })
 
+-- wwrite
+hl.window_rule({
+    name  = "wwrite-float",
+    match = { class = "^(wwrite)$" },
+    size  = {"(monitor_w*0.264)", "(monitor_h*0.759)"},
+    move  = {"(monitor_w*0.685)", "(monitor_h*0.127)"},
+})
 -- Calendar
 hl.window_rule({
     name  = "calendar-float",
