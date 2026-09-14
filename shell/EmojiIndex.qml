@@ -57,5 +57,21 @@ QtObject {
 
     property var copyProc: Process { id: copyProc; running: false }
 
-    Component.onCompleted: { proc.running = true }
+    // ── loaded on first use, not at startup ──────────────────────────────
+    // This used to `cat` and JSON.parse emoji-data.json the moment the shell
+    // came up: 94 KB on disk becoming a few thousand JS objects that live for
+    // the session, for a mode reached with SUPER+. and used occasionally. In
+    // three separate processes it was invisible; in one shell that is meant to
+    // be lean at startup it is exactly the kind of thing to defer.
+    //
+    // Finder.openMode() calls this before it rebuilds the emoji list, and the
+    // rebuild is already re-run when `emoji` lands (see onEmojiChanged there),
+    // so the first open simply fills a frame later. Idempotent: the guard is
+    // what makes it safe to call on every open.
+    property bool _started: false
+    function ensure() {
+        if (root._started) return
+        root._started = true
+        proc.running = true
+    }
 }

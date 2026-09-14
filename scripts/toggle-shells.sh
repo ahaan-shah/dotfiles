@@ -7,10 +7,16 @@
 # lockscreen/ is deliberately NOT included here — per its own launch script's
 # warning, killing a live WlSessionLock process leaves the compositor
 # permanently locked with nothing listening to unlock it. Never pkill it.
-# macshell = the merged dock + Alt+Tab switcher (was two shells).
-# Its IPC socket is still /tmp/macswitcher.sock, so the Alt+Tab binds
-# in hyprland.lua did not have to change.
-SHELLS=(macshell taskbar finder)
+# ONE shell since 2026-09-14: the dock, the Alt+Tab switcher, the wallpaper,
+# the bar and its dropdowns, the notification daemon, the OSD, the reminders and
+# the launcher are a single Quickshell instance (see ~/.config/shell/shell.qml).
+# Both IPC sockets kept their names — /tmp/finder.sock and /tmp/macswitcher.sock
+# — so none of the binds in hyprland.lua had to change for the merge.
+#
+# Still an array: this is a toggle over "the Quickshell shells", and the lock
+# screen is deliberately not one of them (see below). A second entry would go
+# here rather than in a second script.
+SHELLS=(shell)
 
 alive=false
 for s in "${SHELLS[@]}"; do

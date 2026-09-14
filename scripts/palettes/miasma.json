@@ -1,0 +1,30 @@
+{
+  "name": "Miasma",
+  "mode": "dark",
+  "source": "omarchy themes/miasma @ quattro b679363bed05",
+  "wallpaper": "None",
+  "alpha": "100",
+  "special": {
+    "background": "#222222",
+    "foreground": "#c2c2b0",
+    "cursor": "#c2c2b0"
+  },
+  "colors": {
+    "color0": "#222222",
+    "color1": "#685742",
+    "color2": "#5f875f",
+    "color3": "#b36d43",
+    "color4": "#78824b",
+    "color5": "#bb7744",
+    "color6": "#c9a554",
+    "color7": "#8a8a7e",
+    "color8": "#666666",
+    "color9": "#78824b",
+    "color10": "#5f875f",
+    "color11": "#b36d43",
+    "color12": "#78824b",
+    "color13": "#bb7744",
+    "color14": "#c9a554",
+    "color15": "#c2c2b0"
+  }
+}

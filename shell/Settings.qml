@@ -30,7 +30,7 @@ QtObject {
 
     // The `scripts` dir BESIDE this shell config, never a fixed path — the same
     // rule (and the same reasoning) as the taskbar's sideScriptDir. From
-    // ~/.config/finder that resolves to ~/.config/scripts; from
+    // ~/.config/shell that resolves to ~/.config/scripts; from
     // ~/projects/hyprahaan/finder it resolves to the repo's own scripts/. So a
     // second instance launched out of the repo exercises the repo's scripts,
     // which is exactly what step 2 of CLAUDE.md's workflow needs, with no
@@ -65,7 +65,7 @@ QtObject {
                 { id: "remove",  icon: "󰩺", title: "Remove",  kind: "menu",   sub: "packages, web apps" },
                 { id: "update",  icon: "󰚰", title: "Update",  kind: "action" },
                 { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, defaults" },
-                { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "GTK theme, icons, fonts" },
+                { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "palette, GTK theme, icons, fonts" },
                 { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
                 { id: "about",   icon: "󰋼", title: "About",   kind: "action" }
             ]
@@ -175,6 +175,7 @@ QtObject {
         "theme": {
             title: "Theme", icon: "󰏘",
             rows: [
+                { id: "palette", icon: "󰸌", title: "Palette", kind: "menu", sub: "the colours every surface reads" },
                 { id: "gtk",   icon: "󰏘", title: "GTK theme", kind: "menu", sub: "widget style for GTK apps" },
                 { id: "icons", icon: "󰋩", title: "Icons",     kind: "menu", sub: "icon theme" },
                 { id: "fonts", icon: "󰛖", title: "Fonts",     kind: "menu", sub: "the font every shell draws with" }
@@ -186,6 +187,26 @@ QtObject {
         // names set in the default font tells you nothing about how any of them
         // look. Each row is drawn in the family it names, so the list IS the
         // preview.
+        // ── Palette ───────────────────────────────────────────────────────
+        // The whole colour scheme: pywal's sixteen slots, which every surface
+        // on this desktop already reads. scripts/palette.sh is the back end and
+        // carries the reasoning; adding a palette is adding a file to
+        // scripts/palettes/, so nothing here names a theme.
+        //
+        // `swatch` is this page's version of the Fonts page's own trick. A
+        // font list is unreadable set in one face, and a list of 23 colour
+        // schemes is unreadable with no colour in it — so each row draws the
+        // three colours this desktop actually assigns a role to: the ground,
+        // the accent that marks every selection, and the text.
+        //
+        // noGroup, for the reason the keybindings page sets it: grouping folds
+        // VARIANTS of one thing, and two palettes sharing a leading word is a
+        // coincidence of naming rather than a relationship. Without it
+        // "catppuccin" and "catppuccin-latte" — a dark theme and a light one —
+        // collapse behind one door in a list short enough to read whole.
+        "theme/palette": { title: "Palette", icon: "󰸌", list: "palettes",
+                           pref: "PALETTE", noGroup: true, swatch: true },
+
         "theme/fonts": { title: "Fonts",     icon: "󰛖", list: "fonts",  pref: "UI_FONT", renderInOwnFont: true, width: 560 },
         "theme/icons": { title: "Icons",     icon: "󰋩", list: "icons",  pref: "ICON_THEME" },
         "theme/gtk":   { title: "GTK theme", icon: "󰏘", list: "themes", pref: "GTK_THEME", width: 560 },
@@ -515,6 +536,14 @@ QtObject {
                     title: r.title, kind: r.kind,
                     value: r.value, detail: r.detail, active: r.active === true,
                     font: r.font, pageKey: key, trail: path,
+                    // A palette hit keeps its three dots. The rule one line
+                    // below — results carry no subtitle, the trailing slot is
+                    // the page they live on — is about two kinds of secondary
+                    // TEXT competing; the swatch is the row's identity, the
+                    // same way `font` renders a font hit in its own face, and
+                    // searching "gruv" from the root should not return a
+                    // colourless row.
+                    swatch: r.swatch || [],
                     // Results carry no subtitle as a rule — they use the
                     // trailing slot for the page they live on instead, and a
                     // subtitle there would be two kinds of secondary text on
@@ -761,6 +790,12 @@ QtObject {
                 // than moving a single selection.
                 kind: p.multi ? "multi" : "choice", value: f[0],
                 detail: p.showDetail ? (f[2] || "") : "",
+                // The palette page's preview: the same third column every other
+                // listing puts a subtitle in, holding "#bg,#accent,#fg". Split
+                // here rather than in the panel so the view is handed colours
+                // and never a format — and empty everywhere else, which is what
+                // keeps the delegate's swatch row out of the layout entirely.
+                swatch: p.swatch ? String(f[2] || "").split(",").filter(c => c !== "") : [],
                 // The current value is shown by filling the row, the way the
                 // taskbar's panels mark a connected network — not by a "current"
                 // subtitle, which would break the no-redundant-subtext rule and

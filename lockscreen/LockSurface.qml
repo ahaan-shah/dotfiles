@@ -26,6 +26,12 @@ Item {
     // (same reason finder/Sys.qml uses it), so it is safe to read from a
     // property binding evaluated during initial construction.
     readonly property string home: Quickshell.env("HOME") || ""
+    // Same rule, for the state directory the wallpaper path lives in. Honoured
+    // rather than assumed because everything else in this repo that writes
+    // there honours it (apply-wallpaper.sh, DockPins.qml, nightlight.sh), and a
+    // reader that ignores XDG_STATE_HOME would look in the wrong place on a
+    // machine that sets it.
+    readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || ""
 
     // Skip the ~1s entrance animation (blur ramp, dim ramp, content fade)
     // when this lock is being raised because the machine is about to sleep or
@@ -95,9 +101,13 @@ Item {
         }
     }
 
-    // ── wallpaper path — read live from hyprpaper.conf, the same file
-    // set_wallpaper.sh rewrites on every wallpaper change, so this and the
-    // desktop wallpaper never drift out of sync with each other. ─────────
+    // ── wallpaper path — read from the same one line the DESKTOP reads
+    // ~/.local/state/hyprahaan/wallpaper, written by
+    // finder/apply-wallpaper.sh. This was hyprpaper.conf until 2026-09-14,
+    // and the reason for reading it was always that both surfaces had to
+    // agree; that reason is unchanged, only the file moved. hyprpaper is
+    // gone — macshell/Wallpaper.qml draws the desktop now — so its config is
+    // no longer written and would go stale. ──────────────────────────────
     // The previous approach (a Process spawning bash -> grep -> sed) and
     // even a first attempt at FileView using its reactive onLoaded signal
     // both left a real, measurable gap (confirmed live via a timestamped
@@ -108,21 +118,28 @@ Item {
     // the real path ever arrived and swapped it — that gap was "wrong
     // wallpaper". onLoaded fires as a queued signal even when the
     // underlying read itself is blocking, so it still lands a tick late.
-    // Calling hyprpaperFile.text() directly inside the property binding
+    // Calling wallpaperFile.text() directly inside the property binding
     // below instead forces the read (and QML's dependency tracking follows
     // property reads through the function call, so this still re-evaluates
     // on future reloads) synchronously as part of evaluating wallpaperPath
     // itself — confirmed live: the second console.log line disappeared
     // entirely, only the correct path is ever set.
     property string wallpaperPath: {
-        const m = /^path\s*=\s*(.+)$/m.exec(hyprpaperFile.text())
-        return m ? m[1].trim() : (root.home + "/Pictures/wallpapers/dune.jpg")
+        const p = String(wallpaperFile.text()).trim()
+        return p !== "" ? p : (root.home + "/Pictures/wallpapers/dune.jpg")
     }
     FileView {
-        id: hyprpaperFile
-        path: root.home + "/.config/hypr/hyprpaper.conf"
+        id: wallpaperFile
+        path: (root.stateHome !== "" ? root.stateHome : root.home + "/.local/state")
+              + "/hyprahaan/wallpaper"
         blockLoading: true
         blockAllReads: true
+        // Kept from the hyprpaper.conf version, and it costs nothing: a lock
+        // surface is spawned per lock and rarely outlives a wallpaper change,
+        // but one started before a change and still up after it should follow.
+        // The desktop's own surface cannot rely on this — it is long-lived and
+        // the writer replaces the inode — so it watches the directory instead;
+        // see the note in macshell/Wallpaper.qml.
         watchChanges: true
         onFileChanged: reload()
     }

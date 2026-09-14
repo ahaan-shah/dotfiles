@@ -1,0 +1,30 @@
+{
+  "name": "Lumon",
+  "mode": "dark",
+  "source": "omarchy themes/lumon @ quattro b679363bed05",
+  "wallpaper": "None",
+  "alpha": "100",
+  "special": {
+    "background": "#16242d",
+    "foreground": "#d6e2ee",
+    "cursor": "#d6e2ee"
+  },
+  "colors": {
+    "color0": "#16242d",
+    "color1": "#4d86b0",
+    "color2": "#5e95bc",
+    "color3": "#6fa4c9",
+    "color4": "#6fb8e3",
+    "color5": "#8bc9eb",
+    "color6": "#b4e4f6",
+    "color7": "#d6e2ee",
+    "color8": "#304860",
+    "color9": "#8bc9eb",
+    "color10": "#86b7d8",
+    "color11": "#9dcae5",
+    "color12": "#f2fcff",
+    "color13": "#b1d8ee",
+    "color14": "#d1eef8",
+    "color15": "#f2fcff"
+  }
+}

@@ -18,9 +18,9 @@ import "."
 // ── Where the file is, and why not ~/.config ──────────────────────────────
 // ~/.local/state/hyprahaan/dock-pins.json, beside the nightlight temperature
 // and the agent usage records, for the two reasons those are there:
-//   * backup_configs.sh mirrors ~/.config/macshell into a PUBLIC repo. A pin
+//   * backup_configs.sh mirrors ~/.config/shell into a PUBLIC repo. A pin
 //     list is this machine's apps, not the desktop's design.
-//   * a deploy copies files INTO ~/.config/macshell. State kept there would be
+//   * a deploy copies files INTO ~/.config/shell. State kept there would be
 //     clobbered by exactly the copy that ships a dock update.
 // It is also why the path is built from $HOME rather than Quickshell.shellDir:
 // a repo-path instance run for testing must read and write the same store the
@@ -202,38 +202,25 @@ QtObject {
     // fires once and never again. Same trap, and the same answer, as
     // UiConfig.qml's watch on ~/.config/scripts.
     //
-    // This exists so the file can be edited by hand, and so two macshell
-    // instances (the live one and a repo-path one under test) converge instead
-    // of overwriting each other blind. Re-reading our own write is harmless:
+    // This exists so the file can be edited by hand, and so two shell instances
+    // (the live one and a repo-path one under test) converge instead of
+    // overwriting each other blind. Re-reading our own write is harmless:
     // reads assign `pins`, only setPins() writes, so there is no loop.
-    property var _watchProc: Process {
-        id: watchProc
-        command: ["bash", "-c",
-            "mkdir -p '" + root.dir + "'; " +
-            "inotifywait -e close_write,moved_to,create --quiet '" + root.dir + "' 2>/dev/null"]
-        running: false
-    }
-
+    // The watcher this used to own is StateDir's now — Wallpaper.qml watched the
+    // same directory with a second `bash -c inotifywait`, which in one process
+    // is the same events delivered twice for four processes' worth of cost.
+    // Everything above about WHY the watch is on the directory still applies and
+    // is recorded there.
     property var _watchConn: Connections {
-        target: watchProc
-        function onRunningChanged() {
-            if (watchProc.running) return
+        target: StateDir
+        function onChanged() {
             root._buf = ""
             readProc.running = true
-            watchRestartTimer.restart()
         }
-    }
-
-    property var _watchRestartTimer: Timer {
-        id: watchRestartTimer
-        interval: 300
-        repeat: false
-        onTriggered: watchProc.running = true
     }
 
     Component.onCompleted: {
         root._buf = ""
         readProc.running  = true
-        watchProc.running = true
     }
 }

@@ -1,0 +1,30 @@
+{
+  "name": "Ristretto",
+  "mode": "dark",
+  "source": "omarchy themes/ristretto @ quattro b679363bed05",
+  "wallpaper": "None",
+  "alpha": "100",
+  "special": {
+    "background": "#2c2525",
+    "foreground": "#e6d9db",
+    "cursor": "#e6d9db"
+  },
+  "colors": {
+    "color0": "#2c2525",
+    "color1": "#fd6883",
+    "color2": "#adda78",
+    "color3": "#f9cc6c",
+    "color4": "#f38d70",
+    "color5": "#a8a9eb",
+    "color6": "#85dacc",
+    "color7": "#c3b7b8",
+    "color8": "#72696a",
+    "color9": "#f38d70",
+    "color10": "#c8e292",
+    "color11": "#fcd675",
+    "color12": "#f8a788",
+    "color13": "#bebffd",
+    "color14": "#9bf1e1",
+    "color15": "#e6d9db"
+  }
+}

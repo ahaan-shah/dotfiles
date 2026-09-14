@@ -263,7 +263,20 @@ QtObject {
         }
     }
 
-    Component.onCompleted: {
+    // ── scanned on first use, not at startup ─────────────────────────────
+    // Same reasoning as EmojiIndex: this walks every applications directory and
+    // builds a name -> entry map that only the launcher reads, and the launcher
+    // is a thing you open, not a thing that is always up. The dock's icons come
+    // from DesktopEntryCache, which IS eager because the dock draws at startup.
+    //
+    // Deferring is safe because the scan was always async: AppIndex.qml has
+    // carried an onAppsChanged rebuild since it was written, precisely so a
+    // query typed before the scan lands does not permanently miss app results.
+    // That path now covers the first open as well.
+    property bool _started: false
+    function ensure() {
+        if (root._started) return
+        root._started = true
         root._buf = ""
         findProc.running = true
     }

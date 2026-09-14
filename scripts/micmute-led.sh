@@ -120,7 +120,7 @@ case "$1" in
     toggle)
         pactl set-source-mute @DEFAULT_SOURCE@ toggle
         sync_led
-        qs -p ~/.config/taskbar ipc call osd mic
+        qs -p ~/.config/shell ipc call osd mic
         ;;
     sync)
         sync_wait

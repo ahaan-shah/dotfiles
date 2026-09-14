@@ -73,7 +73,12 @@ copy() {
 
 # ---------------- CONFIG FOLDERS ----------------
 sync "$HOME/.config/hypr"        "$DOTDIR/hypr"
-sync "$HOME/.config/finder"      "$DOTDIR/finder"
+# One Quickshell config since 2026-09-14 — this was finder/, macshell/ and
+# taskbar/, three instances that are now one process. A machine that mirrored
+# before the merge keeps those three directories in the public repo until
+# somebody deletes them there; nothing reads them and rsync will not remove a
+# directory it is no longer asked about.
+sync "$HOME/.config/shell"       "$DOTDIR/shell"
 sync "$HOME/.config/lockscreen"  "$DOTDIR/lockscreen"
 sync "$HOME/.config/kitty"       "$DOTDIR/kitty"
 sync "$HOME/.config/cava"        "$DOTDIR/cava"
@@ -85,8 +90,6 @@ sync "$HOME/.config/fum"         "$DOTDIR/fum"
 # fresh machine silently got stock btop settings.
 sync "$HOME/.config/btop"        "$DOTDIR/btop"
 sync "$HOME/.config/scripts"     "$DOTDIR/scripts"
-sync "$HOME/.config/macshell"    "$DOTDIR/macshell"
-sync "$HOME/.config/taskbar"     "$DOTDIR/taskbar"
 sync "$HOME/.config/gtk-3.0"     "$DOTDIR/gtk-3.0"
 sync "$HOME/.config/gtk-4.0"     "$DOTDIR/gtk-4.0"
 sync "$HOME/Pictures/wallpapers" "$DOTDIR/wallpapers"

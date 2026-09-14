@@ -59,7 +59,11 @@ QtObject {
     readonly property string font: UiConfig.fontFamily
 
     function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
-    function contrast(c) { return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? "black" : "white" }
+    // Perceived brightness, 0..1. Split out of contrast() because the palette
+    // swatches need the NUMBER rather than a verdict: how far a colour sits
+    // from the card decides whether it is drawn with an edge at all.
+    function lum(c) { return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b }
+    function contrast(c) { return root.lum(c) > 0.6 ? "black" : "white" }
 
     // ── surfaces ──────────────────────────────────────────────────────────
     // The card edge, and it is the TASKBAR's edge: alpha(color7, 0.8) at 2px is

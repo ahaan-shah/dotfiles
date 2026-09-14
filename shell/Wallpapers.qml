@@ -56,5 +56,8 @@ QtObject {
 
     property var applyProc: Process { id: applyProc; running: false }
 
-    Component.onCompleted: refresh()
+    // No Component.onCompleted. Finder.openMode() calls refresh() every time
+    // wallpaper mode is opened — which it must, since the directory changes
+    // behind us — so listing it at startup was a directory walk whose result
+    // was always thrown away and re-done.
 }

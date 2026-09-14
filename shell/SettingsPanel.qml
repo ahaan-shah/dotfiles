@@ -1075,6 +1075,71 @@ Rectangle {
                         }
                     }
 
+                    // ── the palette preview ────────────────────────────
+                    // Three dots: the ground, the accent that marks every
+                    // selection on this desktop, and the text. Only the Palette
+                    // page carries them (Settings.qml fills `swatch` there and
+                    // nowhere else), and a Repeater over an empty list adds
+                    // nothing to the layout — so this costs every other page
+                    // one invisible RowLayout child and no space.
+                    //
+                    // Rendered here rather than as an icon on the left because
+                    // the left slot already holds the page's glyph, and because
+                    // a palette is three colours side by side: separated they
+                    // stop being a palette.
+                    RowLayout {
+                        spacing: 3
+                        visible: (row.modelData.swatch || []).length > 0
+                        Repeater {
+                            model: row.modelData.swatch || []
+                            delegate: Rectangle {
+                                id: dot
+                                required property string modelData
+                                width: 12; height: 12; radius: 6
+                                color: dot.modelData
+
+                                // ── one white rim, on every dot ─────────────
+                                // The swatch has had three edges. A flat 25%
+                                // wash of the TEXT colour on every dot was the
+                                // first, and Ahaan's verdict was that it looked
+                                // cheap — correctly: zoomed in, a fixed grey
+                                // ring is brighter than most of the colours it
+                                // surrounds, so it became the loudest thing in
+                                // the swatch, a dirty outline on a white dot
+                                // and an empty circle round a black one.
+                                //
+                                // The second was an edge that appeared only in
+                                // proportion to how little the dot separated
+                                // itself from the card, drawn in the dot's own
+                                // colour. Four treatments were rendered side by
+                                // side over the real card with seven real
+                                // palettes to choose between them; this is the
+                                // one Ahaan picked off that comparison, after
+                                // trying the earned rim live: "screw it. Go
+                                // with white rim around all, 90% opacity, thin
+                                // like it is now."
+                                //
+                                // So it is deliberately NOT conditional. Every
+                                // dot wears the same thin white rim, which is
+                                // what makes the three read as one component
+                                // rather than three loose circles.
+                                //
+                                // The known cost, so it is not "fixed" by
+                                // somebody later: on a light palette the rim
+                                // vanishes into a near-white dot — Catppuccin
+                                // Latte's ground and White's first two — so
+                                // those rows lose an edge exactly where one
+                                // would help most. That was on screen in the
+                                // comparison and chosen anyway. A rim picked to
+                                // contrast with the DOT (white below ~0.62
+                                // luminance, black above) is the fix if it ever
+                                // starts to grate.
+                                border.width: 1
+                                border.color: Qt.rgba(1, 1, 1, 0.90)
+                            }
+                        }
+                    }
+
                     // "This is the one in effect." A mark rather than a filled
                     // row: filling it fought with the selection highlight, so
                     // sitting on the current value made both illegible.

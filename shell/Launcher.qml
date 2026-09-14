@@ -4,7 +4,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 
-ShellRoot {
+Scope {
     Variants {
         model: Quickshell.screens
 

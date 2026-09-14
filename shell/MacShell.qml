@@ -16,7 +16,22 @@ import Quickshell.Io
 // Windows remain fully independent surfaces - the dock is a masked Top-layer
 // strip that never takes keyboard focus, the switcher is a full-screen Overlay
 // that takes it exclusively while shown.
-ShellRoot {
+Scope {
+    // ── the desktop wallpaper ─────────────────────────────────────────────
+    // Added 2026-09-14, replacing hyprpaper — see Wallpaper.qml for what that
+    // deleted and why. It lives in THIS shell of the three because macshell is
+    // the first one hyprland.lua starts, and the wallpaper is the surface it
+    // costs most to be late with: everything else on this desktop appears over
+    // the top of it.
+    //
+    // A Variants of its own rather than another window inside the dock's:
+    // Variants takes one delegate, and these are two unrelated surfaces that
+    // merely happen to be per-screen.
+    Variants {
+        model: Quickshell.screens
+        Wallpaper {}
+    }
+
     Variants {
         model: Quickshell.screens
 

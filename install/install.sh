@@ -276,7 +276,12 @@ phase_configs() {
     deploy_dir "$DOTDIR/hypr" "$HOME/.config/hypr" \
                --exclude 'hyprland.conf' --exclude 'hyprlock.conf' --exclude '*.bak-*' || true
 
-    for d in taskbar macshell finder lockscreen \
+    # `shell` is the whole desktop in one Quickshell config since 2026-09-14;
+    # it replaced taskbar/, macshell/ and finder/, which a machine installed
+    # before that still has. They are stale rather than harmful — nothing
+    # starts them any more — and removing another machine's directories is not
+    # this installer's business, so they are left alone and simply not deployed.
+    for d in shell lockscreen \
              kitty cava fastfetch neofetch fum btop mpv yazi gtk-3.0 gtk-4.0; do
         deploy_dir "$DOTDIR/$d" "$HOME/.config/$d" || true
     done
@@ -306,7 +311,13 @@ phase_configs() {
     # the installer does not get to edit it upstream.
     local rc
     for rc in .zshrc .bashrc; do
-        deploy_file "$DOTDIR/shell/$rc" "$HOME/$rc" || continue
+        # shellrc/ since 2026-09-14: $DOTDIR/shell is the Quickshell config now
+        # (it was taskbar + macshell + finder), and these two rc files used to
+        # live in a directory of that name. The old path is still read so a
+        # mirror cloned from before the rename still deploys a login shell.
+        local rcsrc="$DOTDIR/shellrc/$rc"
+        [ -f "$rcsrc" ] || rcsrc="$DOTDIR/shell/$rc"
+        deploy_file "$rcsrc" "$HOME/$rc" || continue
         [ "$DRY_RUN" = 0 ] && sed -i "s#/home/[A-Za-z0-9_.-]\+/#$HOME/#g" "$HOME/$rc"
     done
     ok "shell rc files repointed at $HOME"
@@ -378,7 +389,7 @@ phase_configs() {
     # in the bar. A silent zero, which is why it is fixed here rather than
     # left to git.
     if [ "$DRY_RUN" = 0 ]; then
-        find "$HOME/.config/scripts" "$HOME/.config"/{finder,macshell,taskbar,lockscreen} \
+        find "$HOME/.config/scripts" "$HOME/.config"/{shell,lockscreen} \
              -maxdepth 1 \( -name '*.sh' -o -name 'agent-usage-*' \) \
              -exec chmod +x {} + 2>/dev/null || true
     fi
@@ -1195,10 +1206,14 @@ phase_theming() {
         deploy_file "$t" "$HOME/.config/wal/templates/$(basename "$t")"
     done
 
-    # Pick a wallpaper: whatever the mirror's hyprpaper.conf named, else the
-    # first image in the wallpapers directory.
+    # Pick a wallpaper: whatever the source machine had recorded, else the
+    # first image in the wallpapers directory. The mirror's hyprpaper.conf is
+    # still read as the second source — it is dormant since 2026-09-14 but a
+    # mirror taken before that is the only record an older clone carries.
     local wp="" wanted
-    wanted="$(sed -n 's/^\s*path\s*=\s*//p' "$DOTDIR/hypr/hyprpaper.conf" 2>/dev/null | head -1)"
+    wanted="$(head -1 "$DOTDIR/../.local/state/hyprahaan/wallpaper" 2>/dev/null || true)"
+    [ -n "$wanted" ] ||
+        wanted="$(sed -n 's/^\s*path\s*=\s*//p' "$DOTDIR/hypr/hyprpaper.conf" 2>/dev/null | head -1)"
     if [ -n "$wanted" ] && [ -f "$HOME/Pictures/wallpapers/$(basename "$wanted")" ]; then
         wp="$HOME/Pictures/wallpapers/$(basename "$wanted")"
     else
@@ -1219,22 +1234,21 @@ phase_theming() {
         run ln -sfn "$HOME/.cache/wal/colors-hyprland.lua" "$HOME/.config/hypr/colors-hyprland.lua"
         ok "colors-hyprland.lua linked to the wal cache"
 
-        # hyprpaper.conf is generated, not copied: it needs this machine's
-        # monitor name and this user's wallpaper path.
+        # Which wallpaper is up is STATE, not config: one line naming the
+        # image, in ~/.local/state/hyprahaan, read by shell/Wallpaper.qml
+        # (which draws it) and lockscreen/LockSurface.qml (which draws it
+        # behind the lock). This replaced a generated hyprpaper.conf on
+        # 2026-09-14, and the monitor name went with it — Variants over
+        # Quickshell.screens gives every output a surface, so there is no
+        # name here to be wrong.
         if [ "$DRY_RUN" = 0 ]; then
-            cat >"$HOME/.config/hypr/hyprpaper.conf" <<HP
-wallpaper {
-monitor = ${MON_NAME:-}
-path = $wp
-fit_mode = cover
-}
-splash = false
-HP
+            mkdir -p "$HOME/.local/state/hyprahaan"
+            printf '%s\n' "$wp" >"$HOME/.local/state/hyprahaan/wallpaper"
         fi
-        ok "hyprpaper.conf generated for ${MON_NAME:-<any monitor>}"
+        ok "wallpaper recorded: $(basename "$wp")"
     else
         warn "no wallpaper found in ~/Pictures/wallpapers — theming left at defaults"
-        warn "add an image there and run: ~/.config/finder/apply-wallpaper.sh <path>"
+        warn "add an image there and run: ~/.config/shell/apply-wallpaper.sh <path>"
     fi
 
     # GTK / cursor. Purely cosmetic, and only if the themes actually installed.
@@ -1420,8 +1434,15 @@ phase_verify() {
 
     local a
     # ── the four Quickshell apps ───────────────────────────────────────
-    for a in taskbar macshell finder lockscreen; do
+    for a in shell lockscreen; do
         check "$a/shell.qml deployed" "[ -f '$HOME/.config/$a/shell.qml' ]"
+    done
+    # The merged shell is only whole if its three former roots travelled with
+    # it: shell.qml is four lines that instantiate these, so a partial deploy
+    # would load cleanly and draw nothing.
+    local part
+    for part in Bar MacShell Launcher; do
+        check "shell/$part.qml deployed" "[ -f '$HOME/.config/shell/$part.qml' ]"
     done
 
     # ── the compositor config actually parses ──────────────────────────
@@ -1458,7 +1479,7 @@ phase_verify() {
     # purpose is to be read before it is trusted.
     foreign="$(grep -rhoI --exclude='*.bak*' --exclude='backup_configs.sh' \
                  -E '/home/[A-Za-z0-9_.-]+' \
-                 "$HOME/.config"/{hypr,taskbar,macshell,finder,lockscreen,scripts} \
+                 "$HOME/.config"/{hypr,shell,lockscreen,scripts} \
                  "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null \
                | sort -u | grep -vx "/home/$USER" || true)"
     if [ -n "$foreign" ]; then
@@ -1491,7 +1512,13 @@ phase_verify() {
     # keybinds.sh is what writes a reassignment back — so both fail in exactly
     # the silent way this check exists for: the page opens, empty or inert, and
     # nothing is logged anywhere.
-    for sm in ui-prefs.sh list-keybinds.sh keybinds.sh window-rules.sh \
+    # palette.sh joined on 2026-09-14 with Settings -> Theme -> Palette, and it
+    # fails in a way none of the others can: finder/apply-wallpaper.sh calls it
+    # for EVERY wallpaper change now, so a missing one costs the colours on a
+    # path nobody would think to connect to the settings menu. It falls back to
+    # a plain `wal -i` there rather than leaving the desktop grey, which is a
+    # degradation worth catching here rather than living with.
+    for sm in ui-prefs.sh palette.sh list-keybinds.sh keybinds.sh window-rules.sh \
               icon-index.sh about-system.sh \
               privileged-run.sh change-password.sh firewall.sh fingerprint.sh \
               webapp-install.sh webapp-remove.sh nightlight.sh ocr-region.sh; do
@@ -1500,7 +1527,19 @@ phase_verify() {
     if [ -n "$miss_sm" ]; then
         bad "settings-menu back end missing or not executable:$miss_sm"
     else
-        chk "settings-menu back end deployed and executable (14 scripts)"
+        chk "settings-menu back end deployed and executable (15 scripts)"
+    fi
+
+    # The palettes themselves are DATA beside that script, and the Palette page
+    # is only as good as what is in the directory — an empty one leaves a menu
+    # offering nothing but pywal, with no error. Counted rather than named: a
+    # palette is a file anyone can add, so the list is not fixed.
+    local pal_n
+    pal_n="$(find "$HOME/.config/scripts/palettes" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)"
+    if [ "$pal_n" -gt 0 ]; then
+        chk "colour palettes deployed ($pal_n)"
+    else
+        warn "no colour palettes in ~/.config/scripts/palettes — Theme -> Palette will offer only pywal"
     fi
 
     # ── the authentication surface ─────────────────────────────────────
@@ -1705,15 +1744,15 @@ phase_verify() {
         fi
     fi
     # The hero mark is resolved with Qt.resolvedUrl relative to shell.qml, so
-    # assets/ has to travel WITH it. Missing, the panel still works and falls
+    # assets/ has to travel WITH Bar.qml. Missing, the panel still works and falls
     # back to the bar glyph — a degradation nothing else would ever report.
     local marks
-    marks="$(find "$HOME/.config/taskbar/assets" -maxdepth 1 -name '*.svg' 2>/dev/null \
+    marks="$(find "$HOME/.config/shell/assets" -maxdepth 1 -name '*.svg' 2>/dev/null \
              | grep -c . || echo 0)"
     if [ "${marks:-0}" -gt 0 ]; then
-        chk "taskbar agent marks deployed ($marks svg)"
+        chk "agent marks deployed ($marks svg)"
     else
-        warn "~/.config/taskbar/assets holds no agent mark — the panel hero falls back to the bar glyph"
+        warn "~/.config/shell/assets holds no agent mark — the panel hero falls back to the bar glyph"
     fi
 
     # ── default applications ───────────────────────────────────────────

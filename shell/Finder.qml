@@ -89,7 +89,13 @@ Item {
         root.displayResults = []
         root.shown = true
         if (m === "clipboard") ClipboardHistory.refresh()
-        if (m === "emoji") root._rebuild()
+        // ensure() before _rebuild(), for the two indexes that are now built on
+        // first use rather than at startup. Both are idempotent and both are
+        // async, so this open draws an empty list for a frame and fills it from
+        // the singleton's own change signal — the same path a query typed
+        // during the very first scan has always taken.
+        if (m === "emoji") { EmojiIndex.ensure(); root._rebuild() }
+        if (m === "default" || m === "filesearch") AppIndex.ensure()
         // powerprofiles/powermenu/wallpaper all list everything immediately
         // on open (type-to-filter OR scroll, per explicit request) rather
         // than starting blank like default-mode app search does.

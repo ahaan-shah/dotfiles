@@ -88,7 +88,11 @@ AGENT_XML = """
 </node>
 """
 
-FINDER_LAUNCH = os.path.expanduser("~/.config/finder/finder-launch.sh")
+# The one shell's launcher. This was ~/.config/finder/finder-launch.sh until
+# 2026-09-14, when the dock, the bar and the launcher became a single Quickshell
+# instance — the socket below is unchanged and still finder's, it is simply
+# served by a process that also draws everything else now.
+SHELL_LAUNCH = os.path.expanduser("~/.config/shell/shell-launch.sh")
 
 
 def log(*a):
@@ -422,14 +426,14 @@ class Agent:
             return True
         except OSError:
             pass
-        if _relaunched or not os.path.exists(FINDER_LAUNCH):
+        if _relaunched or not os.path.exists(SHELL_LAUNCH):
             return False
-        # finder is not running — SUPER+K hides all three shells, and a system
-        # asking for a password is exactly when it has to come back. Detached,
+        # The shell is not running — SUPER+K hides it, and a system asking for a
+        # password is exactly when it has to come back. Detached,
         # per the SIGPIPE rule: a child holding this process's pipes dies with
         # it, and this one has to outlive the request.
-        log("finder is not up; starting it")
-        subprocess.Popen(["setsid", FINDER_LAUNCH],
+        log("the shell is not up; starting it")
+        subprocess.Popen(["setsid", SHELL_LAUNCH],
                          stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL,

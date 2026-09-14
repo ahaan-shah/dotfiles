@@ -356,7 +356,11 @@ hl.on("hyprland.start", function()
     -- once the name is recorded. See scripts/complete-hardware-profile.sh.
     hl.exec_cmd("~/.config/scripts/complete-hardware-profile.sh")
 
-    hl.exec_cmd("hyprpaper")
+    -- hyprpaper was started here until 2026-09-14. The wallpaper is a
+    -- Quickshell surface now (macshell/Wallpaper.qml, one per output), so it
+    -- comes up with the shells below rather than as a fourth process with its
+    -- own config file, its own socket and its own three ways to fail. Nothing
+    -- starts hyprpaper any more; finder/apply-wallpaper.sh kills a stray one.
     hl.exec_cmd("hypridle")
     -- elephant + walker replaced by finder/ (native Quickshell reimplementation,
     -- no elephant backend needed) — left here commented, not deleted, in case
@@ -373,10 +377,13 @@ hl.on("hyprland.start", function()
     -- always come up with the mic MUTED and the LED off, whatever mute state
     -- wireplumber restores from the last session (see scripts/micmute-led.sh)
     hl.exec_cmd("~/.config/scripts/micmute-led.sh startup")
-    -- macdock + macswitcher merged into one Quickshell instance (macshell)
-    hl.exec_cmd("~/.config/macshell/macshell-launch.sh")
-    hl.exec_cmd("~/.config/taskbar/taskbar-launch.sh")
-    hl.exec_cmd("~/.config/finder/finder-launch.sh")
+    -- One shell, since 2026-09-14. macshell (dock, Alt-Tab, wallpaper),
+    -- taskbar (bar, dropdowns, notifications, OSD, reminders) and finder (the
+    -- launcher and the settings menu) are one Quickshell instance now: three
+    -- QML engines, three scene graphs and three GPU contexts became one, and
+    -- 395 MB of PSS became 200. The dock came up first of the three and still
+    -- does — it owns the wallpaper, which everything else draws on top of.
+    hl.exec_cmd("~/.config/shell/shell-launch.sh")
 
     -- hl.exec_cmd("localsearch daemon -s")
 end)
@@ -643,17 +650,17 @@ hl.bind("SUPER + T", hl.dsp.exec_cmd("~/.config/scripts/toggle-layout.sh"))
 
 -- Volume
 -- desc: Mutes and unmutes the volume
-hl.bind("F1", hl.dsp.exec_cmd("pactl set-sink-mute @DEFAULT_SINK@ toggle && qs -p ~/.config/taskbar ipc call osd volume"))
+hl.bind("F1", hl.dsp.exec_cmd("pactl set-sink-mute @DEFAULT_SINK@ toggle && qs -p ~/.config/shell ipc call osd volume"))
 -- desc: Lowers the volume
-hl.bind("F2", hl.dsp.exec_cmd("pactl set-sink-volume @DEFAULT_SINK@ -5% && qs -p ~/.config/taskbar ipc call osd volume"), { repeating = true })
+hl.bind("F2", hl.dsp.exec_cmd("pactl set-sink-volume @DEFAULT_SINK@ -5% && qs -p ~/.config/shell ipc call osd volume"), { repeating = true })
 -- desc: Raises the volume
-hl.bind("F3", hl.dsp.exec_cmd("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ && qs -p ~/.config/taskbar ipc call osd volume"), { repeating = true })
+hl.bind("F3", hl.dsp.exec_cmd("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ && qs -p ~/.config/shell ipc call osd volume"), { repeating = true })
 
 -- Brightness
 -- desc: Lowers the screen brightness
-hl.bind("F4", hl.dsp.exec_cmd("brightnessctl set 10%- && qs -p ~/.config/taskbar ipc call osd brightness"), { repeating = true })
+hl.bind("F4", hl.dsp.exec_cmd("brightnessctl set 10%- && qs -p ~/.config/shell ipc call osd brightness"), { repeating = true })
 -- desc: Raises the screen brightness
-hl.bind("F5", hl.dsp.exec_cmd("brightnessctl set +10% && qs -p ~/.config/taskbar ipc call osd brightness"), { repeating = true })
+hl.bind("F5", hl.dsp.exec_cmd("brightnessctl set +10% && qs -p ~/.config/shell ipc call osd brightness"), { repeating = true })
 
 -- Keyboard backlight (unchanged)
 -- desc: Toggles the keyboard backlight
@@ -681,7 +688,7 @@ hl.bind("SUPER + period", hl.dsp.exec_cmd("echo \"open:emoji\" | socat - UNIX-CO
 -- a script, because the prompt is a layer surface the shell already owns --
 -- anything else would have to spawn a second process to draw a text box.
 -- desc: Opens the reminder prompt
-hl.bind("SUPER + SHIFT + R", hl.dsp.exec_cmd("qs -p ~/.config/taskbar ipc call reminder prompt"))
+hl.bind("SUPER + SHIFT + R", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call reminder prompt"))
 
 -- Voice-to-text (voxtype, push-to-talk). Hold to record, release to transcribe
 -- at the cursor. Two hl.bind() calls on one key is safe *here* only because

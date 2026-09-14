@@ -4,10 +4,10 @@
 #
 #   ui-prefs.sh get  <KEY>
 #   ui-prefs.sh set  <KEY> <VALUE> [DETAIL]
-#   ui-prefs.sh list fonts|icons|themes|browsers|terminals|editors
+#   ui-prefs.sh list fonts|icons|themes|palettes|browsers|terminals|editors
 #
-# KEYS: UI_FONT  ICON_THEME  GTK_THEME  DEFAULT_BROWSER  DEFAULT_TERMINAL
-#       DEFAULT_EDITOR
+# KEYS: UI_FONT  ICON_THEME  GTK_THEME  PALETTE  DEFAULT_BROWSER
+#       DEFAULT_TERMINAL  DEFAULT_EDITOR
 #
 # ── Why a plain file, and why this one ────────────────────────────────────
 # Six different things need to agree on these values: the four Quickshell
@@ -39,7 +39,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/ui.conf"
 
 die() { echo "ui-prefs: $*" >&2; exit 1; }
 
-VALID_KEYS="UI_FONT ICON_THEME GTK_THEME DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP"
+VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP"
 
 # ── store ────────────────────────────────────────────────────────────────
 
@@ -343,6 +343,16 @@ apply_gtk_theme() {
         gsettings set org.gnome.desktop.interface color-scheme "$scheme" 2>/dev/null || true
 }
 
+# PALETTE is the one preference this file does not implement. It is sixteen
+# colours reaching nine consumers through pywal's cache, which is a script's
+# worth of behaviour rather than two gsettings calls — and it has to be
+# runnable on its own, because finder/apply-wallpaper.sh asks it what a
+# wallpaper change should do to the colours. So palette.sh owns all of it and
+# this file owns only the fact that a value was chosen.
+apply_palette() {
+    "$(dirname -- "${BASH_SOURCE[0]}")/palette.sh" apply "$1"
+}
+
 # hyprland.lua reads DEFAULT_TERMINAL/EDITOR/BROWSER at CONFIG-PARSE time, so a
 # new value does nothing to SUPER+Q or $TERMINAL until the config is re-parsed.
 reload_hyprland() {
@@ -368,6 +378,7 @@ case "$cmd" in
             UI_FONT)          apply_font "$val";       notify "Font" "$val" ;;
             ICON_THEME)       apply_icon_theme "$val"; notify "Icon theme" "$val" ;;
             GTK_THEME)        apply_gtk_theme "$val";  notify "Theme" "$val" ;;
+            PALETTE)          apply_palette "$val";    notify "Palette" "$val" ;;
             DEFAULT_TERMINAL) reload_hyprland;         notify "Default terminal" "$val" ;;
             DEFAULT_EDITOR)   reload_hyprland;         notify "Default editor" "$val" ;;
             DEFAULT_BROWSER)
@@ -391,17 +402,22 @@ case "$cmd" in
             fonts)     list_fonts     | mark "$(effective UI_FONT)" ;;
             icons)     list_icons     | mark "$(effective ICON_THEME)" ;;
             themes)    list_themes    | mark "$(effective GTK_THEME)" ;;
+            # Not piped through `mark`: palette.sh marks its own current row,
+            # because the answer is not only the stored value — "pywal" is
+            # what a machine that has never chosen one is running, and that
+            # rule lives with the palettes rather than here.
+            palettes)  "$(dirname -- "${BASH_SOURCE[0]}")/palette.sh" list ;;
             browsers)  list_browsers  | mark "$(effective DEFAULT_BROWSER)" ;;
             terminals) list_terminals | mark "$(effective DEFAULT_TERMINAL)" ;;
             editors)   list_editors   | mark "$(effective DEFAULT_EDITOR)" ;;
-            *) die "usage: ui-prefs.sh list fonts|icons|themes|browsers|terminals|editors" ;;
+            *) die "usage: ui-prefs.sh list fonts|icons|themes|palettes|browsers|terminals|editors" ;;
         esac
         ;;
 
     *)
         echo "usage: $(basename "$0") get <KEY>" >&2
         echo "       $(basename "$0") set <KEY> <VALUE> [DETAIL]" >&2
-        echo "       $(basename "$0") list fonts|icons|themes|browsers|terminals|editors" >&2
+        echo "       $(basename "$0") list fonts|icons|themes|palettes|browsers|terminals|editors" >&2
         exit 2
         ;;
 esac

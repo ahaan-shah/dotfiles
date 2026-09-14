@@ -5,7 +5,6 @@
 # ── compositor / session ──────────────────────────────────────────────
 hyprland
 hypridle
-hyprpaper
 hyprpicker
 hyprshot                  # F11 / Print / ALT+Print binds
 hyprsunset                # the taskbar's Display panel IS a hyprsunset front

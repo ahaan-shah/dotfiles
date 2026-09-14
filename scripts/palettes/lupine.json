@@ -1,0 +1,30 @@
+{
+  "name": "Lupine",
+  "mode": "light",
+  "source": "omarchy themes/lupine @ quattro b679363bed05",
+  "wallpaper": "None",
+  "alpha": "100",
+  "special": {
+    "background": "#fafafa",
+    "foreground": "#212121",
+    "cursor": "#212121"
+  },
+  "colors": {
+    "color0": "#fafafa",
+    "color1": "#c900c4",
+    "color2": "#4a2fd0",
+    "color3": "#026fde",
+    "color4": "#3264eb",
+    "color5": "#8a4ad7",
+    "color6": "#0c67de",
+    "color7": "#424242",
+    "color8": "#9e9e9e",
+    "color9": "#3264eb",
+    "color10": "#9f85e0",
+    "color11": "#358fff",
+    "color12": "#5482ff",
+    "color13": "#b363ff",
+    "color14": "#3986ff",
+    "color15": "#000000"
+  }
+}

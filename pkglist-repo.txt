@@ -52,7 +52,6 @@ gvfs-smb
 htop
 hypridle
 hyprland
-hyprpaper
 hyprpicker
 hyprshot
 hyprsunset
