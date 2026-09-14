@@ -40,6 +40,16 @@ Item {
     property string query: ""
     property int selectedIndex: 0
     property var displayResults: []   // unified row list, see _rebuild()
+
+    // One height for every row in the list, taken from the tallest kind the
+    // current results actually contain. This is SettingsPanel's panel.rowH and
+    // it is here for its reason: a height measured per ROW makes a mixed list
+    // ragged, a height measured per LIST makes it read as one block. 44 is the
+    // dense row — an app, an emoji, a wallpaper, a power profile, all of which
+    // are a word and a mark — and 58 is the one with a second line under it,
+    // which now only a file path, a calculation and a clipboard hit ask for.
+    readonly property int rowH: root.displayResults.some(r => (r.subtitle || "") !== "")
+                                ? Theme.rowTall : Theme.rowHeight
     property var clipboardPreview: null   // {type:"image", source} for clipboard-mode image entries
     property var wallpaperPreview: null   // {type:"image", source} for wallpaper-mode entries
 
@@ -48,14 +58,21 @@ Item {
         : root.mode === "wallpaper" ? root.wallpaperPreview
         : FileSearch.preview
 
+    // The settings card's prompt, in every mode: "Search <what this page
+    // lists>…", sentence case, one ellipsis CHARACTER rather than three stops.
+    // With the footer gone this line is the only text on an empty card, so it
+    // is also the only thing that says which mode is open — the same job
+    // SettingsPanel gives it ("Search settings…" at the root, "Search setup…"
+    // inside Setup). They all filter as you type, including the two power
+    // lists, so they all say Search.
     readonly property var _placeholders: ({
-        "default":       "search applications",
-        "emoji":         "Search emojis (e.g. smile, fire, heart)...",
-        "clipboard":     "Search clipboard history...",
-        "powerprofiles": "Select power profile...",
-        "powermenu":     "Power menu...",
-        "wallpaper":     "Search wallpapers...",
-        "filesearch":    "Search files..."
+        "default":       "Search applications…",
+        "emoji":         "Search emoji…",
+        "clipboard":     "Search clipboard…",
+        "powerprofiles": "Search power profiles…",
+        "powermenu":     "Search power menu…",
+        "wallpaper":     "Search wallpapers…",
+        "filesearch":    "Search files…"
     })
 
     // ── Open / close ─────────────────────────────────────────────────
@@ -164,9 +181,14 @@ Item {
             const q = root.query.toLowerCase()
             root.displayResults = PowerProfiles.items
                 .filter(p => !q || p.label.toLowerCase().includes(q))
+                // `active`, not a "current" subtitle. The settings card marks
+                // the chosen one of a set with a tick in the accent (see its
+                // choice rows) and says nothing else about it; a subtitle
+                // saying "current" both repeated that mark in words and pushed
+                // all three rows from 44 to 58 to carry one of them.
                 .map(p => ({
                     kind: "powerprofile", emojiGlyph: p.icon, title: p.label,
-                    subtitle: p.value === PowerProfiles.current ? "current" : "",
+                    subtitle: "", active: p.value === PowerProfiles.current,
                     data: p
                 }))
             return
@@ -289,7 +311,13 @@ Item {
             for (const a of AppIndex.search(q, 8)) {
                 rows.push({ kind: "app", icon: a.iconPath, title: a.name, subtitle: "", data: a })
             }
-            rows.push({ kind: "websearch", emojiGlyph: "", title: "Google", subtitle: "Search the web for \"" + q + "\"", data: q })
+            // The label used to be "Google" with the whole sentence under it
+            // as a subtitle, which is the pattern the settings pass deleted
+            // everywhere: a second line that restates the first at greater
+            // length. The sentence IS the row, so it is the title, and the
+            // default page keeps its dense 44px rows as long as no calculation
+            // is on it.
+            rows.push({ kind: "websearch", emojiGlyph: "", title: "Search the web for \"" + q + "\"", subtitle: "", data: q })
         }
 
         const prevSel = root.selectedIndex
@@ -390,19 +418,36 @@ Item {
     // WalColors repaints it when the wallpaper changes.
     readonly property string uiFont: UiConfig.fontFamily
 
-    // ── Colors (pywal, live) ───────────────────────────────────────────
-    readonly property color bgColor:     WalColors.color0 || WalColors.background
-    readonly property color fgColor:     WalColors.color7 || WalColors.foreground
-    readonly property color accentColor: WalColors.color8
-    readonly property color errorBg:     WalColors.color1
+    // ── Colors ─────────────────────────────────────────────────────────
+    // There is no local palette here any more. Four colours used to be mixed
+    // in this file — color0 for the card, color7 for every label, color8
+    // washed at 0.08/0.25/0.3 for the preview pane and the icon tiles — and
+    // the settings card next door was already drawing bg/text/accent out of
+    // Theme.qml, off DIFFERENT pywal slots (background and color15). So the
+    // two cards were not the same colour, on any wallpaper. Everything below
+    // reads Theme now, which is the whole reason Theme exists: "so the panel
+    // and the password box cannot drift apart", and finder's own box is the
+    // fourth surface in that set.
+    //
+    // _alpha/_lighter/_darker went with them — Theme.alpha is the one left,
+    // and nothing washes the accent any more.
 
-    // The width of the card's one column: the search box, and the results list
-    // under it. Everything else in the card is measured from it.
-    readonly property int innerW: 644
-
-    function _alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
-    function _lighter(c, f) { return Qt.lighter(c, f) }
-    function _darker(c, f)  { return Qt.darker(c, f) }
+    // The width of the card's one column: the search line, and the results
+    // list under it. Everything else in the card is measured from it.
+    //
+    // Theme.cardWidth — the settings card's 430, where this was 644. The two
+    // surfaces open from neighbouring keybinds onto the same wallpaper, and a
+    // launcher half again as wide as the settings menu was the loudest
+    // difference left between them. The preview modes still widen past it (see
+    // listCol and previewBox below), because a file path rendered in 430 points
+    // is a path with its middle missing.
+    //
+    // Theme.cardWidth is the settings card's OUTSIDE width, padding included,
+    // so the column inside it is that less the padding on both sides. Measured
+    // against a screenshot of the two: taking cardWidth as the column made
+    // finder's card 470 to the settings card's 430, which is exactly the 40
+    // points of padding.
+    readonly property int innerW: Theme.cardWidth - Theme.pad * 2
 
     // ── Scrim (click outside to dismiss) ───────────────────────────────
     MouseArea {
@@ -435,8 +480,10 @@ Item {
     Rectangle {
         id: box
         anchors.centerIn: parent
-        radius: 30
-        color: root.bgColor
+        // The settings card's radius and the settings card's ground. 30 and
+        // color0 were finder's own; see the Colors note above.
+        radius: Theme.cardRadius
+        color: Theme.bg
         // The taskbar's panel edge, not one of finder's own: 2px of
         // alpha(color7, 0.8) is what every dropdown in taskbar/shell.qml draws,
         // and Theme.line/Theme.cardBorder are where that pair lives now — the
@@ -488,8 +535,8 @@ Item {
         // this box nor out of it.
         property real heldW: 0
         property real heldH: 0
-        width:  box.heldW > 0 ? box.heldW : content.width + 40
-        height: box.heldH > 0 ? box.heldH : content.height + 40
+        width:  box.heldW > 0 ? box.heldW : content.width + Theme.pad * 2
+        height: box.heldH > 0 ? box.heldH : content.height + Theme.pad * 2
         Behavior on width  { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
         Behavior on height { NumberAnimation { duration: Theme.motionPage; easing.type: Easing.OutCubic } }
 
@@ -506,33 +553,41 @@ Item {
 
         Column {
             id: content
-            x: 20; y: 20
-            spacing: 10
+            x: Theme.pad; y: Theme.pad
+            // 16 between the search line and the list, which is the settings
+            // card's own gap (its RowLayout's Layout.bottomMargin). It was 10,
+            // and it separated three things; there are two now.
+            spacing: 16
 
-            // ── Search input ──────────────────────────────────────────
-            Rectangle {
-                // The search box and the list below it are ONE column and have
-                // to end on the same line — Ahaan, looking at a 644-wide input
-                // sitting over a 600-wide row. So neither number is written
-                // twice: root.innerW is the column, the list takes all of it,
-                // and when the preview pane is out the box stretches to cover
-                // the list AND the preview rather than floating short in a
-                // wider card.
+            // ── Search: a line, not a box ─────────────────────────────
+            // What was here was a 44px rounded rectangle filled with
+            // lighter(bg, 1.35), i.e. a visible input widget. The settings card
+            // draws its prompt as bare text with a caret — no fill, no icon, no
+            // rule under it — and a box drawn around the only field on a card
+            // that has nothing else on it is chrome naming a control instead of
+            // being one. Same removal as that card's search icon.
+            //
+            // The Item survives the Rectangle because the width rule does, and
+            // it is load-bearing: the search line and the list below it are ONE
+            // column and have to end on the same line — Ahaan, looking at a
+            // 644-wide input sitting over a 600-wide row. So neither number is
+            // written twice. root.innerW is the column, the list takes all of
+            // it, and when the preview pane is out this stretches to cover the
+            // list AND the preview rather than floating short in a wider card.
+            Item {
                 width: Math.max(root.innerW, resultsRow.visible ? resultsRow.width : 0)
-                height: 44
-                radius: 16
-                color: root._lighter(root.bgColor, 1.35)
+                // The settings card's search line, to the pixel.
+                height: 26
 
                 TextInput {
                     id: input
                     anchors.fill: parent
-                    anchors.margins: 10
                     verticalAlignment: TextInput.AlignVCenter
                     font.family: root.uiFont
-                    font.pixelSize: 14
-                    color: root.fgColor
+                    font.pixelSize: Theme.fsInput
+                    color: Theme.text
                     clip: true
-                    selectionColor: root._lighter(root.bgColor, 1.8)
+                    selectionColor: Theme.alpha(Theme.accent, 0.45)
                     onTextChanged: root.query = text
                     // The ONE Return handler for this list — see the note in
                     // root's Keys.onPressed above.
@@ -541,8 +596,7 @@ Item {
                     Text {
                         anchors.fill: parent
                         text: root._placeholders[root.mode] || ""
-                        color: root.fgColor
-                        opacity: 0.5
+                        color: Theme.dimmer
                         font: input.font
                         verticalAlignment: Text.AlignVCenter
                         visible: input.text.length === 0
@@ -564,17 +618,21 @@ Item {
 
                 ListView {
                     id: listCol
-                    // The full column when the list is on its own; the leftover
-                    // when a preview sits beside it. 254 would be the leftover
-                    // if the ROW had to stay within innerW, and a file list that
-                    // narrow is unreadable — so in preview mode the row is what
-                    // is wider and the search box above matches it instead.
-                    width: previewBox.visible ? 600 : root.innerW
+                    // The column, in every mode, preview or not. It used to
+                    // widen to 600 whenever a preview pane came out, which was
+                    // the same inconsistency the card's own width had: a list
+                    // that is one width for apps and another for files does not
+                    // read as one design. The card still grows for the preview
+                    // — it grows by exactly the preview.
+                    width: root.innerW
                     // Cap the list's own height and let it scroll instead of growing
                     // the whole window arbitrarily tall (e.g. the 50-row emoji listing).
                     height: Math.min(contentHeight, 420)
                     clip: true
-                    spacing: 4
+                    // 2, the settings list's gap. At 4 the rows read as
+                    // separate cards rather than as one block, which is the
+                    // same thing the row outlines used to do there.
+                    spacing: 2
                     model: root.displayResults
                     currentIndex: root.selectedIndex
                     highlightFollowsCurrentItem: true
@@ -623,27 +681,43 @@ Item {
                     preferredHighlightBegin: 0
                     preferredHighlightEnd: listCol.height
 
-                    delegate: Rectangle {
+                    // The settings card's row, with finder's icons in it: a
+                    // mark on the left, a label, a second line only where the
+                    // information is not in the label, and a tick on the right
+                    // where one row of a set is the chosen one. Same margins
+                    // (14), same gap (12), same sizes and same colours as
+                    // SettingsPanel's delegate, because the two cards open from
+                    // neighbouring keybinds onto the same wallpaper and had no
+                    // reason to be two designs.
+                    //
+                    // An Item rather than a Rectangle: it drew "transparent",
+                    // which is a fill Qt still has to consider. Its height is
+                    // the page's rowH now rather than whatever its own contents
+                    // measured, which is what makes a list of results a block
+                    // instead of a ladder.
+                    delegate: Item {
                         id: rowDelegate
                         required property var modelData
                         required property int index
                         width: listCol.width
-                        height: rowContent.height + 16
-                        // Nothing drawn: the fill and the outline are the view's
-                        // highlight now, one item for the whole list.
-                        color: "transparent"
+                        height: root.rowH
 
                             Row {
                                 id: rowContent
-                                x: 10; y: 8
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
                                 spacing: 12
-                                width: rowDelegate.width - 20
 
                                 // Icon: emoji glyph, resolved app icon image (falls back to a
                                 // Nerd Font glyph tile if it fails to load or the kind has no image).
                                 Item {
                                     id: iconSlot
-                                    width: 32; height: 32
+                                    // Theme.iconSlot, 26, not 32. A 32px icon
+                                    // in a 44px row is the row; the settings
+                                    // card's mark sits inside its line rather
+                                    // than setting its height.
+                                    width: Theme.iconSlot; height: Theme.iconSlot
                                     anchors.verticalCenter: parent.verticalCenter
 
                                     readonly property string kind: rowDelegate.modelData.kind
@@ -657,8 +731,18 @@ Item {
                                         anchors.centerIn: parent
                                         visible: iconSlot._hasGlyph
                                         text: rowDelegate.modelData.emojiGlyph || ""
-                                        color: root.fgColor
-                                        font.pixelSize: 24
+                                        // Dimmer than the label, one strength on
+                                        // every row, exactly as the settings
+                                        // card draws its icons: the mark locates
+                                        // the row, the label is what is read.
+                                        // The exception is an emoji, which is
+                                        // not a signifier for the row — it IS
+                                        // the thing being picked — so it is
+                                        // drawn at full strength and two points
+                                        // larger.
+                                        color: iconSlot.kind === "emoji" ? Theme.text
+                                                                         : Theme.alpha(Theme.text, 0.65)
+                                        font.pixelSize: iconSlot.kind === "emoji" ? 19 : 17
                                         font.family: root.uiFont
                                     }
                                     Image {
@@ -669,16 +753,26 @@ Item {
                                         fillMode: Image.PreserveAspectFit
                                         smooth: true
                                         asynchronous: true
-                                        // The slot is 32x32; without a cap Qt decodes and keeps
+                                        // The slot is 26x26; without a cap Qt decodes and keeps
                                         // each icon at its intrinsic size (2x for this display).
-                                        sourceSize.width: 64
-                                        sourceSize.height: 64
+                                        sourceSize.width: 52
+                                        sourceSize.height: 52
                                     }
                                     Rectangle {
                                         anchors.fill: parent
                                         radius: 6
                                         visible: !iconSlot._hasGlyph && !iconSlot.hasAppImage
-                                        color: root._alpha(root.accentColor, 0.3)
+                                        // A plate ONLY under a letter standing
+                                        // in for a thumbnail that would not
+                                        // load. The other kinds below this line
+                                        // resolve to a Nerd Font glyph, and a
+                                        // glyph on a washed accent tile was the
+                                        // loudest mark in the list — the
+                                        // settings card draws its icons bare.
+                                        // The wash that is left is the one the
+                                        // selection uses, at less than it.
+                                        color: iconSlot._hasThumb ? Theme.alpha(Theme.text, 0.08)
+                                                                  : "transparent"
                                         Text {
                                             anchors.centerIn: parent
                                             text: {
@@ -691,8 +785,12 @@ Item {
                                                 if (k === "wallpaper")    return rowDelegate.modelData.title.charAt(0).toUpperCase()
                                                 return "?"
                                             }
-                                            color: root.fgColor
-                                            font.pixelSize: 14
+                                            color: Theme.alpha(Theme.text, 0.65)
+                                            // A glyph is an icon and gets the
+                                            // icon size; a letter is standing in
+                                            // for a picture inside a plate and
+                                            // has to leave room for the plate.
+                                            font.pixelSize: iconSlot._hasThumb ? 13 : 17
                                             font.family: root.uiFont
                                         }
                                     }
@@ -700,24 +798,73 @@ Item {
 
                                 Column {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: rowContent.width - 44
+                                    // Whatever the marks either side of it
+                                    // leave. Written out rather than left at a
+                                    // hardcoded 44 because the tick on the
+                                    // right comes and goes with the mode, and
+                                    // the label eliding into it is how the old
+                                    // number would have failed.
+                                    width: rowContent.width - Theme.iconSlot - rowContent.spacing
+                                           - (tickSlot.visible ? tickSlot.width + rowContent.spacing : 0)
+                                    // 1, the settings card's gap between a
+                                    // label and its second line. Default
+                                    // spacing is 0, which set the two solid.
+                                    spacing: 1
                                     Text {
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: rowDelegate.modelData.title
-                                        color: root.fgColor
+                                        color: Theme.text
                                         font.family: root.uiFont
-                                        font.pixelSize: rowDelegate.modelData.kind === "calc" ? 24 : 14
+                                        // Theme.fsRow, and the calculator's
+                                        // answer is still the exception: it is
+                                        // the result, not a label for one.
+                                        font.pixelSize: rowDelegate.modelData.kind === "calc" ? 24 : Theme.fsRow
                                     }
+                                    // The second line, which most rows no
+                                    // longer have — the settings pass deleted
+                                    // every subtitle that restated its label,
+                                    // and the two finder had (the web search's
+                                    // gloss, the power profile's "current")
+                                    // went with them at the point they are
+                                    // built. What is left is the same kind that
+                                    // survived there: a line that is the only
+                                    // place the information exists. A file's
+                                    // path, and the expression a result came
+                                    // from.
                                     Text {
                                         width: parent.width
                                         elide: Text.ElideRight
                                         visible: text.length > 0
                                         text: rowDelegate.modelData.subtitle || ""
-                                        color: root.fgColor
-                                        opacity: 0.5
+                                        color: Theme.dim
                                         font.family: root.uiFont
-                                        font.pixelSize: 12
+                                        font.pixelSize: Theme.fsSub
+                                    }
+                                }
+
+                                // ── the chosen one of a set ────────────
+                                // The settings card's mark for "this is the one
+                                // that is on" (see its choice rows): a tick in
+                                // the accent, at the right-hand end, and nothing
+                                // in words. Only the power profiles have a set
+                                // to be chosen from, so the slot is only
+                                // reserved on that mode — an always-invisible
+                                // 15px plus a 12px gap on every app, emoji and
+                                // file row would shorten every label in finder
+                                // for a mark none of them can ever draw.
+                                Item {
+                                    id: tickSlot
+                                    visible: root.mode === "powerprofiles"
+                                    width: 15; height: 15
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: rowDelegate.modelData.active === true
+                                        text: "󰄬"
+                                        color: Theme.accent
+                                        font.family: root.uiFont
+                                        font.pixelSize: 15
                                     }
                                 }
                             }
@@ -733,12 +880,22 @@ Item {
                 Rectangle {
                     id: previewBox
                     visible: root.effectivePreview !== null && root.effectivePreview.type !== "none"
-                    width: visible ? 380 : 0
+                    // 340, down from 380. With the list no longer stretching
+                    // to 600 beside it, the old pane made the card 1030 wide
+                    // against the settings card's 430; this keeps the two
+                    // comparable while still being a pane you can read a file
+                    // in. It is a bounding box for the image either way — see
+                    // sourceSize below.
+                    width: visible ? 340 : 0
                     height: Math.max(listCol.height, 200)
-                    radius: 10
-                    color: root._alpha(root.accentColor, 0.08)
+                    // The row radius, and a wash under the selection's rather
+                    // than an accent tint with an accent outline around it. It
+                    // is a surface holding a picture, not a control: the only
+                    // accent left on this card is the tick.
+                    radius: Theme.rowRadius
+                    color: Theme.alpha(Theme.text, 0.04)
                     border.width: 1
-                    border.color: root._alpha(root.accentColor, 0.25)
+                    border.color: Theme.hairline
                     clip: true
 
                     Flickable {
@@ -753,9 +910,9 @@ Item {
                             width: parent.width
                             wrapMode: Text.Wrap
                             text: (root.effectivePreview && root.effectivePreview.type === "text") ? root.effectivePreview.text : ""
-                            color: root.fgColor
+                            color: Theme.dim
                             font.family: "monospace"
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fsSub
                         }
                     }
 
@@ -784,16 +941,15 @@ Item {
                 }
             }
 
-            // ── Keybind footer ────────────────────────────────────────
-            Row {
-                spacing: 14
-                visible: root.shown
-                topPadding: 6
-
-                Text { text: "↑↓ navigate"; color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: root.uiFont }
-                Text { text: "↵ select";     color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: root.uiFont }
-                Text { text: "esc close";    color: root.fgColor; opacity: 0.35; font.pixelSize: 12; font.family: root.uiFont }
-            }
+            // ── there is no footer ────────────────────────────────────
+            // "↑↓ navigate  ↵ select  esc close" used to sit here, on every
+            // mode, permanently. It went for the reason the settings card's
+            // identical footer went: it documents three keys that every list
+            // in every application on the machine already answers to, it is
+            // the second-largest block of text on an empty card, and it is
+            // the same three words whether you are picking an emoji or
+            // shutting the machine down. The keys themselves are unchanged
+            // and are handled in root's Keys.onPressed and input.onAccepted.
         }
     }
 

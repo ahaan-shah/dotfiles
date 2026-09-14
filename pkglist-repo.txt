@@ -1,4 +1,5 @@
 apostrophe
+asusctl
 base
 base-devel
 bat
