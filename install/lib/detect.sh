@@ -37,13 +37,6 @@ detect_battery() {
     return 1
 }
 
-# --- charge-cap support (not every laptop has it) -----------------------
-detect_charge_cap() {
-    local bat="$1"
-    [ -n "$bat" ] || return 1
-    [ -e "/sys/class/power_supply/$bat/charge_control_end_threshold" ]
-}
-
 # --- LEDs ---------------------------------------------------------------
 detect_led() {
     local pat="$1" d
@@ -305,8 +298,6 @@ detect_kvm() {
 
 detect_all() {
     HW_BATTERY=$(detect_battery || true)
-    HW_CHARGE_CAP=0
-    if detect_charge_cap "${HW_BATTERY:-}"; then HW_CHARGE_CAP=1; fi
     HW_KBD_LED=$(detect_led kbd_backlight || true)
     HW_MICMUTE_LED=$(detect_led micmute || true)
     HW_IGPU_PCI=$(detect_igpu_pci || true)
@@ -325,14 +316,13 @@ detect_all() {
 }
 
 print_detection() {
-    local cap="no"; [ "$HW_CHARGE_CAP" = 1 ] && cap="yes"
     local mux=""; [ -n "${HW_GPU_MUX:-}" ] && mux="  mux=${HW_GPU_MUX} ($([ "${HW_GPU_MUX}" = 1 ] && echo hybrid || echo DISCRETE))"
     local kvm="no — the VM phase will be skipped"; [ "${HW_KVM:-0}" = 1 ] && kvm="yes"
     cat <<REPORT
   user / home        : $USER  ($HOME)
   monitor            : ${MON_NAME:-<none detected>}  ${MON_MODE:-} pos=${MON_POS:-} scale=${MON_SCALE:-}
                        ${C_DIM}source: ${MON_SOURCE:-unknown}${C_RST}
-  battery            : ${HW_BATTERY:-<none — desktop?>}   charge cap supported: $cap
+  battery            : ${HW_BATTERY:-<none — desktop?>}
   kbd backlight LED  : ${HW_KBD_LED:-<none>}
   mic-mute LED       : ${HW_MICMUTE_LED:-<none>}
   touchpad device    : ${HW_TOUCHPAD:-<needs a live Hyprland session>}
@@ -372,7 +362,6 @@ MONITOR_POSITION="${MON_POS:-auto}"
 MONITOR_SCALE="${MON_SCALE:-auto}"
 
 BATTERY="${HW_BATTERY:-}"
-BATTERY_CHARGE_CAP="${HW_CHARGE_CAP:-0}"
 KBD_BACKLIGHT_LED="${HW_KBD_LED:-}"
 MICMUTE_LED="${HW_MICMUTE_LED:-}"
 TOUCHPAD_DEVICE="${HW_TOUCHPAD:-}"

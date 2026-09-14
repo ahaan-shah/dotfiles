@@ -216,8 +216,8 @@ phase_packages() {
                      "$SCRIPT_DIR/packages/30-fonts.txt" \
                      "$SCRIPT_DIR/packages/40-apps.txt"
 
-    # Laptop-only: the battery panel, the charge cap and the fingerprint reader
-    # have nothing to do on a desktop.
+    # Laptop-only: the battery panel and the fingerprint reader have nothing
+    # to do on a desktop.
     if [ -n "${HW_BATTERY:-}" ]; then
         install_manifest "$SCRIPT_DIR/packages/20-laptop.txt"
     else
@@ -414,9 +414,7 @@ phase_hardware() {
         warn "Re-run '--only hardware' from inside Hyprland to pin exact values."
     fi
     if [ -z "${HW_BATTERY:-}" ]; then
-        skip "no battery — the charge-cap machinery will stay inert"
-    elif [ "${HW_CHARGE_CAP:-0}" != 1 ]; then
-        warn "$HW_BATTERY has no charge_control_end_threshold; the cap UI will read as unsupported"
+        skip "no battery — the taskbar's battery panel will read as empty"
     fi
 }
 
@@ -761,25 +759,6 @@ phase_apps() {
     # already expect.
     deploy_file "$SCRIPT_DIR/templates/spotify-flags.conf" "$HOME/.config/spotify-flags.conf" || true
 
-    # ── battery charge cap preference ──────────────────────────────────
-    # apply-battery-threshold.sh reads this file and is the single writer for
-    # the cap; without it the cap defaults to 100 (i.e. off).
-    if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
-        local pref="$HOME/.config/battery-threshold" cap
-        if [ -s "$pref" ]; then
-            skip "battery cap preference already set to $(cat "$pref")%"
-        else
-            cap="$(ask_val 'Battery charge cap in percent (100 = no cap)' 80)"
-            if printf '%s' "$cap" | grep -qE '^[0-9]+$' && [ "$cap" -ge 20 ] && [ "$cap" -le 100 ]; then
-                if [ "$DRY_RUN" = 0 ]; then printf '%s\n' "$cap" >"$pref"; fi
-                ok "battery cap preference set to $cap%"
-                run_sh "'$HOME/.config/scripts/apply-battery-threshold.sh' '$cap' || true"
-            else
-                warn "'$cap' is not a value between 20 and 100 — leaving the cap unset"
-            fi
-        fi
-    fi
-
     # hyprshot's F11/Print binds write here; create it rather than let the first
     # screenshot of a fresh install fail.
     run mkdir -p "$HOME/Pictures/Screenshots"
@@ -802,17 +781,6 @@ phase_usersystemd() {
     run mkdir -p "$ud"
 
     deploy_file "$SCRIPT_DIR/user-systemd/hyprland-session.target" "$ud/hyprland-session.target"
-
-    # The battery watchdog only makes sense where there is a cap to watch.
-    if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
-        deploy_file "$SCRIPT_DIR/user-systemd/battery-threshold.service" "$ud/battery-threshold.service"
-        deploy_file "$SCRIPT_DIR/user-systemd/battery-threshold.timer"   "$ud/battery-threshold.timer"
-        run systemctl --user daemon-reload
-        run systemctl --user enable --now battery-threshold.timer
-        ok "battery-threshold.timer enabled"
-    else
-        skip "no charge cap on this machine — battery watchdog not installed"
-    fi
 
     if have voxtype; then
         run systemctl --user daemon-reload
@@ -843,12 +811,6 @@ phase_system() {
     sudo_prime
 
     # ── udev ───────────────────────────────────────────────────────────
-    if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
-        sudo_file "$SCRIPT_DIR/system/udev/99-battery-charge-threshold.rules" \
-                  /etc/udev/rules.d/99-battery-charge-threshold.rules
-    else
-        skip "no charge cap — battery udev rule not installed"
-    fi
     if [ -n "${HW_MICMUTE_LED:-}" ]; then
         sudo_file "$SCRIPT_DIR/system/udev/99-micmute-led.rules" \
                   /etc/udev/rules.d/99-micmute-led.rules
@@ -859,11 +821,13 @@ phase_system() {
     run sudo udevadm trigger --subsystem-match=power_supply --subsystem-match=leds
 
     # ── group membership ───────────────────────────────────────────────
-    # `power` is what makes the charge cap writable without sudo; video/input
-    # cover the backlight and libinput. NOTE: group changes do NOT apply to an
-    # already-running session — this needs a real logout, or a reboot.
+    # video/input cover the backlight and libinput. `power` used to be here
+    # too — it was what made the battery charge cap writable without sudo, and
+    # it went when the cap did (2026-09-14); nothing else in this desktop needs
+    # it. NOTE: group changes do NOT apply to an already-running session — this
+    # needs a real logout, or a reboot.
     local g added=0
-    for g in power video input; do
+    for g in video input; do
         if getent group "$g" >/dev/null 2>&1 && ! id -nG "$USER" | tr ' ' '\n' | grep -qx "$g"; then
             run sudo usermod -aG "$g" "$USER"; added=1
             ok "added $USER to group $g"
@@ -1667,41 +1631,6 @@ phase_verify() {
     done
     chk "runtime dependency sweep finished"
 
-    # ── battery cap privilege model ────────────────────────────────────
-    if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
-        local bp="/sys/class/power_supply/${HW_BATTERY}"
-        local th="$bp/charge_control_end_threshold"
-        if [ -w "$th" ]; then
-            chk "charge cap is writable without sudo"
-        else
-            warn "charge cap not yet writable — expected until you log out and back in"
-            warn "(group membership does not apply to an already-running session)"
-        fi
-
-        # The watchdog does not trust the cap it wrote — it watches the PACK to
-        # decide whether the EC is honouring it, because sysfs only ever echoes
-        # the last value written (see apply-battery-threshold.sh note 1, and
-        # the charge-cap section of the system map). That test needs two
-        # readings, and a battery that exposes neither pair leaves --check
-        # permanently unable to conclude: no warning is ever raised, the panel
-        # goes on looking correct, and the pack quietly fills. Precisely the
-        # silent failure this phase exists for, so it is asserted rather than
-        # assumed. Both are checked as a PAIR because the script accepts either
-        # unit convention: charge_* in uAh, energy_* in uWh.
-        if [ -r "$bp/charge_now" ] || [ -r "$bp/energy_now" ]; then
-            chk "battery reports a charge level the cap watchdog can measure"
-        else
-            warn "no charge_now/energy_now on ${HW_BATTERY} — the watchdog can"
-            warn "re-assert the cap but can never verify the EC is honouring it"
-        fi
-        if [ -r "$bp/current_now" ] || [ -r "$bp/power_now" ]; then
-            chk "battery reports current flow, so a lapsed cap is caught in one check"
-        else
-            warn "no current_now/power_now on ${HW_BATTERY} — a lapsed cap is still"
-            warn "caught, but from the slow charge-gain window rather than in one check"
-        fi
-    fi
-
     # ── network stack ──────────────────────────────────────────────────
     if have nmcli; then
         check "NetworkManager active" "systemctl is-active NetworkManager.service"
@@ -1939,9 +1868,6 @@ phase_verify() {
     fi
 
     # ── systemd ────────────────────────────────────────────────────────
-    if [ "${HW_CHARGE_CAP:-0}" = 1 ]; then
-        check "battery-threshold.timer enabled" "systemctl --user is-enabled battery-threshold.timer"
-    fi
     have voxtype && check "voxtype.service enabled" "systemctl --user is-enabled voxtype.service"
 
     printf '\n'
@@ -1997,7 +1923,7 @@ main() {
   Next steps:
 
     1. ${C_B}Log out completely${C_RST} (or reboot). Group changes — the ones that let
-       the battery panel write the charge cap without sudo — do not reach an
+       the brightness slider and libinput work without sudo — do not reach an
        already-running session.
     2. At the greeter, log in and start ${C_B}Hyprland${C_RST}.
     3. Nothing else is required. The touchpad name is the one fact that needs

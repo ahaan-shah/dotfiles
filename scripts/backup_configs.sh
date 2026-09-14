@@ -96,7 +96,6 @@ copy "$HOME/.zshrc"                   "$DOTDIR/shell/.zshrc"
 copy "$HOME/.bashrc"                  "$DOTDIR/shell/.bashrc"
 copy "$HOME/.config/starship.toml"    "$DOTDIR/starship/starship.toml"
 copy "$HOME/.config/mimeapps.list"    "$DOTDIR/mimeapps.list"
-copy "$HOME/.config/battery-threshold" "$DOTDIR/battery-threshold"
 sync "$HOME/.config/spicetify/Themes/pywaldynamic" "$DOTDIR/spicetify/Themes/pywaldynamic"
 
 # ---------------- DESKTOP FILES ----------------
@@ -125,8 +124,7 @@ fi
 # world-readable and contain no credentials; /etc/NetworkManager/system-connections
 # (which holds wifi PSKs) is root-only and is deliberately NOT touched here.
 mkdir -p "$DOTDIR/system"
-for f in /etc/udev/rules.d/99-battery-charge-threshold.rules \
-         /etc/udev/rules.d/99-micmute-led.rules \
+for f in /etc/udev/rules.d/99-micmute-led.rules \
          /etc/keyd/default.conf \
          /etc/systemd/zram-generator.conf \
          /etc/sysctl.d/99-zram-swappiness.conf \
@@ -257,10 +255,12 @@ $left"
 # prose, and a check that fires on a comment is a check that gets switched off.
 # It is the absolute path that is the leak, not the word.
 #
-# The known case: ~/.config/systemd/user/battery-threshold.service, whose
-# authored version in install/user-systemd/ already uses %h and whose deployed
-# copy still carries the old absolute Documentation= line. The fix is to deploy
-# the authored unit, not to edit the mirror.
+# The case this was written for was ~/.config/systemd/user/battery-threshold.service,
+# whose authored version in install/user-systemd/ already used %h while the
+# deployed copy still carried an absolute Documentation= line. That unit is gone
+# (the charge cap it watched was removed on 2026-09-14), but the check stays:
+# any deployed file that drifts from its authored copy fails the same way, and
+# the fix is always to redeploy the authored file, not to edit the mirror.
 src=$(grep -rIl --exclude-dir=.git --exclude="$SELF" -e '/home/USER/projects/' "$DOTDIR" 2>/dev/null || true)
 [ -n "$src" ] && personal="$personal
 the private source-repo path appears in:

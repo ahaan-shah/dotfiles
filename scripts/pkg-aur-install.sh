@@ -57,4 +57,23 @@ printf '%s  ──────────────────────�
 for _p in $selected; do printf '    %s\n' "$_p"; done
 printf '\n%s  Input password to continue.%s\n\n' "$YELLOW" "$RESET"
 
+# Authenticate up front, then hold the ticket open for the whole build.
+#
+# yay only reaches `sudo pacman -U` AFTER cloning, fetching sources and
+# compiling — minutes to an hour for anything large. Left to itself it asks for
+# the password at that point, i.e. exactly when you have walked away, and the
+# prompt sits there until sudo's own timeout kills the run. Ask once while
+# someone is still at the keyboard; the refresher below re-stamps the timestamp
+# every 60s (default timeout is 15m) so the install stage finds it valid however
+# long the build took. Same shape as system-update.sh.
+sudo -v || { printf '%s  sudo authentication failed.%s\n' "$YELLOW" "$RESET" >&2; exit 1; }
+(
+    while kill -0 "$$" 2>/dev/null; do
+        sudo -n true || true   # || true: set -e would otherwise kill the refresher
+        sleep 60
+    done
+) &
+SUDO_KEEPALIVE_PID=$!
+trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
+
 yay -S --noconfirm $selected

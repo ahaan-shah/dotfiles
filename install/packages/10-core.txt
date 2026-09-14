@@ -63,7 +63,7 @@ iwd                       # NM's wifi backend here (see wifi_backend.conf)
 bluez
 bluez-utils               # bluetoothctl — the bluetooth panel's action path
 upower                    # Quickshell.Services.UPower, battery widget
-power-profiles-daemon     # finder/PowerProfiles.qml
+power-profiles-daemon     # finder/PowerProfiles.qml + the taskbar battery panel
 firewalld                 # the network phase configures it (LocalSend exception)
 
 # ── terminal / shell ──────────────────────────────────────────────────

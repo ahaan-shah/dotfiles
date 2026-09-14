@@ -1,9 +1,9 @@
 bibata-cursor-theme
 brave-bin
-calcure
 catppuccin-gtk-theme-mocha
 cliamp
 clock-tui
+freesurfer-bin
 fum-bin
 localsend-bin
 neofetch

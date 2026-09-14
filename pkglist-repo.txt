@@ -8,7 +8,6 @@ bluez-utils
 breeze-icons
 brightnessctl
 btop
-calibre
 cava
 chromium
 cmake
@@ -35,6 +34,7 @@ fzf
 gcc-fortran
 ghostty
 git
+github-cli
 gnome-calculator
 gnome-calendar
 gnome-clocks

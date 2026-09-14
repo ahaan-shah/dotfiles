@@ -174,7 +174,6 @@ MONITOR_MODE="2880x1620@120"
 MONITOR_POSITION="0x0"
 MONITOR_SCALE="2"
 BATTERY="BAT0"
-BATTERY_CHARGE_CAP="1"
 KBD_BACKLIGHT_LED="asus::kbd_backlight"
 MICMUTE_LED="platform::micmute"
 TOUCHPAD_DEVICE="asup1204:00-093a:2642-touchpad"
@@ -190,8 +189,7 @@ pin*. The two `DGPU_` lines are recorded for the installer and for scripts;
 nothing in the running desktop reads them.
 
 `hyprland.lua` parses it; `toggle-touchpad.sh`, `kbdbacklight_toggle.sh`,
-`micmute-led.sh`, `apply-battery-threshold.sh` and the taskbar's battery reader
-all source it. Every one of them falls back to something that works when the
+`micmute-led.sh` and the taskbar's battery reader all source it. Every one of them falls back to something that works when the
 file is missing, so a config copied somewhere by hand still runs.
 
 After a TTY-only install the same file reads `MONITOR_MODE="highrr"`,

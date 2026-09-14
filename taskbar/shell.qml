@@ -197,83 +197,66 @@ Scope {
     readonly property real batTimeSeconds: root.batCharging ? (batDev ? batDev.timeToFull : 0) : (batDev ? batDev.timeToEmpty : 0)
     readonly property string batTimeLabel: root.batCharging ? "Time to Full Charge" : "Time Remaining"
 
-    // What the charge cap is SET to, and whether it is actually holding.
+    // ---- power profiles (the battery panel's picker) ----------------------
+    // power-profiles-daemon's three platform profiles, driven through
+    // `powerprofilesctl` exactly as finder/PowerProfiles.qml drives them — one
+    // CLI, two verbs, no D-Bus client of our own. This panel and finder's
+    // SUPER+B picker are therefore two views of the same daemon state rather
+    // than two caches that can disagree.
     //
-    // Read from apply-battery-threshold.sh --state, not from sysfs. The sysfs
-    // attribute is asus-wmi's own cache of the last value written to it, so it
-    // answers "what did someone last write" and not "what did the user ask
-    // for" — and those diverge exactly when something has gone wrong: a write
-    // that lost a race to a concurrent one, or an EC that dropped the cap.
-    // Polling it is what made the picker snap back to 80 after a click on 90:
-    // the panel was faithfully reporting a write that had been clobbered, with
-    // nothing to say so. --state reports the saved intent, which is what the
-    // highlight should follow, plus the watchdog's verdict on whether the
-    // hardware is honouring it, which is what the warning below follows.
-    property int batThreshold: 100
-    property bool batEnforced: true
-    // WHY the cap is not holding, not just that it isn't. "Not enforced" is
-    // three different situations that want three different sentences on
-    // screen, and the one that matters asks the user to do something physical.
-    // Values come straight from --state: ok | drift | replug | plugback.
-    property string batReason: "ok"
-    // Set optimistically on click and defended until --state confirms it landed.
-    // Without it a poll can fire while the script is still queued behind its
-    // lock and drag the highlight back to the old box — the same "never fight
-    // the user's input" rule as brightPending on the brightness slider.
-    property int batThresholdPending: -1
+    // Order is deliberate: saver, balanced, performance reads left-to-right as
+    // less power to more, so the row is a slider the eye can follow.
+    readonly property var ppItems: [
+        { glyph: "\u{F032A}", label: "Saver",   value: "power-saver" },
+        { glyph: "\u{F0F85}", label: "Balanced", value: "balanced" },
+        { glyph: "\u{F04C5}", label: "Perf",    value: "performance" }
+    ]
+    property string ppCurrent: ""
+    // powerprofilesctl is a hard dependency of finder, but the daemon can be
+    // masked or missing on another machine; an empty answer hides the row
+    // rather than drawing three boxes none of which can ever light up.
+    readonly property bool ppAvailable: root.ppCurrent !== ""
+    // Same optimistic-then-confirm shape the brightness slider and the old cap
+    // picker used: the click paints the box now, and the poll is not allowed to
+    // drag the highlight back to the previous profile while the daemon is still
+    // mid-transition. `powerprofilesctl set` returns before `get` reflects it.
+    property string ppPending: ""
     Process {
-        id: batThresholdRead
-        command: ["bash", "-c", "~/.config/scripts/apply-battery-threshold.sh --state"]
+        id: ppRead
+        command: ["powerprofilesctl", "get"]
         stdout: StdioCollector { onStreamFinished: {
-            var out = this.text || "";
-            var m = /want=(\d+)/.exec(out);
-            if (!m) return;                       // no battery, or the script is missing
-            var want = parseInt(m[1]);
-            if (root.batThresholdPending >= 0) {
-                if (want !== root.batThresholdPending) return;   // click has not landed yet
-                root.batThresholdPending = -1;
-                batThresholdSettle.stop();
+            var v = (this.text || "").trim();
+            if (v === "") return;                 // daemon absent — keep the row hidden
+            if (root.ppPending !== "") {
+                if (v !== root.ppPending) return; // the click has not landed yet
+                root.ppPending = "";
+                ppSettle.stop();
             }
-            root.batThreshold = want;
-            root.batEnforced = /enforced=1/.test(out);
-            var r = /reason=(\w+)/.exec(out);
-            root.batReason = r ? r[1] : "ok";
+            root.ppCurrent = v;
         } }
     }
+    // Polled only while the panel is open, like every other reader in it. The
+    // profile can also be changed from finder (SUPER+B) or by the daemon itself
+    // dropping to power-saver on a low battery, so the panel has to follow the
+    // daemon rather than remember its own last click.
     Timer { interval: 2000; running: root.batVisible; repeat: true; triggeredOnStart: true
-            onTriggered: batThresholdRead.running = true }
+            onTriggered: ppRead.running = true }
 
-    // Goes through apply-battery-threshold.sh rather than echoing to sysfs
-    // directly (no sudo either way — see the udev rule that group-writes this
-    // attribute to "power"). The script also persists the choice and, crucially,
-    // FORCES a real EC transaction: writing the value sysfs already holds can be
-    // a no-op at the driver level, which is why re-clicking the same percentage
-    // did nothing after a hibernate had silently reset the EC. See the script.
-    function setBatteryThreshold(v) {
-        // Update the highlighted box immediately — the script takes a lock and
-        // then makes two EC writes 0.3s apart, so the round trip is most of a
-        // second even when it succeeds, and the picker must not sit on the old
-        // value for that long.
-        root.batThreshold = v;
-        root.batThresholdPending = v;
-        // A fresh choice clears any standing warning; the watchdog re-decides.
-        root.batEnforced = true;
-        root.batReason = "ok";
-        root.run("~/.config/scripts/apply-battery-threshold.sh " + v +
-                  " && notify-send 'Battery' 'Charging capped at " + v + "%' " +
-                  "|| notify-send -u critical 'Battery' 'Failed to set charge threshold " +
-                  "(see $XDG_RUNTIME_DIR/battery-threshold.log)'");
-        batThresholdReapply.restart();
-        batThresholdSettle.restart();
+    function setPowerProfile(v) {
+        if (v === root.ppCurrent) return;
+        root.ppCurrent = v;
+        root.ppPending = v;
+        root.run("powerprofilesctl set " + v);
+        ppConfirm.restart();
+        ppSettle.restart();
     }
-    // Confirm the optimistic value against --state once the script has had time
-    // to take its lock and record the choice.
-    Timer { id: batThresholdReapply; interval: 900; onTriggered: batThresholdRead.running = true }
-    // ...and stop defending it after that. If the write genuinely failed, the
-    // panel has to show the truth rather than the click forever. 20s covers the
-    // worst case the script allows: a full 15s wait on the lock plus the writes.
-    Timer { id: batThresholdSettle; interval: 20000
-            onTriggered: { root.batThresholdPending = -1; batThresholdRead.running = true; } }
+    // Confirm the optimistic value once the daemon has had time to switch.
+    Timer { id: ppConfirm; interval: 600; onTriggered: ppRead.running = true }
+    // ...and stop defending it after that, so a set that was refused (polkit,
+    // or a profile this firmware does not offer) shows the truth instead of the
+    // click forever.
+    Timer { id: ppSettle; interval: 5000
+            onTriggered: { root.ppPending = ""; ppRead.running = true; } }
 
 
     //========================================================================//
@@ -443,7 +426,7 @@ Scope {
     }
     Timer { interval: 2000; running: root.dispVisible; repeat: true; triggeredOnStart: true
             onTriggered: nlRead.running = true }
-    // Same optimistic-update-then-confirm shape as the battery cap buttons: the
+    // Same optimistic-update-then-confirm shape as the power profile buttons: the
     // toggle flips immediately, and this re-read corrects it if the daemon
     // refused to start.
     Timer { id: nlReadSoon; interval: 500; onTriggered: nlRead.running = true }
@@ -2498,7 +2481,7 @@ Scope {
     // updates its number in-process on the same frame as the drag.
     //
     // So: set the value immediately (the repo's optimistic-UI convention, same
-    // as the charge cap) and let this timer flush at most one command per
+    // as the power profile picker) and let this timer flush at most one command per
     // tick. Clearing pending stops the timer, so the value the drag ENDS on is
     // always the one written — a plain throttle would drop it.
     property int brightPending: -1
@@ -2590,6 +2573,21 @@ Scope {
         // because the toggle is otherwise mouse-only, and it is the obvious
         // thing to put on a keybind later.
         function nightlight(): void { root.nlToggle(); }
+    }
+
+    // Same reasoning as the display handler above, and the reason it exists at
+    // all: the power profile picker that replaced the charge-limit picker had
+    // to be exercised from a repo-path instance before anything was deployed,
+    // and the battery dropdown was the last panel with no way in but the mouse.
+    IpcHandler {
+        target: "battery"
+        function open(): void { root.closePanels(); root.batVisible = true; }
+        function close(): void { root.batVisible = false; }
+        function toggle(): void { root.togglePanel("bat"); }
+        // Sets the power profile from outside, the same call the boxes make.
+        // Bound to nothing — SUPER+B already opens finder's picker — but it is
+        // what makes the row testable without a pointer.
+        function profile(name: string): void { root.setPowerProfile(name); }
     }
 
     IpcHandler {
@@ -3104,7 +3102,7 @@ Scope {
     // a 1.5px ncText-tinted border, ncAccent for the "on"/selected state.
 
     // Pill switch. Rounded-rect (not a circle) so it sits in the same family
-    // as the battery panel's cap buttons rather than looking like a stray
+    // as the battery panel's profile buttons rather than looking like a stray
     // Material control.
     component ThemedToggle: Rectangle {
         id: tog
@@ -3278,7 +3276,7 @@ Scope {
 
         radius: 10
         // Solid accent fill when selected, matching the battery panel's active
-        // charge-limit button — not a low-alpha wash over the background.
+        // power-profile button — not a low-alpha wash over the background.
         color: prow.active ? root.ncAccent
                : (rowHover.hovered ? root.alpha(root.col7, 0.16) : root.alpha(root.col7, 0.05))
         readonly property color fg: prow.active ? root.contrastText(root.ncAccent) : root.ncText
@@ -5485,12 +5483,20 @@ Scope {
                            font.family: root.ncFont; font.pixelSize: root.ns(17); font.weight: Font.Bold }
 }
 
-                // ---------- charge-limit picker ----------
+                // ---------- power profile picker ----------
+                // What sat here until 2026-09-14 was the charge-limit picker,
+                // removed entirely along with its script, watchdog timer and
+                // udev rule: the cap was enforced by an EC that dropped it
+                // silently, and three rounds of increasingly elaborate
+                // re-assertion never made it hold. The panel is the right place
+                // for a power control, so the slot is reused rather than left
+                // as a gap — this one has a daemon that actually answers.
                 ColumnLayout {
                     Layout.fillWidth: true
+                    visible: root.ppAvailable
                     spacing: 8
                     Text {
-                        text: "SET CHARGE LIMIT"
+                        text: "POWER PROFILE"
                         color: root.alpha(root.ncText, 0.5)
                         font.family: root.ncFont
                         font.pixelSize: root.ns(8)
@@ -5500,89 +5506,49 @@ Scope {
                         Layout.fillWidth: true
                         spacing: 8
                         Repeater {
-                            model: [70, 80, 90, 100]
+                            model: root.ppItems
+                            // Glyph stacked over the word rather than set beside
+                            // it: "Balanced" plus an icon on one line does not
+                            // fit a third of 268px at the default ncScale, and
+                            // the first thing to go would be the word — which is
+                            // the half that says what the button does. Stacking
+                            // keeps both at a size a larger ncScale can still
+                            // grow into.
                             delegate: Rectangle {
-                                id: capBox
-                                required property int modelData
-                                property bool active: root.batThreshold === modelData
+                                id: ppBox
+                                required property var modelData
+                                property bool active: root.ppCurrent === modelData.value
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 36
+                                Layout.preferredHeight: 52
                                 radius: 10
                                 color: active ? root.ncAccent
-                                       : (capHover.hovered ? root.alpha(root.ncAccent, 0.18) : root.alpha(root.col7, 0.08))
+                                       : (ppHover.hovered ? root.alpha(root.ncAccent, 0.18) : root.alpha(root.col7, 0.08))
                                 border.width: 1.5
                                 border.color: root.alpha(root.ncText, 0.9)
-                                HoverHandler { id: capHover }
-                                Text {
+                                Behavior on color { ColorAnimation { duration: 140 } }
+                                HoverHandler { id: ppHover }
+                                ColumnLayout {
                                     anchors.centerIn: parent
-                                    text: capBox.modelData + "%"
-                                    color: capBox.active ? root.contrastText(root.ncAccent) : root.ncText
-                                    font.family: root.ncFont
-                                    font.pixelSize: root.ns(11)
-                                    font.weight: capBox.active ? Font.DemiBold : Font.Normal
+                                    spacing: 1
+                                    Text {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: ppBox.modelData.glyph
+                                        color: ppBox.active ? root.contrastText(root.ncAccent) : root.ncText
+                                        font.family: root.ncFont
+                                        font.pixelSize: root.ns(15)
+                                    }
+                                    Text {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: ppBox.modelData.label
+                                        color: ppBox.active ? root.contrastText(root.ncAccent) : root.ncText
+                                        font.family: root.ncFont
+                                        font.pixelSize: root.ns(9)
+                                        font.weight: ppBox.active ? Font.DemiBold : Font.Normal
+                                    }
                                 }
-                                MouseArea { anchors.fill: parent; onClicked: root.setBatteryThreshold(capBox.modelData) }
+                                MouseArea { anchors.fill: parent; onClicked: root.setPowerProfile(ppBox.modelData.value) }
                             }
                         }
-                    }
-                    // The cap is enforced by the EC, and the EC drops it
-                    // silently — sysfs keeps reading the right number because
-                    // it is only the driver's cache of what was written. A 90%
-                    // cap once ended a session at 100% with nothing anywhere
-                    // saying so. The watchdog can tell (it watches the charge
-                    // keep climbing past the cap), so when it has, say it here
-                    // instead of letting the panel look correct while the
-                    // battery fills.
-                    //
-                    // A notification was the first attempt and was wrong: this
-                    // is a standing condition, not an event, so a toast fired
-                    // once and then left nothing behind, while the panel that
-                    // could have shown it permanently looked fine. It is drawn
-                    // in the caption style the time-to-full label uses — the
-                    // same weight of remark, and it reads as part of the panel
-                    // rather than as an alert stuck to the bottom of it.
-                    // It used to clear itself the moment the charger came out
-                    // and again on any replug. That was wrong in both halves:
-                    // going blank mid-gesture read as "unplugging fixed it"
-                    // when nothing had been tested yet, and clearing on the
-                    // replug itself claimed success for a replug that may have
-                    // achieved nothing — which is how a 90% cap reached 100%
-                    // with a panel that looked perfectly correct. The script
-                    // now MEASURES the EC on the replug (it drops the cap below
-                    // the current charge and watches whether current actually
-                    // stops), so this line follows the user through the gesture
-                    // and only goes away when the cap has been observed to
-                    // hold. Hence three sentences rather than one.
-                    //
-                    // Kept to one line at the default ncScale — ~205px of text
-                    // against 268px of content width. It wraps cleanly if a
-                    // larger ncScale or a wider ui.conf font pushes it over,
-                    // and the card grows to hold it: a wrapping Text recomputes
-                    // its own implicitHeight once the layout has assigned it a
-                    // width, so the plain construction is correct here. Checked
-                    // rather than assumed — a three-line version of this string
-                    // sits inside the card with the card taller to match, and
-                    // adding an explicit Layout.preferredHeight binding changed
-                    // the rendering not at all. Noted because the amber block
-                    // this replaced *looked* like it was falling out of the
-                    // panel and it was not; it was simply the wrong weight.
-                    Text {
-                        visible: !root.batEnforced
-                        // Each one names the single next action, so the caption
-                        // is always something the user can act on from where
-                        // they are standing. "replug" while the charger is
-                        // already out is not.
-                        text: root.batReason === "plugback"
-                                  ? "Plug the charger back in to re-arm the limit"
-                              : root.batReason === "drift"
-                                  ? "Limit was overwritten \u2014 restoring it"
-                                  : "Not enforced \u2014 unplug and replug the charger"
-                        color: root.alpha(root.ncText, 0.5)
-                        horizontalAlignment: Text.AlignHCenter
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        font.family: root.ncFont
-                        font.pixelSize: root.ns(10)
                     }
                 }
             }
