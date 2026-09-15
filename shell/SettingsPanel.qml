@@ -77,7 +77,15 @@ Rectangle {
     // listings that genuinely have a second line to draw: keybindings, where
     // the sub is what the bind does, and the font groups, where it is the
     // variant count.
-    readonly property int rowH: panel.rows.some(r => r.kind !== "menu" && (r.sub || "") !== "")
+    //
+    // The thumbnail measure comes first and wins outright: a wallpaper row is
+    // a picture with a name beside it, and 16:9 at any height that fits a
+    // 44px row is a letterbox slit. Driven off the ROW rather than off the
+    // page so a wallpaper found by a root search is as tall as one found by
+    // walking there — Settings.search carries `thumb` through for that.
+    readonly property int rowH: panel.rows.some(r => (r.thumb || "") !== "")
+                                ? Theme.rowThumb
+                              : panel.rows.some(r => r.kind !== "menu" && (r.sub || "") !== "")
                                 ? Theme.rowTall : Theme.rowHeight
 
     // What used to live here: `jumping`, a flag set for the one frame of a page
@@ -719,7 +727,63 @@ Rectangle {
                     anchors.rightMargin: 14
                     spacing: 12
 
+                    // ── the wallpaper thumbnail ────────────────────────────
+                    // In the icon slot's place, not beside it: on these rows
+                    // the picture IS the icon, the same way the Fonts page's
+                    // own label is its preview. Behind a Loader so that every
+                    // other listing on this card — 276 font families, 265
+                    // firewall services — does not build an Image per row for
+                    // something that can never be seen.
+                    //
+                    // Square corners, deliberately. Rounding an Image means
+                    // either clip (which is a rectangle whatever the radius,
+                    // so it does nothing here) or a MultiEffect mask, and a
+                    // mask is an offscreen render target per row — exactly the
+                    // cost the ListView's own `clip` comment above exists to
+                    // avoid on the balanced power profile. A photograph with
+                    // corners is not worth a framebuffer each.
+                    Loader {
+                        active: (row.modelData.thumb || "") !== ""
+                        // A RowLayout drops an invisible child from the layout
+                        // entirely, so this slot takes no space at all on the
+                        // pages that have no thumbnails — and the glyph slot
+                        // below does the same in reverse. Exactly one of the
+                        // two is ever laid out.
+                        visible: active
+                        Layout.preferredWidth: Theme.thumbWidth
+                        Layout.preferredHeight: Theme.thumbHeight
+                        Layout.alignment: Qt.AlignVCenter
+                        sourceComponent: Component {
+                            Rectangle {
+                                // The plate shows while the image decodes and
+                                // stays under a file Qt cannot read, so a row
+                                // that fails to draw still has a shape and its
+                                // name rather than a hole in the column.
+                                color: Theme.alpha(Theme.text, 0.08)
+                                Image {
+                                    anchors.fill: parent
+                                    source: "file://" + row.modelData.thumb
+                                    // Cropped, not fitted: these are 16:9 and
+                                    // the slot is 72x40, so a fit would letterbox
+                                    // the odd 4:3 or vertical one into a slot
+                                    // it shares a column with.
+                                    fillMode: Image.PreserveAspectCrop
+                                    smooth: true
+                                    asynchronous: true
+                                    // Capped, or Qt decodes and holds a 9.6MB
+                                    // JPEG at its intrinsic 4K for a 72px slot
+                                    // — eighteen of those is the whole listing
+                                    // resident in video memory. 2x the slot,
+                                    // for this display's scale.
+                                    sourceSize.width:  Theme.thumbWidth * 2
+                                    sourceSize.height: Theme.thumbHeight * 2
+                                }
+                            }
+                        }
+                    }
+
                     Item {
+                        visible: (row.modelData.thumb || "") === ""
                         Layout.preferredWidth: Theme.iconSlot
                         Layout.preferredHeight: Theme.iconSlot
                         Text {

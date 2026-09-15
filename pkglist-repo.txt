@@ -110,6 +110,7 @@ power-profiles-daemon
 python-pipx
 qemu-desktop
 qt5-wayland
+qt6-imageformats
 qt6-wayland
 quickshell
 r
@@ -129,6 +130,7 @@ tailscale
 tealdeer
 terminus-font
 tesseract-data-eng
+tlp
 tmux
 tree
 ttf-hack-nerd

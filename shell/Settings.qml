@@ -65,9 +65,15 @@ QtObject {
                 { id: "remove",  icon: "󰩺", title: "Remove",  kind: "menu",   sub: "packages, web apps" },
                 { id: "update",  icon: "󰚰", title: "Update",  kind: "action" },
                 { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, defaults" },
-                { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "palette, GTK theme, icons, fonts" },
+                { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "palette, wallpaper, GTK theme, icons, fonts" },
                 { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
-                { id: "about",   icon: "󰋼", title: "About",   kind: "action" }
+                // Last, deliberately, and the only row here that is not about
+                // configuring the desktop: everything behind it acts on the
+                // MACHINE — what it is, how hard it runs, and turning it off.
+                // About moved in here from the root for that reason; it was
+                // the one root row that answered a question rather than
+                // changing something.
+                { id: "system",  icon: "󰘚", title: "System",  kind: "menu",   sub: "power menu, power profile, about" }
             ]
         },
 
@@ -176,6 +182,11 @@ QtObject {
             title: "Theme", icon: "󰏘",
             rows: [
                 { id: "palette", icon: "󰸌", title: "Palette", kind: "menu", sub: "the colours every surface reads" },
+                // Directly under Palette because the two are one decision made
+                // twice over: under the "pywal" palette the wallpaper IS the
+                // colours (palette.sh wallpaper-changed), and under a chosen
+                // palette it is the ground those colours were picked to sit on.
+                { id: "wallpaper", icon: "󰸉", title: "Wallpapers", kind: "menu", sub: "the image behind everything" },
                 { id: "gtk",   icon: "󰏘", title: "GTK theme", kind: "menu", sub: "widget style for GTK apps" },
                 { id: "icons", icon: "󰋩", title: "Icons",     kind: "menu", sub: "icon theme" },
                 { id: "fonts", icon: "󰛖", title: "Fonts",     kind: "menu", sub: "the font every shell draws with" }
@@ -206,6 +217,95 @@ QtObject {
         // collapse behind one door in a list short enough to read whole.
         "theme/palette": { title: "Palette", icon: "󰸌", list: "palettes",
                            pref: "PALETTE", noGroup: true, swatch: true },
+
+        // ── Wallpapers ────────────────────────────────────────────────────
+        // This was finder's own wallpaper MODE until 2026-09-15 — ALT+W, its
+        // own full-screen result list with a preview pane beside it. It is a
+        // settings page now, on Ahaan's instruction, and the keybind is gone
+        // with it (hyprland.lua). Nothing about picking a wallpaper was
+        // search-shaped: it is a choice out of a fixed set of images, which is
+        // what every other listing on this card already is.
+        //
+        // Two pages rather than one list, because the question has two forms
+        // and they want different answers. "By palette" is the shortlist that
+        // goes with the colours in force; "All" is everything, for when the
+        // palette is about to change anyway or the answer is simply "that one".
+        //
+        // They also read two different COLLECTIONS as of 2026-09-15, and that
+        // is Ahaan's call rather than an implementation detail: his own
+        // ~/Pictures/wallpapers appears under "All" only, and "By palette"
+        // chooses from the omarchy backgrounds — one set per theme, and the
+        // theme names are the palette names. Before that both pages read the
+        // same eighteen images, most of them near-black, so the shortlist came
+        // back as the same eight whatever palette was in force.
+        //
+        // scripts/wallpapers.sh is the whole back end and carries the matching
+        // rule, which directory is which, and the fetch. This file knows
+        // nothing about colour distance and nothing about where an image is.
+        "theme/wallpaper": {
+            title: "Wallpapers", icon: "󰸉",
+            rows: [
+                { id: "palette", icon: "󰸌", title: "By palette", kind: "menu",
+                  sub: "backgrounds chosen for the colours in force" },
+                { id: "all",     icon: "󰋫", title: "All",        kind: "menu",
+                  sub: "your own wallpapers, then every downloaded one" }
+            ]
+        },
+
+        // `thumbs`: the row draws the file itself. Same decision as the Fonts
+        // page's renderInOwnFont and the Palette page's swatch — a list of
+        // eighteen filenames is a list of smudges, and the one thing anybody
+        // is choosing between here is what the images LOOK like.
+        //
+        // noGroup, for the reason the palette page sets it: grouping folds
+        // VARIANTS of one thing behind a text door, and two files sharing a
+        // leading word is a coincidence of naming. Behind a door is also
+        // exactly the wrong place for a picture.
+        //
+        // noSearch on the by-palette page ONLY, and it is about duplicates
+        // rather than about reach: the two pages list the same files, so
+        // without it every wallpaper that matches the palette answered a root
+        // search twice, once per page. "All" holds every one of them, so
+        // nothing becomes unfindable.
+        "theme/wallpaper/palette": { title: "By palette", icon: "󰸌", list: "wallpapers-by-palette",
+                                     thumbs: true, noGroup: true, noSearch: true, defer: true, width: 520 },
+        "theme/wallpaper/all":     { title: "All", icon: "󰋫", list: "wallpapers",
+                                     thumbs: true, noGroup: true, defer: true, width: 520 },
+
+        // ── System ────────────────────────────────────────────────────────
+        // The power menu and the power profiles were two finder MODES of their
+        // own and they still are — SUPER+Escape and SUPER+B open them without
+        // going through this card, which Ahaan asked to keep. What is new is
+        // that they are also reachable by walking here, which is where anyone
+        // looks for them who does not already know the key.
+        //
+        // Both pages' rows come from PowerMenu.items / PowerProfiles.items
+        // rather than being written out again, so the settings page and the
+        // keybind surface cannot list different things — the same rule the
+        // rest of this file keeps by leaving listings to scripts.
+        "system": {
+            title: "System", icon: "󰘚",
+            rows: [
+                { id: "power",        icon: "󰐥", title: "Power menu",    kind: "menu",
+                  sub: "sleep, hibernate, shut down, reboot, log out" },
+                { id: "powerprofile", icon: "󰾅", title: "Power profile", kind: "menu",
+                  sub: "how hard the machine is allowed to run" },
+                { id: "about",        icon: "󰋼", title: "About",         kind: "action" }
+            ]
+        },
+
+        "system/power": {
+            title: "Power menu", icon: "󰐥",
+            rows: PowerMenu.items.map(p => ({ id: p.key, icon: p.icon, title: p.label, kind: "action" }))
+        },
+
+        // "choice" and not "action": one of the three is always in force, and
+        // that is what the tick on a choice row says. _decorate is what marks
+        // it, from PowerProfiles.current.
+        "system/powerprofile": {
+            title: "Power profile", icon: "󰾅",
+            rows: PowerProfiles.items.map(p => ({ id: p.value, icon: p.icon, title: p.label, kind: "choice" }))
+        },
 
         "theme/fonts": { title: "Fonts",     icon: "󰛖", list: "fonts",  pref: "UI_FONT", renderInOwnFont: true, width: 560 },
         "theme/icons": { title: "Icons",     icon: "󰋩", list: "icons",  pref: "ICON_THEME" },
@@ -489,6 +589,42 @@ QtObject {
                          trail: "all ten slots are full" }
             return r
         }
+        // Which of the three is in force. Read straight from PowerProfiles
+        // rather than cached here, so the tick is right even when something
+        // else moved the profile — the battery panel's own switcher does, and
+        // powerprofilesctl from a terminal does too.
+        if (key === "system/powerprofile")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                     value: r.id, active: r.id === PowerProfiles.current }
+
+        // And the row above it says which, so the page only has to be opened
+        // to CHANGE the profile rather than to find out what it is.
+        if (key === "system" && r.id === "powerprofile") {
+            const hit = PowerProfiles.items.filter(p => p.value === PowerProfiles.current)
+            if (hit.length > 0)
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: r.sub, trail: hit[0].label }
+            return r
+        }
+
+        // How many the palette actually keeps — the one thing that says whether
+        // the shortlist is worth opening.
+        //
+        // A bare count and NOT "9 of 110", which is what this used to say. The
+        // two pages read different collections now, so the "All" total is not
+        // the set this page chose from — it includes Ahaan's own images, which
+        // are never ranked. A denominator that is not the denominator is worse
+        // than none. The listing has to have landed; until it does the row says
+        // nothing rather than a wrong number.
+        if (key === "theme/wallpaper" && r.id === "palette") {
+            const hit = root.lists["theme/wallpaper/palette"]
+            if (hit !== undefined && hit.length > 0)
+                return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                         sub: r.sub, trail: hit.length === 1 ? "1 match"
+                                                            : hit.length + " matches" }
+            return r
+        }
+
         if (r.kind !== "toggle") return r
         const on = (key === "security/firewall" && r.id === "enabled")
                      ? (root.fwState.AVAILABLE === undefined ? null
@@ -516,6 +652,12 @@ QtObject {
         const out = []
         for (const key in root.pages) {
             if (scopeKey !== "" && key !== scopeKey && key.indexOf(scopeKey + "/") !== 0) continue
+            // A page that holds the same rows as another one answers nothing
+            // extra and doubles every hit — see the by-palette wallpaper page.
+            // Only ever skipped as a NEIGHBOUR, never as the scope: typing on
+            // that page has to search that page, or the one list on this card
+            // you cannot filter would be the longest one.
+            if (key !== scopeKey && root.pages[key].noSearch) continue
             // The FLAT listing, not the grouped view: grouping hides variants
             // behind a menu row, and search skips menu rows — so searching for a
             // variant by name would have found nothing at all.
@@ -535,7 +677,24 @@ QtObject {
                     id: r.id, icon: r.icon, iconFont: r.iconFont || "",
                     title: r.title, kind: r.kind,
                     value: r.value, detail: r.detail, active: r.active === true,
-                    font: r.font, pageKey: key, trail: path,
+                    font: r.font, pageKey: key,
+                    // The trailing slot is the page a hit lives on — except on
+                    // a wallpaper, where the row's own trail is its THEME and
+                    // that is the only thing separating one hit from another.
+                    // Searching "omarchy" matches twenty-two files all named
+                    // omarchy, one per theme; with the path there instead they
+                    // came back as twenty-two identical rows, and inside the
+                    // page (where the path is empty, being the scope) as
+                    // twenty-two rows with no annotation at all. Measured on
+                    // screen, which is the only way this was ever going to be
+                    // noticed. Ahaan's own images carry no theme, so they fall
+                    // back to the path and still say where they are.
+                    trail: ((r.thumb || "") !== "" && (r.trail || "") !== "") ? r.trail : path,
+                    // A wallpaper hit keeps its picture, for the reason the
+                    // palette hit below keeps its dots: the thumbnail is the
+                    // row's identity, not secondary text competing with the
+                    // trailing slot.
+                    thumb: r.thumb || "",
                     // A palette hit keeps its three dots. The rule one line
                     // below — results carry no subtitle, the trailing slot is
                     // the page they live on — is about two kinds of secondary
@@ -549,9 +708,11 @@ QtObject {
                     // subtitle there would be two kinds of secondary text on
                     // one row. A keybind is the exception, because its
                     // subtitle is not description, it is the ANSWER: searching
-                    // "wall" and being shown a bare "ALT + W" tells you what is
-                    // bound and not what it does, which is the whole reason
+                    // "lock" and being shown a bare "SUPER + L" tells you what
+                    // is bound and not what it does, which is the whole reason
                     // this page parses the config instead of asking hyprctl.
+                    // (The example used to be "wall" / "ALT + W"; that bind is
+                    // gone — the wallpaper picker is a page on this card now.)
                     sub: r.kind === "keybind" ? (r.sub || "") : "",
                     // Title matches beat subtitle/detail matches, and an earlier
                     // match beats a later one — otherwise a 276-row font list
@@ -582,6 +743,14 @@ QtObject {
     function prefetchAll() {
         root.lists = ({})
         root._queue = []
+        // Listings marked `defer` go to the BACK of the queue rather than
+        // being skipped. The two wallpaper pages are the only ones, and the
+        // reason is the cold cache: wallpapers.sh quantises every image the
+        // first time it sees it (~3s for eighteen, once, then cached on mtime),
+        // and _pump runs one listing at a time. Queued in tree order that stall
+        // would sit in front of the fonts listing, which is the one search
+        // actually needs early. Behind it, nothing waits on it.
+        const deferred = []
         for (const key in root.pages) {
             const pg = root.pages[key]
             // The firewall listings are NOT prefetched. They are only meaningful
@@ -593,8 +762,11 @@ QtObject {
             // both cost a subprocess that talks to a daemon — fetching them
             // at open is what made three firewall.sh calls happen every
             // single time the menu was raised.
-            if (pg.list && !pg.fw && !pg.fprint) root._queue.push(key)
+            if (!pg.list || pg.fw || pg.fprint) continue
+            if (pg.defer) deferred.push(key)
+            else          root._queue.push(key)
         }
+        root._queue = root._queue.concat(deferred)
         root._pump()
     }
 
@@ -603,6 +775,10 @@ QtObject {
         // (or by the previous visit) is reflected rather than remembered.
         if (key === "security/firewall") root.refreshFirewall()
         if (key === "security" || key === "security/fingerprints") root.refreshFingerprints()
+        // Same reason: the battery panel's own switcher and powerprofilesctl
+        // from a terminal both move this behind our back, so the page reads it
+        // rather than trusting what it last saw.
+        if (key === "system" || key === "system/powerprofile") PowerProfiles.refresh()
         // A group page has no listing of its own; its parent's is what matters,
         // and by the time a group is visible that has already loaded.
         const p = root.pages[key]
@@ -628,6 +804,8 @@ QtObject {
                   : (p.list === "fw-zones")        ? q + "/firewall.sh zones"
                   : (p.list === "fw-services")     ? q + "/firewall.sh services"
                   : (p.list === "fingerprints")    ? q + "/fingerprint.sh list"
+                  : (p.list === "wallpapers")      ? q + "/wallpapers.sh list all"
+                  : (p.list === "wallpapers-by-palette") ? q + "/wallpapers.sh list by-palette"
                   :                                  q + "/ui-prefs.sh list " + p.list
         listProc.command = ["bash", "-c", cmd + " 2>/dev/null"]
         listProc.running = true
@@ -796,6 +974,22 @@ QtObject {
                 // and never a format — and empty everywhere else, which is what
                 // keeps the delegate's swatch row out of the layout entirely.
                 swatch: p.swatch ? String(f[2] || "").split(",").filter(c => c !== "") : [],
+                // The wallpaper pages' preview, and it is the row's own value:
+                // wallpapers.sh lists absolute paths, which is both what
+                // apply-wallpaper.sh takes and what Qt can draw directly.
+                // Empty everywhere else, which is what keeps the delegate's
+                // Image out of the other listings entirely — a Loader gated on
+                // this rather than an invisible Image per row on a 276-family
+                // font list.
+                thumb: p.thumbs ? (f[0] || "") : "",
+                // The third column is the THEME on a wallpaper page, and it
+                // goes to the trailing slot rather than to `detail`, which
+                // nothing draws. It is the one thing the filename cannot say:
+                // four themes ship a background called "omarchy" and nine name
+                // their first one "1-<something>", so without it the list has
+                // repeated labels and no way to tell them apart. Empty for
+                // Ahaan's own images, which belong to no theme.
+                trail: p.thumbs ? (f[2] || "") : "",
                 // The current value is shown by filling the row, the way the
                 // taskbar's panels mark a connected network — not by a "current"
                 // subtitle, which would break the no-redundant-subtext rule and
@@ -822,6 +1016,9 @@ QtObject {
         // row's subtitle is a live count, so it has to be known before the
         // user ever walks into that page.
         root.refreshFingerprints()
+        // Cheap for the same reason (one `powerprofilesctl get`), and the
+        // System page's own row names the profile in force.
+        PowerProfiles.refresh()
     }
 
     // KEY="value" lines from firewall.sh status — every one of them an
@@ -913,6 +1110,24 @@ QtObject {
                              (allow ? "allow " : "block ") + root._q(row.value))
                 return false
             }
+            // A wallpaper is not a ui-prefs preference either: it is a state
+            // file plus a whole colour pipeline, and apply-wallpaper.sh has
+            // always been the one thing that runs it. Wallpapers.qml is the
+            // caller, exactly as it was from finder's wallpaper mode — this
+            // page replaced that mode's list, not its plumbing.
+            if (fp && fp.thumbs) {
+                Wallpapers.apply(row.value)
+                root._markWallpaper(row.value)
+                return false
+            }
+        }
+
+        // No script and no re-read: PowerProfiles.set() moves `current` itself,
+        // and _decorate reads the tick straight off it — so the mark lands in
+        // the same frame as the press.
+        if (row.kind === "choice" && key === "system/powerprofile") {
+            PowerProfiles.set(row.value || row.id)
+            return false
         }
 
         if (row.kind === "choice") {
@@ -964,6 +1179,54 @@ QtObject {
         // tore the box down in the same frame it was created — which is why the
         // row appeared to do nothing at all.
         return root._action(key === "" ? row.id : key + "/" + row.id)
+    }
+
+    // ── the wallpaper that is up ──────────────────────────────────────────
+    // Moves the "current" mark in BOTH cached wallpaper listings rather than
+    // re-running the script, for the reason the choice rows above patch in
+    // place: re-fetching empties the ListView and repopulates it a moment
+    // later, which reads as the menu glitching. Nothing else about either
+    // listing can have changed yet — the only thing that moved is which image
+    // is up, and we are the ones who moved it.
+    //
+    // The by-palette listing is then re-read on a delay, and that is NOT the
+    // same thing. Under the "pywal" palette the colours are derived from the
+    // wallpaper, so picking one changes the very thing the shortlist is
+    // matched against — the page has to be recomputed, not patched. Under a
+    // chosen palette nothing moves and the re-read returns what is already
+    // there, which is cheap enough (a cache hit and one awk) not to be worth
+    // a branch that asks which palette is in force.
+    readonly property var _wallKeys: ["theme/wallpaper/all", "theme/wallpaper/palette"]
+
+    function _markWallpaper(path) {
+        const next = ({})
+        for (const k in root.lists) next[k] = root.lists[k]
+        for (let i = 0; i < root._wallKeys.length; i++) {
+            const k = root._wallKeys[i]
+            if (next[k] === undefined) continue
+            next[k] = next[k].map(r => Object.assign({}, r, { active: r.value === path }))
+        }
+        root.lists = next
+        for (let j = 0; j < root._wallKeys.length; j++)
+            if (root.lists[root._wallKeys[j]] !== undefined)
+                root._setGrouped(root._wallKeys[j], root._regroup(root._wallKeys[j]))
+        wallSettle.restart()
+    }
+
+    property var _wallSettle: Timer {
+        id: wallSettle
+        // apply-wallpaper.sh writes the state file, then palette.sh runs `wal`
+        // over the image and reloads the compositor. Measured end to end on
+        // this machine at a little under a second; 1400ms is that with room,
+        // and re-reading earlier ranked the wallpapers against the palette
+        // being replaced — which is worse than not re-reading at all, because
+        // the page would look like it had answered.
+        interval: 1400
+        repeat: false
+        onTriggered: {
+            if (root.lists["theme/wallpaper/palette"] === undefined) return
+            root.refresh("theme/wallpaper/palette")
+        }
     }
 
     // Called by the password box once PAM has accepted the password in its
@@ -1224,6 +1487,21 @@ QtObject {
 
     // Returns true when the menu should close after the action.
     function _action(path) {
+        // Sleep, hibernate, shut down, reboot, log out. Matched by PREFIX and
+        // not by five cases in the switch below, because the five are
+        // PowerMenu.items — writing them out here would be the second copy of
+        // that list this page exists to avoid, and a sixth action added there
+        // would arrive as a row that does nothing.
+        //
+        // PowerMenu.run() is the same call SUPER+Escape makes through finder's
+        // powermenu mode, because it IS that mode's back end. Closing the menu
+        // afterwards is right for all five: four end the session, and the
+        // fifth leaves nothing to come back to.
+        if (path.indexOf("system/power/") === 0) {
+            PowerMenu.run(path.substring("system/power/".length))
+            return true
+        }
+
         switch (path) {
         // hold = true for the ones that exit the moment they finish. pacman
         // prints what it did and pkg-install.sh then returns, which closes the
@@ -1235,7 +1513,7 @@ QtObject {
         case "remove/pkg":      root._term("pkg-remove",      "pkg-remove.sh",      true);  break
         case "remove/webapp":   root._term("webapp-remove",   "webapp-remove.sh",   false); break
         case "update":          root._term("system-update",   "system-update.sh",   true);  break
-        case "about":           root._term("about",           "about-system.sh",    false); break
+        case "system/about":    root._term("about",           "about-system.sh",    false); break
 
         case "security/passwd":
             root.changePasswordRequested()

@@ -37,7 +37,7 @@ ONLY=""
 SKIP=""
 LOGFILE="/tmp/hyprahaan-install-$(date +%Y%m%d-%H%M%S).log"
 
-ALL_PHASES="preflight packages configs hardware nvidia apps usersystemd system network virt theming hibernation fingerprint verify"
+ALL_PHASES="preflight packages configs hardware nvidia apps usersystemd system network virt theming hibernation snapshots fingerprint verify"
 
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
@@ -1325,6 +1325,81 @@ phase_hibernation() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
+# 13b · SNAPSHOTS — pre-update system snapshots, on btrfs only
+# ═══════════════════════════════════════════════════════════════════════
+# Sits beside hibernation because it is the other phase whose subject is the
+# disk and the bootloader, and it follows the same shape: a standalone script
+# owns every decision and every side effect, this phase only decides whether to
+# offer it. scripts/setup-snapshots.sh --dry-run answers that — exit 0 means
+# this machine can, exit 1 means it cannot and has printed why.
+#
+# IT WILL SKIP ON MOST MACHINES, and that is correct rather than a failure. The
+# machine this repo was written on has an ext4 root, where filesystem snapshots
+# do not exist at any price: snapper needs btrfs subvolumes, and a limine entry
+# for a snapshot works by pointing at a subvolume. There is nothing to point at
+# on ext4, so the phase says so and moves on.
+#
+# The btrfs half has been exercised only through install/tests/
+# setup-snapshots-cases.sh, which fakes the layout and drives all nine branches
+# of the decision tree. Nothing here has been watched producing a bootable
+# snapshot, because that needs a btrfs root to watch it on — see the header of
+# setup-snapshots.sh, which says the same thing where somebody editing it will
+# see it.
+phase_snapshots() {
+    phase "System snapshots"
+
+    local sh="$HOME/.config/scripts/setup-snapshots.sh"
+    [ -x "$sh" ] || { skip "setup-snapshots.sh not deployed"; return 0; }
+
+    if [ "$NO_ROOT" = 1 ]; then skip "--no-root given"; return 0; fi
+
+    # The dry run is the gate. It prints the reason itself on refusal, so
+    # nothing here has to guess at one or repeat it.
+    if ! "$sh" --dry-run; then
+        skip "snapshots not available on this machine (see above)"
+        return 0
+    fi
+
+    if [ "$DRY_RUN" = 1 ]; then
+        info "(--dry-run: the plan above is what a real run would do)"
+        return 0
+    fi
+
+    if ! ask_yn "Set up pre-update snapshots? (installs snapper + snap-pac)" y; then
+        skip "snapshots not configured. Run it later with:"
+        skip "  sudo $sh"
+        return 0
+    fi
+
+    # The AUR half is done HERE and not in the script, and the split is not
+    # arbitrary: makepkg refuses to run as root, and that script runs as root.
+    # This phase is already the unprivileged side with yay in scope, so the one
+    # package that must be built as a user is built by the one caller that can.
+    if ! pacman -Q limine-snapper-sync >/dev/null 2>&1; then
+        if have yay || { bootstrap_yay && have yay; }; then
+            aur_install limine-snapper-sync \
+                || warn "limine-snapper-sync failed to build — snapshots will still"
+        else
+            warn "no yay, so limine-snapper-sync was not installed"
+        fi
+    fi
+
+    if [ "$ASSUME_YES" = 1 ]; then
+        run sudo -E "$sh" --yes
+    else
+        run sudo -E "$sh"
+    fi
+
+    # Deliberately not reported as "done". The one thing that matters about a
+    # snapshot is whether you can boot into it, and that cannot be known until
+    # the machine has been rebooted and the entry chosen. Saying "configured"
+    # here would be the same false confidence this whole feature exists to
+    # avoid.
+    warn "not proven until you reboot and boot a snapshot from the limine menu."
+    warn "Do that once, deliberately, before relying on it."
+}
+
+# ═══════════════════════════════════════════════════════════════════════
 # 14 · FINGERPRINT — enrolment, if there is a reader
 # ═══════════════════════════════════════════════════════════════════════
 # Runs late on purpose: it is the one phase that needs the user to physically
@@ -1777,6 +1852,38 @@ phase_verify() {
         bad "mimeapps.list missing — file associations will be unset"
     fi
 
+    # ── snapshots ──────────────────────────────────────────────────────
+    # Gated on the filesystem, not on the packages: on an ext4 root none of
+    # this is expected to exist and reporting it missing would be reporting a
+    # machine as broken for being what it is.
+    if [ "$(findmnt -no FSTYPE / 2>/dev/null)" = btrfs ]; then
+        check "setup-snapshots.sh is deployed and executable" \
+              "[ -x \"$HOME/.config/scripts/setup-snapshots.sh\" ]"
+        if have snapper; then
+            check "snapper has a config for root" "[ -f /etc/snapper/configs/root ]"
+            # NUMBER_LIMIT is what actually enforces "keep three restore
+            # points"; a config with cleanup off grows without bound and the
+            # first anyone hears of it is a full disk.
+            check "snapshot cleanup is enabled" \
+                  "grep -q '^NUMBER_CLEANUP=\"yes\"' /etc/snapper/configs/root"
+            check "snapper-cleanup.timer is enabled" "systemctl is-enabled snapper-cleanup.timer"
+            # snap-pac IS the "snapshot before every update" half. snapper
+            # without it takes snapshots only when asked, which is not what
+            # this was set up for, and nothing else would say so.
+            check "snap-pac installed (the pre-update hook)" "pacman -Q snap-pac"
+        else
+            warn "root is btrfs but snapper is not installed — run: install.sh --only snapshots"
+        fi
+        if pacman -Q limine-snapper-sync >/dev/null 2>&1; then
+            check "limine-snapper-sync.service is enabled" \
+                  "systemctl is-enabled limine-snapper-sync.service"
+        else
+            warn "limine-snapper-sync absent: snapshots exist but will not appear at boot"
+        fi
+    else
+        skip "snapshots: root is $(findmnt -no FSTYPE / 2>/dev/null || echo unknown), not btrfs — not applicable"
+    fi
+
     # ── virtualisation ─────────────────────────────────────────────────
     if [ "${HW_KVM:-0}" = 1 ] && have virsh; then
         check "libvirt qemu daemon socket enabled" "systemctl is-enabled virtqemud.socket"
@@ -1791,6 +1898,23 @@ phase_verify() {
               "[ \"\$(grep -cE '^(user|group) = \"qemu\"' /etc/libvirt/qemu.conf 2>/dev/null || echo 0)\" = 2 ]"
         # virsh against qemu:///system does need root. Rather than report a
         # false failure when sudo cannot authenticate non-interactively, say so.
+        # virbr0 is the default NAT network's bridge, and `ip link` needs no
+        # privileges at all — so this is the one signal about that network
+        # that a verify run can always get. The sudo-gated pair below is
+        # better (it distinguishes "active" from "autostarts"), but it is
+        # SKIPPED whenever sudo cannot authenticate non-interactively, which
+        # is every `--only verify` run made without priming. A check that
+        # usually does not run is not coverage.
+        #
+        # NO-CARRIER on this bridge is normal and not a fault: it has no
+        # carrier until a guest attaches to it.
+        if ip link show virbr0 >/dev/null 2>&1; then
+            chk "libvirt default network is up (virbr0 present)"
+        else
+            warn "virbr0 is absent — the default NAT network is not running,"
+            warn "so a new VM would come up with no networking"
+        fi
+
         if sudo -n true 2>/dev/null; then
             if sudo -n virsh net-info default >/dev/null 2>&1; then
                 check "libvirt default network autostarts" \
@@ -1854,6 +1978,36 @@ phase_verify() {
         fi
 
         check "prime-run available" "have prime-run"
+
+        # ── the three traps that had no check in THIS phase ─────────────
+        # All three are documented in the system map and guarded in
+        # phase_nvidia — but phase_nvidia only runs when there is an NVIDIA
+        # card to set up, and `--only verify` never ran any of them. A guard
+        # that only fires in the phase that created the thing cannot catch the
+        # thing drifting afterwards, which is what verify is for.
+
+        # The black screen that actually happened: AQ_DRM_DEVICES is
+        # COLON-separated and a by-path name is full of colons, so aquamarine
+        # finds no GPU and Hyprland aborts at startup. greetd then crash-loops
+        # — measured at 7 sessions in 21s — and the way back is a TTY.
+        check "hyprland.lua pins the iGPU by cardN, not by a by-path name" \
+              "[ \"\$(grep -c 'AQ_DRM_DEVICES.*by-path' \"$HOME/.config/hypr/hyprland.lua\" 2>/dev/null || true)\" = 0 ]"
+
+        # The offload variables belong INSIDE prime-run, per application.
+        # Session-wide they aim the whole desktop at the dGPU, which is the
+        # takeover this entire arrangement exists to prevent — and it would
+        # look like "everything is slow and the battery is gone", not like a
+        # configuration error.
+        check "offload vars are not set session-wide" \
+              "[ \"\$(grep -lE '__NV_PRIME_RENDER_OFFLOAD|__GLX_VENDOR_LIBRARY_NAME|GBM_BACKEND' \"$HOME/.config/hypr/hyprland.lua\" /etc/environment 2>/dev/null | wc -l)\" = 0 ]"
+
+        # MODULES=() carrying an nvidia entry is what would put the driver in
+        # the initramfs and take the display before the pin can apply. Checked
+        # at the cause rather than with `lsinitcpio -l | grep -c nvidia`, which
+        # reads 663 on this laptop and is not a fault — those are nouveau's
+        # firmware blobs, not kernel modules.
+        check "no nvidia module is forced into the initramfs" \
+              "[ \"\$(grep -cE '^MODULES=.*nvidia' /etc/mkinitcpio.conf 2>/dev/null || true)\" = 0 ]"
         local nu
         for nu in nvidia-suspend nvidia-resume nvidia-hibernate nvidia-powerd; do
             check "$nu.service is not enabled" \
@@ -1933,12 +2087,21 @@ main() {
         esac
         # Any single phase still needs the hardware facts in scope.
         [ "$ONLY" = preflight ] || detect_all
-        # plugins is in this list because hyprpm shells out to sudo itself —
-        # it writes to root-owned /var/cache/hyprpm. In a full run the preflight
-        # prime covers it, but `--only plugins` skipped priming and hyprpm's own
-        # prompt then had no tty to read from, so `hyprpm enable` failed silently
-        # and the phase reported the plugin as not enabled. Measured 2026-09-02.
-        case "$ONLY" in system|network|virt|hibernation|packages|nvidia) sudo_prime ;; esac
+        # Every phase here shells out to sudo somewhere, and `--only <phase>`
+        # skips the preflight prime that a full run would have done. Without
+        # this, a sudo deep inside a phase finds no tty to prompt on and fails
+        # silently — which is how `hyprpm enable` once reported a plugin as
+        # simply not enabled, with no error anywhere. Measured 2026-09-02.
+        #
+        # That example is history: `plugins` used to be in this list and there
+        # is no plugins phase any more. hyprbars was the only plugin this repo
+        # ever configured and it is gone — out of hyprland.lua (whose PLUGINS
+        # block is now empty, with the rollback recorded in place), out of
+        # scripts/, out of the settings menu, and the configs phase actively
+        # removes its three leftover scripts. The REASON is what is kept here,
+        # because it applies to every phase named below and will apply to the
+        # next one added.
+        case "$ONLY" in system|network|virt|hibernation|snapshots|packages|nvidia) sudo_prime ;; esac
     fi
 
     want_phase preflight   && phase_preflight
@@ -1953,6 +2116,7 @@ main() {
     want_phase virt        && phase_virt
     want_phase theming     && phase_theming
     want_phase hibernation && phase_hibernation
+    want_phase snapshots   && phase_snapshots
     want_phase fingerprint && phase_fingerprint
     want_phase verify      && phase_verify
 

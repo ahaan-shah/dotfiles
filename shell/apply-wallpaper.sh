@@ -2,8 +2,10 @@
 # apply-wallpaper.sh <path-to-existing-image>
 #
 # Sets the desktop wallpaper, and asks scripts/palette.sh what that should do
-# to the colours. Run from finder's wallpaper mode (ALT+W, Wallpapers.qml) and
-# by install.sh on a fresh machine.
+# to the colours. Run from the settings menu's Theme -> Wallpapers pages (via
+# Wallpapers.qml) and by install.sh on a fresh machine. It was finder's ALT+W
+# wallpaper mode that called it until 2026-09-15; the caller moved, the call
+# did not.
 #
 # ── This file used to be 180 lines, and hyprpaper was all of them ─────────
 # It wrote ~/.config/hypr/hyprpaper.conf, killed hyprpaper, waited for the old

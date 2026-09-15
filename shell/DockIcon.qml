@@ -62,6 +62,25 @@ Item {
 
     // ── Running / active state (queried from WindowTracker) ───────
     readonly property var   matchedWindows: WindowTracker.windowsFor(windowClass, "")
+    // ── what the running dots are drawn with ──────────────────────────────
+    // The palette's FOREGROUND, not white. The dots were hardcoded white, which
+    // is invisible on a light palette: the pill under them is color0 at 0.82
+    // alpha (see Dock.qml), and on Catppuccin Latte or White that is a
+    // near-white ground with white dots on it — Ahaan sent a screenshot of
+    // exactly that.
+    //
+    // foreground is the right answer rather than a nicer-looking one, because
+    // background-against-foreground is the ONE pair pywal actually guarantees is
+    // legible: every palette here is built so that text on the ground can be
+    // read, and the pill IS the ground. The accent (color9) was the tempting
+    // alternative — it is what marks "active" everywhere else in this desktop —
+    // but nothing promises it contrasts with color0, and a dot nobody can see is
+    // the bug being fixed.
+    //
+    // Declared as a `color` rather than read inline: WalColors exposes strings,
+    // and .r/.g/.b below need the coerced type.
+    readonly property color dotColor: WalColors.foreground
+
     readonly property bool  isRunning:      matchedWindows.length > 0
     readonly property bool  isActive:       matchedWindows.length > 0 &&
                                             matchedWindows.some(w => w.address === WindowTracker.activeAddress)
@@ -209,7 +228,11 @@ Item {
             width:  4
             height: 4
             radius: 2
-            color:  root.isActive ? "white" : Qt.rgba(1, 1, 1, 0.50)
+            // Full strength when this app is focused, half when it is merely
+            // running — the same two-step the white version had, so only the
+            // hue changes and the "which one is focused" reading does not.
+            color:  root.isActive ? root.dotColor
+                                  : Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.50)
             anchors.verticalCenter: parent.verticalCenter
 
             Behavior on color { ColorAnimation { duration: 150 } }
@@ -218,14 +241,14 @@ Item {
         Rectangle {
             visible: root.matchedWindows.length >= 2
             width:  4; height: 4; radius: 2
-            color:  Qt.rgba(1, 1, 1, 0.55)
+            color:  Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.55)
             anchors.verticalCenter: parent.verticalCenter
         }
         // Dot 3 — shown when 3 windows open
         Rectangle {
             visible: root.matchedWindows.length >= 3
             width:  4; height: 4; radius: 2
-            color:  Qt.rgba(1, 1, 1, 0.55)
+            color:  Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.55)
             anchors.verticalCenter: parent.verticalCenter
         }
     }
@@ -241,7 +264,8 @@ Item {
         width:  16
         height: 4
         radius: 2
-        color:  root.isActive ? "white" : Qt.rgba(1, 1, 1, 0.50)
+        color:  root.isActive ? root.dotColor
+                              : Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.50)
 
         Behavior on color { ColorAnimation { duration: 150 } }
     }

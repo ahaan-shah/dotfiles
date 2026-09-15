@@ -15,7 +15,7 @@ Item {
     property int screenHeight: 1080
 
     property bool shown: false
-    property string mode: "default"   // "default" | "emoji" | "clipboard" | "powerprofiles" | "powermenu" | "wallpaper" | "settings"
+    property string mode: "default"   // "default" | "emoji" | "clipboard" | "powerprofiles" | "powermenu" | "settings"
 
     // Settings is the one mode that does not use the result list below. It is a
     // control surface, not a search result, so it is drawn as one of the
@@ -45,17 +45,20 @@ Item {
     // current results actually contain. This is SettingsPanel's panel.rowH and
     // it is here for its reason: a height measured per ROW makes a mixed list
     // ragged, a height measured per LIST makes it read as one block. 44 is the
-    // dense row — an app, an emoji, a wallpaper, a power profile, all of which
+    // dense row — an app, an emoji, a power profile, all of which
     // are a word and a mark — and 58 is the one with a second line under it,
     // which now only a file path, a calculation and a clipboard hit ask for.
     readonly property int rowH: root.displayResults.some(r => (r.subtitle || "") !== "")
                                 ? Theme.rowTall : Theme.rowHeight
     property var clipboardPreview: null   // {type:"image", source} for clipboard-mode image entries
-    property var wallpaperPreview: null   // {type:"image", source} for wallpaper-mode entries
 
     // Unified preview object regardless of which mode/provider produced it.
+    //
+    // There was a third: wallpaperPreview, which showed the image the selection
+    // was on in wallpaper mode. That mode moved into the settings menu on
+    // 2026-09-15 (Settings.qml, Theme -> Wallpapers), where the row draws its
+    // own thumbnail and there is no pane to put a big one in.
     readonly property var effectivePreview: root.mode === "clipboard" ? root.clipboardPreview
-        : root.mode === "wallpaper" ? root.wallpaperPreview
         : FileSearch.preview
 
     // The settings card's prompt, in every mode: "Search <what this page
@@ -71,12 +74,30 @@ Item {
         "clipboard":     "Search clipboard…",
         "powerprofiles": "Search power profiles…",
         "powermenu":     "Search power menu…",
-        "wallpaper":     "Search wallpapers…",
         "filesearch":    "Search files…"
     })
 
     // ── Open / close ─────────────────────────────────────────────────
+    // The modes anything may ask for over the socket. password and fingerprint
+    // are deliberately absent: both are raised from inside this file once
+    // something has been authorised, and anything running as this user can
+    // write to /tmp/finder.sock — a password box opened on request is a
+    // password box asked for by whatever wanted the password.
+    readonly property var _openable: ["default", "emoji", "clipboard",
+                                      "powerprofiles", "powermenu",
+                                      "filesearch", "settings"]
+
     function openMode(m) {
+        // A mode that no longer exists is the reason this guard is here:
+        // "wallpaper" was one until 2026-09-15, and a hyprland.lua that has
+        // not been reloaded since still sends it. Without this the card came
+        // up on an empty list with a blank prompt — a surface that says
+        // nothing and does nothing, which is worse than the keybind appearing
+        // dead. Same class as the stale IPC path removed on 2026-09-14.
+        if (root._openable.indexOf(m) < 0) {
+            console.warn("finder: ignoring unknown open mode:", m)
+            return
+        }
         if (root.shown && root.mode === m) { close(); return }
         // There is no longer anything to measure here. Four consts used to
         // capture what was on screen BEFORE the mode changed — the size the
@@ -96,12 +117,11 @@ Item {
         // during the very first scan has always taken.
         if (m === "emoji") { EmojiIndex.ensure(); root._rebuild() }
         if (m === "default" || m === "filesearch") AppIndex.ensure()
-        // powerprofiles/powermenu/wallpaper all list everything immediately
+        // powerprofiles/powermenu both list everything immediately
         // on open (type-to-filter OR scroll, per explicit request) rather
         // than starting blank like default-mode app search does.
         if (m === "powerprofiles") { PowerProfiles.refresh(); root._rebuild() }
         if (m === "powermenu") root._rebuild()
-        if (m === "wallpaper") { Wallpapers.refresh(); root._rebuild() }
         if (m === "settings") {
             settingsPanel.reset()
             // The box-becomes-card morph is gone from this direction.
@@ -206,13 +226,6 @@ Item {
                 .map(p => ({ kind: "powermenuitem", emojiGlyph: p.icon, title: p.label, subtitle: "", data: p }))
             return
         }
-        if (root.mode === "wallpaper") {
-            const hits = Wallpapers.search(root.query, 50)
-            root.displayResults = hits.map(w => ({
-                kind: "wallpaper", icon: "file://" + w.path, emojiGlyph: "", title: w.name, subtitle: "", data: w
-            }))
-            return
-        }
         if (root.mode === "filesearch") {
             // Dedicated mode (ALT+F), not the old "/"-prefix — FileSearch
             // itself is already restricted to non-hidden files under $HOME
@@ -287,14 +300,9 @@ Item {
         target: EmojiIndex
         function onEmojiChanged() { if (root.mode === "emoji") root._rebuild() }
     }
-    // Same again for the wallpaper directory listing, and for the
-    // `powerprofilesctl get` round-trip re-marking the "current" row once
-    // it actually resolves (openMode's immediate _rebuild() runs before
-    // either async call can have finished).
-    Connections {
-        target: Wallpapers
-        function onWallpapersChanged() { if (root.mode === "wallpaper") root._rebuild() }
-    }
+    // Same again for the `powerprofilesctl get` round-trip re-marking the
+    // "current" row once it actually resolves (openMode's immediate _rebuild()
+    // runs before the async call can have finished).
     Connections {
         target: PowerProfiles
         function onCurrentChanged() { if (root.mode === "powerprofiles") root._rebuild() }
@@ -336,17 +344,12 @@ Item {
     function _maybePreview() {
         FileSearch.preview = null
         root.clipboardPreview = null
-        root.wallpaperPreview = null
         const r = root.displayResults[root.selectedIndex]
         if (root.mode === "filesearch") {
             if (r && r.kind === "file" && !r.data.isDir) FileSearch.previewFor(r.data.path)
         } else if (root.mode === "clipboard") {
             if (r && r.kind === "clipboard" && r.data.kind === "image") {
                 root.clipboardPreview = { type: "image", source: "file://" + r.data.path }
-            }
-        } else if (root.mode === "wallpaper") {
-            if (r && r.kind === "wallpaper") {
-                root.wallpaperPreview = { type: "image", source: "file://" + r.data.path }
             }
         }
     }
@@ -395,9 +398,6 @@ Item {
                 break
             case "powermenuitem":
                 PowerMenu.run(r.data.key)
-                break
-            case "wallpaper":
-                Wallpapers.apply(r.data.path)
                 break
         }
         root.close()
@@ -647,7 +647,7 @@ Item {
                     // drawn by each delegate — the launcher used to blink
                     // between two crossfades a row apart, and this is still the
                     // fix for that. It also still takes its look from Theme, so
-                    // apps, files, emoji, clipboard, wallpapers and the power
+                    // apps, files, emoji, clipboard and the power
                     // menus mark a selection the way the settings menu does.
                     //
                     // What changed on 2026-09-12 is what Theme now says: a 10%
@@ -727,7 +727,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
 
                                     readonly property string kind: rowDelegate.modelData.kind
-                                    readonly property bool _hasThumb: kind === "app" || kind === "wallpaper"
+                                    readonly property bool _hasThumb: kind === "app"
                                     readonly property bool hasAppImage: iconSlot._hasThumb && appIcon.status === Image.Ready
                                     // Power profile/menu icons are Nerd Font glyphs too (see
                                     // PowerProfiles.qml/PowerMenu.qml), same rendering path as emoji.
@@ -788,7 +788,6 @@ Item {
                                                 if (k === "calc")         return ""
                                                 if (k === "websearch")    return ""
                                                 if (k === "clipboard")    return ""
-                                                if (k === "wallpaper")    return rowDelegate.modelData.title.charAt(0).toUpperCase()
                                                 return "?"
                                             }
                                             color: Theme.alpha(Theme.text, 0.65)
@@ -936,8 +935,8 @@ Item {
                         // pane 380 points wide. 800 covers that pane at 2x DPI.
                         sourceSize.width: 800
                         sourceSize.height: 800
-                        // Previews are one-shot: a given wallpaper or clipboard
-                        // image is shown while it is selected and then not again.
+                        // Previews are one-shot: a given clipboard image or
+                        // file is shown while it is selected and then not again.
                         // Caching them means every image the selection passes over
                         // stays resident in Qt's pixmap cache for the life of the
                         // process, which is what made memory climb the longer

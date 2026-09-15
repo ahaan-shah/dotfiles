@@ -19,6 +19,18 @@ xdg-user-dirs
 quickshell                # taskbar, macshell, finder, lockscreen all run on it
 qt5-wayland
 qt6-wayland
+qt6-imageformats          # webp/tiff/jp2/icns decoders for Qt. NOT optional
+                          #   dressing: without it a .webp draws as nothing in
+                          #   the wallpaper picker's thumbnail AND as nothing
+                          #   on the desktop, because Wallpaper.qml is a plain
+                          #   Image. Stock Qt6 carries png/jpeg/gif/bmp only.
+                          #   Measured 2026-09-15 on a machine that had it
+                          #   missing: "Error decoding … Unsupported image
+                          #   format", and one wallpaper that could never be
+                          #   used. Plugins land in
+                          #   /usr/lib/qt6/plugins/imageformats/, which is
+                          #   where scripts/wallpapers.sh's EXT_RE has to be
+                          #   checked against before a format is added to it.
 greetd
 greetd-tuigreet
 polkit                    # and its GObject-introspection typelibs, which are

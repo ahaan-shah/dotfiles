@@ -4,50 +4,28 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// 1:1 port of scripts/set_wallpaper.sh's selection half (listing
-// ~/Pictures/wallpapers, same directory, same flat file listing). The
-// apply pipeline itself (pywal, hyprpaper restart, cava gradient sync,
-// swayosd restart, hyprctl reload) lives in apply-wallpaper.sh alongside
-// this file — it's a long shell pipeline with a lot of independent side
-// effects, not worth reimplementing inline in QML piece by piece.
+// Setting the wallpaper. One call, and it is a shell-out.
 //
-// One deliberate change from the original script: apply-wallpaper.sh drops
-// its walker-restart calls (`update-walker-theme.sh`,
-// `gapplication quit dev.quoteme.Walker`, `walker --gapplication-service`).
-// Walker is already fully replaced by finder/ project-wide (see
-// CLAUDE.md's `finder/` section) — those calls would just silently no-op
-// against a binary/service nothing runs anymore, the same "broken call
-// nobody notices because nothing crashes" class of bug this project has
-// already hit (and fixed) elsewhere with stale hyprctl syntax.
+// The apply pipeline (record the path, then pywal, the cava gradient sync and
+// `hyprctl reload` through palette.sh) lives in apply-wallpaper.sh alongside
+// this file — it is a shell pipeline with a lot of independent side effects,
+// not worth reimplementing inline in QML piece by piece, and it has to stay
+// runnable from a terminal because install.sh calls it on a fresh machine.
+//
+// ── This file used to do the LISTING too ──────────────────────────────────
+// It held the directory walk (`ls -1 ~/Pictures/wallpapers`), the cached list
+// and a substring search over it, because finder had a wallpaper MODE — ALT+W,
+// its own result list — and that mode was its only caller. On 2026-09-15 the
+// picker became a settings page instead (Settings.qml, Theme → Wallpapers) and
+// the keybind went with it. A settings listing comes from a script, like every
+// other listing on that card, so the directory walk moved to
+// scripts/wallpapers.sh — which also has to answer a question this file never
+// could: which of those images goes with the palette in force.
+//
+// What is left is the half nothing replaced. Settings.activate() calls it with
+// the absolute path the listing carried.
 QtObject {
     id: root
-
-    readonly property string dir: (Quickshell.env("HOME") || "") + "/Pictures/wallpapers"
-    property var wallpapers: []   // [{name, path}]
-
-    function refresh() {
-        listProc.running = true
-    }
-
-    property var listProc: Process {
-        id: listProc
-        command: ["bash", "-c", "ls -1 " + root.dir + " 2>/dev/null"]
-        running: false
-        stdout: StdioCollector {
-            id: out
-            onStreamFinished: {
-                const lines = out.text.split("\n").map(l => l.trim()).filter(l => l.length > 0)
-                root.wallpapers = lines.map(name => ({ name, path: root.dir + "/" + name }))
-            }
-        }
-    }
-
-    function search(query, limit) {
-        const n = limit || 50
-        if (!query) return root.wallpapers.slice(0, n)
-        const q = query.toLowerCase()
-        return root.wallpapers.filter(w => w.name.toLowerCase().includes(q)).slice(0, n)
-    }
 
     function apply(path) {
         applyProc.command = [Quickshell.shellPath("apply-wallpaper.sh"), path]
@@ -55,9 +33,4 @@ QtObject {
     }
 
     property var applyProc: Process { id: applyProc; running: false }
-
-    // No Component.onCompleted. Finder.openMode() calls refresh() every time
-    // wallpaper mode is opened — which it must, since the directory changes
-    // behind us — so listing it at startup was a directory walk whose result
-    // was always thrown away and re-done.
 }

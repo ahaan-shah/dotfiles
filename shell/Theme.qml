@@ -118,6 +118,15 @@ QtObject {
     readonly property int cardBorder: 2
     readonly property int rowHeight:  44
     readonly property int rowTall:    58   // with a subtitle
+    // With a wallpaper thumbnail. The thumbnail is 16:9 because the wallpapers
+    // are, and at the 44px row's usable 28px of height that is a 50x28 slit
+    // you cannot read a picture out of. 56 gives 40px of image at 72 wide,
+    // which is where a photograph starts being recognisable as itself rather
+    // than as a smear — checked against all eighteen in ~/Pictures/wallpapers,
+    // where the two that need the most room are the near-black ones.
+    readonly property int rowThumb:   56
+    readonly property int thumbWidth:  72
+    readonly property int thumbHeight: 40
     // There is no rowBorder any more. The selected row carried a 1.5px outline
     // as well as a fill; omarchy's carries a fill and nothing else, and with
     // the fill down at 0.10 an outline is no longer the junior partner in the

@@ -774,9 +774,13 @@ hl.bind("F6", hl.dsp.exec_cmd("~/.config/scripts/toggle-touchpad.sh"))
 -- desc: Locks the screen
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-launch.sh"))
 
--- Wallpaper Picker (finder/, wallpaper mode)
--- desc: Opens the wallpaper picker
-hl.bind("ALT + W", hl.dsp.exec_cmd("echo \"open:wallpaper\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
+-- There is no wallpaper-picker bind any more. ALT + W opened finder's wallpaper
+-- mode; on 2026-09-15 the picker became a settings page (SUPER + Return, then
+-- Theme -> Wallpapers, which splits it into "By palette" and "All") and Ahaan
+-- asked for the bind to go with it. Written down rather than deleted silently
+-- because ALT + W is now free, and because keybinds.sh keys its overrides on
+-- the DECLARED combo — a bind that vanishes from this file takes any
+-- reassignment of it with it.
 
 -- Study
 -- Personal shortcut: edit studyDir (or drop this bind) on a machine where
