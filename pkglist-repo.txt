@@ -106,7 +106,6 @@ pipewire
 pipewire-alsa
 pipewire-jack
 pipewire-pulse
-power-profiles-daemon
 python-pipx
 qemu-desktop
 qt5-wayland
@@ -130,7 +129,6 @@ tailscale
 tealdeer
 terminus-font
 tesseract-data-eng
-tlp
 tmux
 tree
 ttf-hack-nerd

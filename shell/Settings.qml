@@ -779,6 +779,29 @@ QtObject {
         // from a terminal both move this behind our back, so the page reads it
         // rather than trusting what it last saw.
         if (key === "system" || key === "system/powerprofile") PowerProfiles.refresh()
+        // The by-palette wallpaper page is the one listing that goes stale
+        // while the menu is OPEN: the palette can be changed a few rows away,
+        // on Theme -> Palette, and everything the page is computed from moves
+        // with it. So it is dropped from the cache on the way in and re-read,
+        // rather than trusted from whenever it was last fetched.
+        //
+        // Both keys, because both are entered and both show a stale answer:
+        // the page itself, and the door above it, whose row carries the match
+        // COUNT in its trailing slot. Two fetches when walking through the
+        // door into the page, and that is the whole cost — a warm run is one
+        // cached file and one awk, measured at 0.11s.
+        if (key === "theme/wallpaper" || key === "theme/wallpaper/palette") {
+            const k = "theme/wallpaper/palette"
+            if (root.lists[k] !== undefined) {
+                const next = ({})
+                for (const kk in root.lists) if (kk !== k) next[kk] = root.lists[kk]
+                root.lists = next
+            }
+            // Falls through to the queue below, which picks it up because the
+            // entry is gone now. Deliberately NOT root.refresh(k), which calls
+            // straight back into ensure() and would recurse.
+            if (key !== k) { root._queue = [k].concat(root._queue.filter(q => q !== k)); root._pump() }
+        }
         // A group page has no listing of its own; its parent's is what matters,
         // and by the time a group is visible that has already loaded.
         const p = root.pages[key]
@@ -1189,13 +1212,12 @@ QtObject {
     // listing can have changed yet — the only thing that moved is which image
     // is up, and we are the ones who moved it.
     //
-    // The by-palette listing is then re-read on a delay, and that is NOT the
-    // same thing. Under the "pywal" palette the colours are derived from the
-    // wallpaper, so picking one changes the very thing the shortlist is
-    // matched against — the page has to be recomputed, not patched. Under a
-    // chosen palette nothing moves and the re-read returns what is already
-    // there, which is cheap enough (a cache hit and one awk) not to be worth
-    // a branch that asks which palette is in force.
+    // Re-ranking the by-palette page is NOT done here, and deliberately not.
+    // Under the "pywal" palette a new wallpaper re-derives the colours, which
+    // rewrites ~/.cache/wal/colors.json — so _paletteChanged below sees it and
+    // re-reads the page off the real event. Under a chosen palette the colours
+    // do not move, the shortlist cannot have changed, and the only thing that
+    // needed updating is the "current" mark this function just patched.
     readonly property var _wallKeys: ["theme/wallpaper/all", "theme/wallpaper/palette"]
 
     function _markWallpaper(path) {
@@ -1210,24 +1232,29 @@ QtObject {
         for (let j = 0; j < root._wallKeys.length; j++)
             if (root.lists[root._wallKeys[j]] !== undefined)
                 root._setGrouped(root._wallKeys[j], root._regroup(root._wallKeys[j]))
-        wallSettle.restart()
     }
 
-    property var _wallSettle: Timer {
-        id: wallSettle
-        // apply-wallpaper.sh writes the state file, then palette.sh runs `wal`
-        // over the image and reloads the compositor. Measured end to end on
-        // this machine at a little under a second; 1400ms is that with room,
-        // and re-reading earlier ranked the wallpapers against the palette
-        // being replaced — which is worse than not re-reading at all, because
-        // the page would look like it had answered.
-        interval: 1400
-        repeat: false
-        onTriggered: {
-            if (root.lists["theme/wallpaper/palette"] === undefined) return
-            root.refresh("theme/wallpaper/palette")
-        }
-    }
+    // ── the shortlist follows the palette ────────────────────────────────
+    // "By palette" is computed by wallpapers.sh from two inputs — the colours
+    // in ~/.cache/wal/colors.json, which the ranking is measured against, and
+    // the chosen palette NAME in ui.conf, which decides whose backgrounds
+    // lead. Both move when the palette changes, and the page is a LISTING
+    // rather than a binding, so nothing repaints it.
+    //
+    // Reported: changing the palette left the page showing the previous
+    // palette's shortlist until the whole menu was closed and reopened,
+    // because prefetchAll() on open was the only thing that ever re-ran the
+    // script. The fix is in ensure() — the page is re-read when it is ENTERED.
+    //
+    // An earlier cut watched instead: a revision counter on WalColors for the
+    // colours, a new UiConfig.palette for the name, two Connections and a
+    // timer to coalesce them, so the page updated the instant the palette
+    // moved. It worked, and it is gone. Ahaan did not need instant — "it can
+    // refresh by the time i go out of palettes and into wallpapers" — and
+    // re-reading on entry is the better answer even so: it reads both inputs
+    // at the moment of use, where watching them meant being right about two
+    // separate signals. Testing the watched version found exactly that bug,
+    // with the colours already changed and only the name still to move.
 
     // Called by the password box once PAM has accepted the password in its
     // verify-only flow. Nothing was run as root; this is where what the

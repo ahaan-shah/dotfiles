@@ -296,6 +296,34 @@ detect_kvm() {
     grep -qE '^flags.*\b(vmx|svm)\b' /proc/cpuinfo
 }
 
+# ── which daemon owns the power profile ──────────────────────────────────
+# asusd (asusctl) and power-profiles-daemon both drive
+# /sys/firmware/acpi/platform_profile, and running both is what made the
+# profile appear to change on its own — measured 2026-09-15, where asusd's
+# AC/battery automation moved it under a desktop that was faithfully showing
+# whatever asusd last set. One machine gets one owner.
+#
+# asusd wins where it EXISTS, because on ASUS hardware it is the native path:
+# it also carries the charge limit and the fan curves, and it re-applies the
+# platform profile on resume, which ppd does not. Everywhere else — which is
+# every non-ASUS machine this installer might run on — ppd is the answer, and
+# it is the reason this is detected rather than hardcoded.
+#
+# Presence, not running state: this runs during an install, where asusd may be
+# installed-but-not-yet-started. scripts/power-profile.sh does the liveness
+# check at call time and falls back on its own, so the worst a stale answer
+# here can cause is one wasted branch.
+detect_power_profile_backend() {
+    if command -v asusctl >/dev/null 2>&1 && \
+       [ -r /sys/firmware/acpi/platform_profile ]; then
+        echo asusd
+        return 0
+    fi
+    command -v powerprofilesctl >/dev/null 2>&1 && { echo ppd; return 0; }
+    echo ppd
+    return 0
+}
+
 detect_all() {
     HW_BATTERY=$(detect_battery || true)
     HW_KBD_LED=$(detect_led kbd_backlight || true)
@@ -313,6 +341,7 @@ detect_all() {
     if detect_kvm; then HW_KVM=1; fi
     HW_LIVE=0
     if hypr_live; then HW_LIVE=1; fi
+    HW_POWER_BACKEND=$(detect_power_profile_backend || true)
 }
 
 print_detection() {
@@ -374,6 +403,15 @@ IGPU_PCI="${HW_IGPU_PCI:-}"
 # The dGPU is never rendered to by the desktop; it exists for prime-run.
 # These are here so scripts and the installer's verify phase can name it
 # without re-walking sysfs. Nothing in the running desktop reads them.
+# Which daemon the desktop drives the power profile through. asusd on ASUS
+# laptops (it is the native path and also owns the charge limit and fan
+# curves), power-profiles-daemon everywhere else. Both write the same firmware
+# knob, so only ONE of them may be the owner — running both is what made the
+# profile move on its own. Read by scripts/power-profile.sh, which both the
+# bar's battery panel and finder's SUPER+B picker go through; it re-checks at
+# call time and falls back, so a wrong answer here is not fatal.
+POWER_PROFILE_BACKEND="${HW_POWER_BACKEND:-ppd}"
+
 DGPU_PCI="${HW_DGPU_PCI:-}"
 DGPU_VENDOR="${HW_DGPU_VENDOR:-}"
 REOF

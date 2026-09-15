@@ -205,6 +205,50 @@ install_manifest() {
     fi
 }
 
+# ── the power-profile daemon, and only ONE of them ───────────────────────
+# asusd and power-profiles-daemon both drive
+# /sys/firmware/acpi/platform_profile, and installing both is how a machine
+# ends up with a profile that changes on its own — the fault this repo chased
+# on 2026-09-15 and the reason the verify phase now treats "both running" as a
+# failure rather than a degradation.
+#
+# So the installer picks the same one scripts/power-profile.sh will:
+# POWER_PROFILE_BACKEND from the hardware profile, which is asusd wherever
+# asusctl can exist and ppd everywhere else. power-profiles-daemon is therefore
+# NOT in 10-core.txt any more — a flat manifest cannot express "one or the
+# other", and having it there is what would quietly reinstate the conflict on
+# the next rebuild.
+#
+# asusctl is AUR, so this runs after yay is available; install_manifest's AUR
+# batch has already bootstrapped it by the time phase_packages calls this.
+install_power_backend() {
+    if [ "${HW_POWER_BACKEND:-ppd}" = asusd ]; then
+        info "power profiles: asusd (ASUS platform — it also owns the charge"
+        info "  limit and the fan curves, and re-applies the profile on resume)"
+        aur_install asusctl || warn "asusctl failed to build — falling back to ppd"
+        if have asusctl; then
+            # asusd ships as a static unit; enabling is a no-op where it is
+            # already socket-activated, and the failure is not fatal either way
+            # because power-profile.sh re-checks liveness at call time.
+            run sudo systemctl enable --now asusd 2>/dev/null || true
+            # The loser is MASKED, not merely left uninstalled: ppd is
+            # D-Bus-activatable, so anything that asks for it can start it and
+            # it will write the same knob. Masking is what makes "one owner"
+            # true rather than merely intended.
+            if pacman -Q power-profiles-daemon >/dev/null 2>&1; then
+                warn "power-profiles-daemon is installed alongside asusd — masking it"
+                run sudo systemctl mask --now power-profiles-daemon 2>/dev/null || true
+            fi
+            return 0
+        fi
+        warn "asusctl is not available after all — installing power-profiles-daemon"
+    else
+        info "power profiles: power-profiles-daemon"
+    fi
+    pac_install power-profiles-daemon
+    run sudo systemctl enable --now power-profiles-daemon 2>/dev/null || true
+}
+
 phase_packages() {
     phase "Packages"
 
@@ -232,6 +276,7 @@ phase_packages() {
     fi
 
     install_gpu_userspace
+    install_power_backend
 
     # AUR last: it is the slow, fallible part, so everything that can succeed
     # has already succeeded by the time a build can fail.
@@ -1726,6 +1771,43 @@ phase_verify() {
     # ── hardware profile ───────────────────────────────────────────────
     check "hardware.env written" "[ -s '$HOME/.config/scripts/hardware.env' ]"
 
+    # ── the power profile has exactly one owner ────────────────────────
+    # asusd and power-profiles-daemon both drive
+    # /sys/firmware/acpi/platform_profile. Running BOTH is not a degraded
+    # state, it is the bug: measured 2026-09-15, asusd's AC/battery automation
+    # moved the profile under a desktop that was faithfully displaying whatever
+    # asusd had last set, and it read as the setting changing on its own. This
+    # is the check that would have caught it.
+    check "power-profile.sh deployed and executable" \
+          "[ -x '$HOME/.config/scripts/power-profile.sh' ]"
+    check "hardware.env names a power-profile backend" \
+          "grep -q '^POWER_PROFILE_BACKEND=' '$HOME/.config/scripts/hardware.env'"
+    if [ -x "$HOME/.config/scripts/power-profile.sh" ]; then
+        local ppbackend; ppbackend="$("$HOME/.config/scripts/power-profile.sh" backend 2>/dev/null || true)"
+        if [ "${ppbackend:-none}" = none ]; then
+            bad "no power-profile daemon is answering — the picker will be hidden"
+        else
+            chk "power profiles answered by: $ppbackend"
+        fi
+    fi
+    # Both active is the fault. Counted rather than tested with `is-active &&`,
+    # so a machine with neither is reported as neither and not as an error.
+    local ppd_on=0 asusd_on=0
+    systemctl is-active --quiet power-profiles-daemon 2>/dev/null && ppd_on=1
+    systemctl is-active --quiet asusd 2>/dev/null && asusd_on=1
+    if [ "$ppd_on" = 1 ] && [ "$asusd_on" = 1 ]; then
+        # One bad(), then plain lines. err() prefixes a ✗ of its own, which made
+        # a single fault read as three in the summary.
+        bad "BOTH asusd and power-profiles-daemon are running"
+        info "  They fight over /sys/firmware/acpi/platform_profile, so the profile"
+        info "  will appear to change on its own. Stop and mask the one"
+        info "  hardware.env does not name. NOTE: removing the package is not"
+        info "  enough — an already-running daemon survives its own uninstall,"
+        info "  with the unit reported as not-found while the process keeps going."
+    else
+        chk "only one power-profile daemon is running"
+    fi
+
     # ── theming ────────────────────────────────────────────────────────
     check "pywal colours generated" "[ -s '$HOME/.cache/wal/colors.json' ]"
     check "colors-hyprland.lua resolves" "[ -f '$HOME/.config/hypr/colors-hyprland.lua' ]"
@@ -1757,9 +1839,20 @@ phase_verify() {
 
     if have firewall-cmd; then
         check "firewalld active" "systemctl is-active firewalld.service"
+        # Read from the zone XML, NOT from `firewall-cmd --permanent
+        # --list-services`. That call is FirewallD1.config.info, which polkit
+        # gates at auth_admin_keep — so it answers only while the session has a
+        # cached authorisation from something else, and returns nothing once
+        # that lapses. This check passed all session and then failed, with the
+        # firewall unchanged and localsend still allowed; a check whose result
+        # depends on an invisible cache is worse than no check.
+        #
+        # The zone files are 0644 and are what firewall.sh already reads for the
+        # settings page, for this exact reason. /etc wins over /usr/lib, same
+        # precedence firewalld itself applies.
         # NOTE: not `... | grep -q`; see the SIGPIPE note on the font check.
         check "LocalSend allowed through the firewall" \
-              "[ \"\$(firewall-cmd --permanent --zone=public --list-services 2>/dev/null | grep -c localsend)\" -gt 0 ]"
+              "[ \"\$(cat /etc/firewalld/zones/public.xml /usr/lib/firewalld/zones/public.xml 2>/dev/null | grep -c localsend)\" -gt 0 ]"
         check "LocalSend covers TCP and UDP 53317" \
               "[ \"\$(grep -c 'port=\"53317\"' /etc/firewalld/services/localsend.xml 2>/dev/null)\" = 2 ]"
     fi

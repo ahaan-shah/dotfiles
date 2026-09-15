@@ -74,7 +74,13 @@ iwd                       # NM's wifi backend here (see wifi_backend.conf)
 bluez
 bluez-utils               # bluetoothctl — the bluetooth panel's action path
 upower                    # Quickshell.Services.UPower, battery widget
-power-profiles-daemon     # finder/PowerProfiles.qml + the taskbar battery panel
+# power-profiles-daemon is deliberately NOT listed here. It is installed
+# conditionally by install_power_backend(), because the machine gets asusd
+# (ASUS) or ppd (everything else) and never both — the two drive the same
+# /sys/firmware/acpi/platform_profile, and having both is what made the profile
+# change on its own. A flat manifest cannot express "one or the other", and
+# listing it here is exactly what would reinstate the conflict on a rebuild.
+# scripts/power-profile.sh is what the desktop talks to either way.
 firewalld                 # the network phase configures it (LocalSend exception)
 
 # ── terminal / shell ──────────────────────────────────────────────────

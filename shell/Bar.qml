@@ -214,11 +214,15 @@ Scope {
     readonly property string batTimeLabel: root.batCharging ? "Time to Full Charge" : "Time Remaining"
 
     // ---- power profiles (the battery panel's picker) ----------------------
-    // power-profiles-daemon's three platform profiles, driven through
-    // `powerprofilesctl` exactly as finder/PowerProfiles.qml drives them — one
-    // CLI, two verbs, no D-Bus client of our own. This panel and finder's
-    // SUPER+B picker are therefore two views of the same daemon state rather
-    // than two caches that can disagree.
+    // The three platform profiles, driven through scripts/power-profile.sh
+    // exactly as finder/PowerProfiles.qml drives them — one script, two verbs,
+    // no D-Bus client of our own. This panel and finder's SUPER+B picker are
+    // therefore two views of the same daemon state rather than two caches that
+    // can disagree.
+    //
+    // The dispatcher is what decides WHICH daemon that is: asusd on this ASUS
+    // laptop, power-profiles-daemon on anything else. Both drive the same
+    // firmware knob, so running both is what made the profile move on its own.
     //
     // Order is deliberate: saver, balanced, performance reads left-to-right as
     // less power to more, so the row is a slider the eye can follow.
@@ -228,18 +232,23 @@ Scope {
         { glyph: "\u{F04C5}", label: "Perf",    value: "performance" }
     ]
     property string ppCurrent: ""
-    // powerprofilesctl is a hard dependency of finder, but the daemon can be
-    // masked or missing on another machine; an empty answer hides the row
-    // rather than drawing three boxes none of which can ever light up.
+    // The dispatcher answers with nothing when NEITHER daemon is available —
+    // masked, missing, or a machine with no platform profiles at all — and an
+    // empty answer hides the row rather than drawing three boxes none of which
+    // can ever light up.
     readonly property bool ppAvailable: root.ppCurrent !== ""
     // Same optimistic-then-confirm shape the brightness slider and the old cap
     // picker used: the click paints the box now, and the poll is not allowed to
     // drag the highlight back to the previous profile while the daemon is still
-    // mid-transition. `powerprofilesctl set` returns before `get` reflects it.
+    // mid-transition: `set` returns before `get` reflects it, under either
+    // backend.
     property string ppPending: ""
     Process {
         id: ppRead
-        command: ["powerprofilesctl", "get"]
+        // Through the dispatcher, not a daemon: asusd here, ppd elsewhere,
+        // chosen by POWER_PROFILE_BACKEND in hardware.env. It answers in ppd's
+        // names whatever is underneath, so ppItems above is unchanged.
+        command: [root.sideScriptDir + "/power-profile.sh", "get"]
         stdout: StdioCollector { onStreamFinished: {
             var v = (this.text || "").trim();
             if (v === "") return;                 // daemon absent — keep the row hidden
@@ -262,7 +271,7 @@ Scope {
         if (v === root.ppCurrent) return;
         root.ppCurrent = v;
         root.ppPending = v;
-        root.run("powerprofilesctl set " + v);
+        root.run(root.shq(root.sideScriptDir + "/power-profile.sh") + " set " + root.shq(v));
         ppConfirm.restart();
         ppSettle.restart();
     }
@@ -273,7 +282,6 @@ Scope {
     // click forever.
     Timer { id: ppSettle; interval: 5000
             onTriggered: { root.ppPending = ""; ppRead.running = true; } }
-
 
     //========================================================================//
     //  DISPLAY  (brightness / night light / scale / monitors)                //
@@ -5560,6 +5568,7 @@ Scope {
                             }
                         }
                     }
+
                 }
             }
         }
