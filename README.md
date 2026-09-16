@@ -15,13 +15,32 @@ git clone https://github.com/ahaan-shah/dotfiles.git ~/.config/dotfiles
 ```
 
 It uses:  
-- Hyprland 0.55+  
+- Hyprland 0.56+ (the config is `hyprland.lua`, not `.conf`)  
 - Quickshell  
 - and a decent pile of CLI tools  
 
-Each Quickshell app (`taskbar`, `macdock`, `macswitcher`, `finder`, `lockscreen`) is standalone and autostarts from `hypr/hyprland.lua`. 
+Two Quickshell apps, both autostarted from `hypr/hyprland.lua`:
 
-Wallpapers live in `Pictures/wallpapers/`, and selected via `finder` with its built-in wallpaper picker.
+- `shell/` — the entire desktop in one process: bar and its dropdowns,
+  notifications, OSD, dock, Alt+Tab switcher, wallpaper, and the launcher with
+  its settings menu. It was three separate apps and 395 MB of RAM; merging them
+  cut it to 200.
+- `lockscreen/` — spawned per lock, not a daemon.
+
+`SUPER+Return` opens the settings menu, which is where most of the system is
+actually configured: packages, AUR, web apps, monitors, keybinds, window rules,
+defaults, firewall, fingerprints, power. 22 palettes plus pywal, and every
+surface on screen reads the same colours.
+
+Wallpapers live in `Pictures/wallpapers/` and are picked under Settings →
+Theme → Wallpapers, which also has a **By palette** page that ranks them by how
+close each image's dominant colours sit to the palette you're on.
+
+## Rebuilding from scratch
+
+`install/` brings all of this up on a bare Arch TTY. `--dry-run` prints every
+package, copy and service first — read that before the real run. Details in
+[install/README.md](install/README.md).
 
 ---
 
