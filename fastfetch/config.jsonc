@@ -55,11 +55,20 @@
     { "type": "wm", "key": "{#90}│{#} ", "keyColor": "cyan" },
     { "type": "terminal", "key": "{#90}│{#} ", "keyColor": "cyan" },
     { "type": "packages", "key": "{#90}│{#} 󰏖", "keyColor": "cyan" },
-    // Theme = the pywal palette, which on this box is named for the wallpaper
-    // it was generated from. The dots are terminal palette slots 1-6, so they
-    // follow the live colours without reading ~/.cache/wal at all.
+    // Theme = the PALETTE in force, asked of palette.sh — the one place that
+    // decides what "absent" means (pywal). The dots are terminal palette slots
+    // 1-6, so they follow the live colours without reading ~/.cache/wal at all.
+    //
+    // This used to parse a wallpaper path out of ~/.config/hypr/hyprpaper.conf
+    // and print the file's stem. That was right back when the palette was
+    // ALWAYS derived from the wallpaper, and wrong twice over since: there are
+    // 22 named palettes now and the choice is its own setting, and
+    // hyprpaper.conf went dormant when the wallpaper became a Quickshell
+    // surface on 2026-09-14 — nothing has written it since, so the row was
+    // reporting whichever image happened to be up before that date. It read
+    // "coca-cola-bus" against a live palette of everforest.
     { "type": "command", "key": "{#90}│{#} 󰏘", "keyColor": "cyan",
-      "text": "w=$(sed -n 's/^ *path *= *//p' \"$HOME/.config/hypr/hyprpaper.conf\" | head -1); w=${w##*/}; w=${w%.*}; [ -n \"$w\" ] || w=pywal; printf '%s' \"$w\"; for i in 1 2 3 4 5 6; do printf '\\033[38;5;%dm ●' $i; done; printf '\\033[0m'" },
+      "text": "p=$(\"$HOME/.config/scripts/palette.sh\" current 2>/dev/null); [ -n \"$p\" ] || p=pywal; printf '%s' \"$p\"; for i in 1 2 3 4 5 6; do printf '\\033[38;5;%dm ●' $i; done; printf '\\033[0m'" },
     { "type": "terminalfont", "key": "{#90}└{#} ", "keyColor": "cyan" },
     { "type": "custom", "format": "{#90}{$4}{#}" },
     "break",

@@ -79,22 +79,34 @@ Item {
         }
     }
 
+    // Put the popup up over `item` (a DockIcon delegate) right now. Shared by
+    // the sustained-hover gate below and by a left-click on a multi-instance
+    // icon (DockIcon's previewRequested) — the click wants exactly what the
+    // hover produces, minus the 500ms wait. It lives here rather than in the
+    // delegate because DockPreview.show() needs this Dock's height and its
+    // ShellScreen, and a delegate knows neither.
+    //
+    // The window count is re-read here rather than trusted from the caller:
+    // the hover path can have had 500ms to go stale, and the click path can
+    // fire on an icon whose last window closed between the hover and the
+    // press. One window (or none) left means there is nothing to choose
+    // between, so nothing is shown.
+    function showPreviewFor(item) {
+        if (!item || item.separator || !item.windowClass) return
+        _previewIntentTimer.stop()
+        const wins = WindowTracker.windowsFor(item.windowClass, "")
+        if (wins.length < 2) return
+        const p = item.mapToGlobal(item.width / 2, 0)
+        DockPreview.show(wins, item.iconPath, p.x, p.y, root.height, root.screen)
+    }
+
     // Sustained-hover gate — only shows the popup after 500ms of continuous
     // hover over the same multi-instance icon.
     property var _previewIntentTimer: Timer {
         property var item: null
         interval: 500
         repeat:   false
-        onTriggered: {
-            if (!item) return
-            const p = item.mapToGlobal(item.width / 2, 0)
-            DockPreview.show(
-                WindowTracker.windowsFor(item.windowClass, ""),
-                item.iconPath,
-                p.x, p.y,
-                root.height,
-                root.screen)
-        }
+        onTriggered: root.showPreviewFor(item)
     }
 
     // ── Home-relative paths ──────────────────────────────
@@ -637,6 +649,7 @@ Item {
             model: root.dynamicApps
 
             DockIcon {
+                id: dockIcon
                 required property var  modelData
                 required property int  index
 
@@ -660,6 +673,10 @@ Item {
                 dragX:    root._dragX
 
                 onPinToggleRequested: root.togglePin(modelData.key)
+                // Passes the delegate itself — showPreviewFor() anchors the
+                // popup off its mapToGlobal, the same item childAt() hands the
+                // hover path.
+                onPreviewRequested:   root.showPreviewFor(dockIcon)
                 onArmRequested:       root.armSlot(modelData.key)
                 onArmCancelled:       root._armedKey = ""
                 onDragStartRequested: root.beginDrag(modelData.key, index)

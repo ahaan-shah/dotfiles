@@ -22,6 +22,13 @@ Item {
     // slot order the store is written from.
     signal pinToggleRequested()
 
+    // Left-click on an icon with two or more windows open. Also handled by the
+    // parent Dock, for the same reason: the multi-instance popup lives in the
+    // DockPreview singleton and needs this Dock's height and ShellScreen to
+    // place itself, neither of which a delegate knows. See Dock.qml's
+    // showPreviewFor().
+    signal previewRequested()
+
     // ── Reorder drag ──────────────────────────────────────────────
     // All of the state lives in the parent Dock and is fed back down here,
     // deliberately: this delegate is destroyed and recreated whenever the
@@ -376,11 +383,24 @@ Item {
                 focusAddr.workspaceId = w.workspaceId ?? 0
                 focusAddr.running     = true
             } else {
-                // Cycle: use first window's workspace info
-                const w = wins[0]
-                cycleClass.isSpecial   = (w.workspaceName ?? "").startsWith("special:")
-                cycleClass.workspaceId = w.workspaceId ?? 0
-                cycleClass.running     = true
+                // Two or more windows: show the same instance picker a
+                // sustained hover shows, and let the user say WHICH one.
+                //
+                // This was `focus({ window = 'class:<cls>' })`, sold as a
+                // cycle and not one: that dispatch focuses whichever window
+                // Hyprland matches on the class first, which does not advance
+                // between clicks, so from the pointer's side one arbitrary
+                // window of the app comes up and clicking again brings up the
+                // same one. Ahaan's words for it were "randomly seems to open
+                // one of the windows".
+                //
+                // Deliberately show-only and not a toggle. The hover gate is
+                // 500ms (Dock.qml's _previewIntentTimer), so by the time a
+                // deliberate click lands on the icon the popup is usually
+                // ALREADY up — a toggle would close the picker that the click
+                // was asking for. Re-showing an open popup is a no-op apart
+                // from cancelling its close timer, which is what is wanted.
+                root.previewRequested()
             }
         }
     }
@@ -419,21 +439,6 @@ Item {
                   + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""
                 : "hyprctl dispatch \"hl.dsp.focus({ workspace = " + workspaceId + " })\""
                   + " && hyprctl dispatch \"hl.dsp.focus({ window = 'address:" + addr + "' })\""
-                  + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""]
-        running: false
-    }
-
-    Process {
-        id: cycleClass
-        property bool   isSpecial:   false
-        property int    workspaceId: 0
-        command: ["bash", "-c",
-            isSpecial
-                ? "hyprctl dispatch \"hl.dsp.window.move({ workspace = 'e+0', window = 'class:" + root.windowClass + "' })\""
-                  + " && hyprctl dispatch \"hl.dsp.focus({ window = 'class:" + root.windowClass + "' })\""
-                  + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""
-                : "hyprctl dispatch \"hl.dsp.focus({ workspace = " + workspaceId + " })\""
-                  + " && hyprctl dispatch \"hl.dsp.focus({ window = 'class:" + root.windowClass + "' })\""
                   + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""]
         running: false
     }
