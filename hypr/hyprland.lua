@@ -720,6 +720,22 @@ hl.bind("ALT + Print", hl.dsp.exec_cmd("~/.config/scripts/screenshot.sh window")
 -- desc: Screenshots the whole screen
 hl.bind("Print",       hl.dsp.exec_cmd("~/.config/scripts/screenshot.sh output"))
 
+-- Screen recording (scripts/screenrecord.sh, gpu-screen-recorder underneath).
+-- A TOGGLE on one key: press to start, press again to stop. That is the whole
+-- reason it is not three binds like the screenshots above -- a recording that
+-- has started is a thing you need to be able to STOP, and hunting for a second
+-- keybind while the take runs is exactly when you will not find it. The bar
+-- grows a red dot while it records (Bar.qml, the `srec` block) which is
+-- clickable for the same reason, and Settings -> Tools -> Capture turns its
+-- Screenrecord row into "Stop recording". Three brakes, one accelerator.
+--
+-- Bare SUPER+Print takes the defaults: the focused monitor, no audio. The
+-- target and the soundtrack are chosen from Settings -> Tools -> Capture ->
+-- Screenrecord, which is the only place those nine combinations exist -- they
+-- are not worth nine keybinds.
+-- desc: Starts or stops a screen recording
+hl.bind("SUPER + Print", hl.dsp.exec_cmd("~/.config/scripts/screenrecord.sh toggle"))
+
 -- OCR (scripts/ocr-region.sh). Same region gesture as F11 above, but the text
 -- inside the box lands on the clipboard instead of a PNG landing in Pictures —
 -- which is why it sits on the same key with a modifier rather than somewhere

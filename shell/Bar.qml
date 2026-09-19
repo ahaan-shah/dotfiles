@@ -3925,13 +3925,325 @@ Scope {
             }
 
             //--------------------------------------------------------------//
-            //  RIGHT ISLAND : group/expand , agents , voxtype , bluetooth , //
-            //                 network , battery                            //
+            //  RIGHT ISLAND : voxtype , screen recording , group/expand ,   //
+            //                 agents , bluetooth , network , battery       //
+            //                                                              //
+            //  The two capture indicators sit at the island's LEFT edge, on //
+            //  Ahaan's ask, ahead of agents. Both are collapsed to zero     //
+            //  width unless something is actually happening, so leading the //
+            //  island costs nothing when idle — and when one DOES appear it //
+            //  grows leftward, away from the fixed furniture, instead of    //
+            //  shoving the whole row sideways from the middle.              //
             //--------------------------------------------------------------//
             Island {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.rightMargin: 5
+
+                //=== voxtype : voice-to-text ==================================
+                // Recording indicator, sitting left of the bluetooth glyph.
+                // Collapsed to zero width when idle, so it costs no bar space
+                // until it has something to say.
+                //
+                // Driven by voxtype's own state file rather than by polling
+                // `voxtype status`: the daemon rewrites that file in place on
+                // every transition, and the inode is stable across a full
+                // idle -> recording -> idle cycle (verified with stat), so one
+                // inotify watch survives instead of needing a re-arm.
+                Item {
+                    id: vox
+
+                    // 'state' is already taken on Item -- same reason the
+                    // network module below calls its own field netState.
+                    property string voxState: "idle"     // idle|recording|transcribing
+                    readonly property bool active: voxState === "recording"
+                                                || voxState === "transcribing"
+
+                    // A Behavior cannot attach to an attached property, so the
+                    // reveal animates a plain real and the layout width is
+                    // bound to that. (The hover drawer above puts a Behavior
+                    // directly on Layout.preferredWidth, which silently never
+                    // animates -- worth fixing there too.)
+                    property real openAmount: active ? 1 : 0
+                    Behavior on openAmount {
+                        NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+                    }
+
+                    // One phase drives all five bars, rather than five
+                    // independent animations: it keeps them in a fixed
+                    // relationship and leaves exactly one value to reset. A
+                    // running:-bound animation freezes its property wherever it
+                    // stood when the binding goes false, so the reset is done
+                    // from the state change below, not from inside the anim.
+                    property real phase: 0
+                    NumberAnimation on phase {
+                        running: vox.active
+                        loops: Animation.Infinite
+                        from: 0; to: 2 * Math.PI
+                        duration: vox.voxState === "transcribing" ? 1400 : 900
+                    }
+                    onVoxStateChanged: if (!vox.active) vox.phase = 0
+
+                    // Recording: a travelling wave (per-bar phase offset).
+                    // Transcribing: a shallower breath, all bars in step, so
+                    // the two states read differently at a glance.
+                    function barHeight(i) {
+                        var wave = vox.voxState === "transcribing";
+                        var amp  = wave ? 0.45 : 1.0;
+                        var off  = wave ? 0 : i * 0.9;
+                        return 3 + 10 * amp * (0.5 + 0.5 * Math.sin(vox.phase + off));
+                    }
+
+                    clip: true
+                    implicitHeight: voxRow.implicitHeight
+                    Layout.preferredWidth: (voxRow.implicitWidth + 10) * openAmount
+                    opacity: openAmount
+
+                    Row {
+                        id: voxRow
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right      // reveal leftward
+                        anchors.rightMargin: 5
+                        spacing: 2
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.g.mic
+                            font.family: root.fontFamily
+                            font.pixelSize: root.fontSize
+                            color: vox.voxState === "recording" ? root.colCritical
+                                                                : root.col9
+                            Behavior on color { ColorAnimation { duration: 200 } }
+                        }
+
+                        Repeater {
+                            model: 5
+                            Rectangle {
+                                width: 2
+                                radius: 1
+                                anchors.verticalCenter: parent.verticalCenter
+                                height: vox.barHeight(index)
+                                color: vox.voxState === "recording" ? root.colCritical
+                                                                    : root.col9
+                                Behavior on color { ColorAnimation { duration: 200 } }
+                            }
+                        }
+                    }
+
+                    FileView {
+                        id: voxStateFile
+                        path: root.runtimeDir + "/voxtype/state"
+                        watchChanges: true
+                        onFileChanged: reload()
+                        onLoaded: vox.voxState = (voxStateFile.text() || "idle").trim()
+                    }
+                }
+
+                //=== screen recording ==========================================
+                // Sits between voxtype and bluetooth, and is deliberately built
+                // the same way as voxtype directly above: collapsed to zero
+                // width when idle so it costs no bar space until it has
+                // something to say, and driven by a state FILE rather than by
+                // polling for the process.
+                //
+                // The file is $XDG_RUNTIME_DIR/screenrecord/state, written by
+                // scripts/screenrecord.sh. That script rewrites it IN PLACE on
+                // every transition, for the reason voxtype's comment above
+                // gives: the inotify watch follows the INODE, so a
+                // write-temp-then-mv would leave this watching an unlinked file
+                // and the indicator would go deaf after the first
+                // idle -> recording -> idle cycle.
+                //
+                // ── Unlike voxtype, this one is clickable ───────────────────
+                // voxtype's indicator only has to report; a recording that has
+                // started is a thing the user now has to be able to STOP, and
+                // the bar is where they will look for it. There are three ways
+                // out — SUPER+Print, Settings -> Tools -> Capture (where the
+                // Screenrecord row turns into "Stop recording"), and this dot.
+                // A recording nobody can find the brake for is worse than one
+                // that never started.
+                Item {
+                    id: srec
+
+                    property string recState: "idle"     // idle|recording
+                    readonly property bool active: recState === "recording"
+
+                    // Same reveal as vox, and for the same reason: a Behavior
+                    // cannot attach to an attached property, so the animation
+                    // runs on a plain real and the layout width binds to it.
+                    property real openAmount: active ? 1 : 0
+                    Behavior on openAmount {
+                        NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+                    }
+
+                    // Elapsed time, recomputed once a second from the epoch the
+                    // script wrote at start — NOT a counter this Timer
+                    // increments. A counter drifts against the wall clock, and
+                    // it would also restart from zero if the shell were
+                    // relaunched mid-recording, at which point it would be
+                    // reporting the shell's uptime rather than the take's.
+                    property int startedAt: 0
+                    property int elapsed: 0
+                    function tick() {
+                        srec.elapsed = srec.startedAt > 0
+                            ? Math.max(0, Math.floor(Date.now() / 1000) - srec.startedAt) : 0
+                    }
+                    Timer {
+                        running: srec.active
+                        interval: 1000; repeat: true
+                        triggeredOnStart: true
+                        onTriggered: srec.tick()
+                    }
+
+                    function clock() {
+                        var m = Math.floor(srec.elapsed / 60);
+                        var ss = String(srec.elapsed % 60);
+                        if (ss.length < 2) ss = "0" + ss;
+                        // No hours field. Past an hour it reads 61:30 rather
+                        // than 1:01:30 — still unambiguous, and it keeps the
+                        // item from changing width partway through a take,
+                        // which would shove the whole right island sideways.
+                        return m + ":" + ss;
+                    }
+
+                    // The dot pulses rather than sitting solid. A static red
+                    // dot among a row of static glyphs does not read as
+                    // "something is happening RIGHT NOW", which is the one
+                    // thing this has to say.
+                    property real pulse: 1
+                    SequentialAnimation on pulse {
+                        running: srec.active
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 1;    to: 0.35; duration: 700; easing.type: Easing.InOutSine }
+                        NumberAnimation { from: 0.35; to: 1;    duration: 700; easing.type: Easing.InOutSine }
+                    }
+                    // A running:-bound animation freezes its property wherever
+                    // it stood when the binding goes false, so the reset is done
+                    // here rather than from inside the animation — same as vox.
+                    onActiveChanged: if (!srec.active) srec.pulse = 1
+
+                    clip: true
+                    // Rounded so the item is placed on whole pixels. This is
+                    // NOT what put the timer a pixel off the text beside it —
+                    // that was measured before and after and did not move — it
+                    // is kept only because an integer height cannot land the
+                    // content on a half pixel.
+                    //
+                    // ── The alignment, measured, because it was reported ────
+                    // "Why is the timer not inline with Blueberry?" Measured
+                    // off the screenshot and again after: the two glyph TOPS
+                    // are on the same row exactly (33 and 33), and the digit
+                    // baseline sits ONE PHYSICAL PIXEL — half a logical one on
+                    // this 2x panel — below the cap baseline (54 against 53).
+                    //
+                    // That pixel is the glyph, not the layout. A round '0'
+                    // is drawn fractionally past the baseline so it does not
+                    // look smaller than a flat-bottomed 'B' beside it, which
+                    // is ordinary type design; the font reports an identical
+                    // bounding box for the two. There is no offset here to
+                    // correct, and anything that "fixed" it would be pushing
+                    // the text off the line it is already on.
+                    implicitHeight: Math.round(srecRow.implicitHeight)
+                    Layout.preferredWidth: Math.round((srecRow.implicitWidth + 10) * openAmount)
+                    opacity: openAmount
+
+                    Row {
+                        id: srecRow
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right      // reveal leftward, as vox does
+                        anchors.rightMargin: 5
+                        spacing: 5
+
+                        // One solid circle, blinking, sized to the DIGITS
+                        // rather than to the font.
+                        //
+                        // It was a ring with a second dot pulsing inside it
+                        // first; two concentric shapes at this size read as
+                        // fussy rather than as a record light, and the ring's
+                        // 1-2px border was the wrong weight beside the
+                        // numerals. One filled shape is the idea.
+                        //
+                        // 0.66, not 1.0. `fontSize` is the em box, which is
+                        // taller than the glyphs drawn in it — a circle at the
+                        // full value stands proud of the digits top and bottom
+                        // and reads as oversized, which is what it did. What
+                        // it has to match is the CAP HEIGHT of the figures
+                        // beside it, and for this face that is roughly two
+                        // thirds of the em. Ahaan, with a screenshot: "the
+                        // circle is taller than the text."
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.round(root.fontSize * 0.8)
+                            height: width
+                            radius: width / 2
+                            color: root.colCritical
+                            opacity: srec.pulse
+                        }
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: srec.clock()
+                            font.family: root.fontFamily
+                            font.pixelSize: root.fontSize
+                            // As BarLabel does. Costs nothing here because the
+                            // Text is its own height, and it keeps this Text
+                            // structurally identical to the labels it sits in
+                            // a line with.
+                            verticalAlignment: Text.AlignVCenter
+                            color: root.colCritical
+                        }
+                    }
+
+                    // enabled, not just visible-by-opacity: the item is still
+                    // laid out at zero width when idle, and a MouseArea filling
+                    // it would put a dead click target on the bar right where
+                    // the bluetooth glyph begins.
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: srec.active
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.run(root.shq(root.sideScriptDir + "/screenrecord.sh") + " stop")
+                    }
+
+                    // No tooltip. The dot is already the most conspicuous
+                    // thing on the bar and the timer beside it says what it
+                    // is; a hover label repeating that only covers the screen
+                    // you are in the middle of recording, which is the one
+                    // surface it must not sit on top of. Removed at Ahaan's
+                    // ask. The MouseArea's pointing-hand cursor is what says
+                    // it can be clicked.
+
+                    FileView {
+                        id: srecStateFile
+                        path: root.runtimeDir + "/screenrecord/state"
+                        watchChanges: true
+                        // Same reason as the reminders store above: neither of
+                        // these files exists until the first recording is made,
+                        // and an ENOENT on every startup is noise, not a fault.
+                        // The onLoadFailed below is the real handling.
+                        printErrors: false
+                        onFileChanged: reload()
+                        // Missing until the first ever recording, and FileView
+                        // reports that as a load FAILURE rather than as empty
+                        // text — without this the indicator would hold whatever
+                        // it last saw instead of falling back to idle.
+                        onLoadFailed: srec.recState = "idle"
+                        onLoaded: srec.recState = (srecStateFile.text() || "idle").trim()
+                    }
+
+                    FileView {
+                        id: srecStartFile
+                        path: root.runtimeDir + "/screenrecord/started-at"
+                        watchChanges: true
+                        printErrors: false
+                        onFileChanged: reload()
+                        onLoadFailed: srec.startedAt = 0
+                        onLoaded: {
+                            srec.startedAt = parseInt((srecStartFile.text() || "0").trim(), 10) || 0
+                            srec.tick()
+                        }
+                    }
+                }
 
                 //=== group/expand : hover reveals volume+brightness (600ms) ===
                 // transition-to-left: revealed items slide out to the LEFT of
@@ -4099,105 +4411,6 @@ Scope {
                         root.agentIndex = (root.agentIndex + 1) % root.agents.length
                     onScrolledDown: if (root.agents.length > 1)
                         root.agentIndex = (root.agentIndex + root.agents.length - 1) % root.agents.length
-                }
-
-                //=== voxtype : voice-to-text ==================================
-                // Recording indicator, sitting left of the bluetooth glyph.
-                // Collapsed to zero width when idle, so it costs no bar space
-                // until it has something to say.
-                //
-                // Driven by voxtype's own state file rather than by polling
-                // `voxtype status`: the daemon rewrites that file in place on
-                // every transition, and the inode is stable across a full
-                // idle -> recording -> idle cycle (verified with stat), so one
-                // inotify watch survives instead of needing a re-arm.
-                Item {
-                    id: vox
-
-                    // 'state' is already taken on Item -- same reason the
-                    // network module below calls its own field netState.
-                    property string voxState: "idle"     // idle|recording|transcribing
-                    readonly property bool active: voxState === "recording"
-                                                || voxState === "transcribing"
-
-                    // A Behavior cannot attach to an attached property, so the
-                    // reveal animates a plain real and the layout width is
-                    // bound to that. (The hover drawer above puts a Behavior
-                    // directly on Layout.preferredWidth, which silently never
-                    // animates -- worth fixing there too.)
-                    property real openAmount: active ? 1 : 0
-                    Behavior on openAmount {
-                        NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
-                    }
-
-                    // One phase drives all five bars, rather than five
-                    // independent animations: it keeps them in a fixed
-                    // relationship and leaves exactly one value to reset. A
-                    // running:-bound animation freezes its property wherever it
-                    // stood when the binding goes false, so the reset is done
-                    // from the state change below, not from inside the anim.
-                    property real phase: 0
-                    NumberAnimation on phase {
-                        running: vox.active
-                        loops: Animation.Infinite
-                        from: 0; to: 2 * Math.PI
-                        duration: vox.voxState === "transcribing" ? 1400 : 900
-                    }
-                    onVoxStateChanged: if (!vox.active) vox.phase = 0
-
-                    // Recording: a travelling wave (per-bar phase offset).
-                    // Transcribing: a shallower breath, all bars in step, so
-                    // the two states read differently at a glance.
-                    function barHeight(i) {
-                        var wave = vox.voxState === "transcribing";
-                        var amp  = wave ? 0.45 : 1.0;
-                        var off  = wave ? 0 : i * 0.9;
-                        return 3 + 10 * amp * (0.5 + 0.5 * Math.sin(vox.phase + off));
-                    }
-
-                    clip: true
-                    implicitHeight: voxRow.implicitHeight
-                    Layout.preferredWidth: (voxRow.implicitWidth + 10) * openAmount
-                    opacity: openAmount
-
-                    Row {
-                        id: voxRow
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.right: parent.right      // reveal leftward
-                        anchors.rightMargin: 5
-                        spacing: 2
-
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: root.g.mic
-                            font.family: root.fontFamily
-                            font.pixelSize: root.fontSize
-                            color: vox.voxState === "recording" ? root.colCritical
-                                                                : root.col9
-                            Behavior on color { ColorAnimation { duration: 200 } }
-                        }
-
-                        Repeater {
-                            model: 5
-                            Rectangle {
-                                width: 2
-                                radius: 1
-                                anchors.verticalCenter: parent.verticalCenter
-                                height: vox.barHeight(index)
-                                color: vox.voxState === "recording" ? root.colCritical
-                                                                    : root.col9
-                                Behavior on color { ColorAnimation { duration: 200 } }
-                            }
-                        }
-                    }
-
-                    FileView {
-                        id: voxStateFile
-                        path: root.runtimeDir + "/voxtype/state"
-                        watchChanges: true
-                        onFileChanged: reload()
-                        onLoaded: vox.voxState = (voxStateFile.text() || "idle").trim()
-                    }
                 }
 
                 //=== bluetooth =================================================

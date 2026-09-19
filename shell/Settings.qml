@@ -42,6 +42,30 @@ QtObject {
                        : (Quickshell.env("HOME") || "") + "/.config/scripts"
     }
 
+    // ── Is a recording running? ───────────────────────────────────────────
+    // The same state file the bar's indicator watches, for the same reason and
+    // with the same constraint: scripts/screenrecord.sh rewrites it IN PLACE so
+    // one inotify watch survives every idle -> recording -> idle cycle. Two
+    // readers, one writer, no polling anywhere.
+    //
+    // It is read here so _decorate can turn the Screenrecord row into a Stop
+    // row, which is the menu half of "three ways to stop" — the bind, the bar
+    // dot, and this.
+    readonly property bool recording: root._recState === "recording"
+    property string _recState: "idle"
+    property var _recFile: FileView {
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/screenrecord/state"
+        watchChanges: true
+        // Does not exist until the first recording; onLoadFailed handles that,
+        // and an ENOENT on every startup is noise. Same as Bar.qml's copy.
+        printErrors: false
+        onFileChanged: reload()
+        // Missing file is the normal state before the first ever recording, and
+        // FileView reports that as a load failure rather than as empty text.
+        onLoadFailed: root._recState = "idle"
+        onLoaded: root._recState = (text() || "idle").trim()
+    }
+
     // ── the tree ──────────────────────────────────────────────────────────
     // Keyed by path. "" is the root; a submenu's key is its parent's key plus
     // "/" plus the row id, which is how the panel builds the key as it descends
@@ -64,6 +88,11 @@ QtObject {
                 { id: "install", icon: "󰏔", title: "Install", kind: "menu",   sub: "packages, AUR, web apps" },
                 { id: "remove",  icon: "󰩺", title: "Remove",  kind: "menu",   sub: "packages, web apps" },
                 { id: "update",  icon: "󰚰", title: "Update",  kind: "action" },
+                // Above Setup, and the split between them is the point: Setup
+                // changes how the desktop BEHAVES and the change persists;
+                // everything under Tools is a thing you reach for, does its
+                // work now, and leaves no setting behind.
+                { id: "tools",   icon: "󱁤", title: "Tools",   kind: "menu",   sub: "screenshot, screen recording, colour picker, OCR" },
                 { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, defaults" },
                 { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "palette, wallpaper, GTK theme, icons, fonts" },
                 { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
@@ -91,6 +120,104 @@ QtObject {
             rows: [
                 { id: "pkg",    icon: "󰏖", title: "Package", kind: "action" },
                 { id: "webapp", icon: "󰖟", title: "Web App", kind: "action" }
+            ]
+        },
+
+        // ── Tools ─────────────────────────────────────────────────────────
+        // Four things that were already on keybinds and had no other way in:
+        // screenshot (F11 / Print / ALT+Print), screen recording (SUPER+Print),
+        // the colour picker (ALT+C) and OCR (ALT+F11). The keybinds are not
+        // going anywhere — this is the discoverable copy of them, for the ones
+        // nobody remembers, and for screen recording it is the only place the
+        // target and the soundtrack can actually be CHOSEN. The bind takes the
+        // defaults.
+        //
+        // Every row under here shows the user something over the whole screen —
+        // a slurp box, a hyprpicker freeze — and this menu is itself a
+        // full-screen overlay layer. The scripts all wait for the "finder"
+        // namespace to unmap before they draw anything; see the
+        // wait_for_menu_gone comment in scripts/screenrecord.sh for why that is
+        // a poll on hyprctl layers and not a sleep.
+        "tools": {
+            title: "Tools", icon: "󱁤",
+            rows: [
+                { id: "capture",     icon: "󰄀", title: "Capture",       kind: "menu",
+                  sub: "screenshot, screen recording" },
+                { id: "colorpicker", icon: "󰈋", title: "Colour picker", kind: "action" },
+                { id: "ocr",         icon: "󰗊", title: "OCR scan",      kind: "action" }
+            ]
+        },
+
+        "tools/capture": {
+            title: "Capture", icon: "󰄀",
+            rows: [
+                { id: "screenshot",  icon: "󰹑", title: "Screenshot",   kind: "menu",
+                  sub: "portion of screen, window, full screen" },
+                // _decorate rewrites this row into a "Stop recording" ACTION
+                // while a recording is running. A menu row that descended into
+                // the target picker mid-recording would be offering a choice
+                // that cannot be taken — gsr is already running and the only
+                // thing left to do with it is stop it.
+                { id: "screenrecord", icon: "󰕧", title: "Screenrecord", kind: "menu",
+                  sub: "full screen, portion of screen, window" }
+            ]
+        },
+
+        "tools/capture/screenshot": {
+            title: "Screenshot", icon: "󰹑",
+            rows: [
+                { id: "region",     icon: "󰩭", title: "Portion of screen", kind: "action" },
+                { id: "window",     icon: "󰖯", title: "Window",            kind: "action" },
+                { id: "fullscreen", icon: "󰍹", title: "Full screen",       kind: "action" }
+            ]
+        },
+
+        // Target first, soundtrack second, because the target is the choice you
+        // always have to make and the soundtrack is usually the same one twice
+        // running. Nine leaves rather than one page with two independent
+        // controls: this menu has no widget for "pick one of these AND one of
+        // those", and inventing one for a page reached twice a week is worse
+        // than two taps.
+        "tools/capture/screenrecord": {
+            title: "Screenrecord", icon: "󰕧",
+            rows: [
+                { id: "full",   icon: "󰍹", title: "Full screen",       kind: "menu", sub: "audio options" },
+                { id: "region", icon: "󰩭", title: "Portion of screen", kind: "menu", sub: "audio options" },
+                { id: "window", icon: "󰖯", title: "Window",            kind: "menu", sub: "audio options" }
+            ]
+        },
+
+        "tools/capture/screenrecord/full": {
+            title: "Full screen", icon: "󰍹",
+            rows: [
+                { id: "none",    icon: "󰕧", title: "Only video",            kind: "action" },
+                { id: "desktop", icon: "󰕾", title: "Video + audio",         kind: "action" },
+                { id: "both",    icon: "󰍬", title: "Video + audio + mic",   kind: "action" }
+            ]
+        },
+
+        "tools/capture/screenrecord/region": {
+            title: "Portion of screen", icon: "󰩭",
+            rows: [
+                { id: "none",    icon: "󰕧", title: "Only video",            kind: "action" },
+                { id: "desktop", icon: "󰕾", title: "Video + audio",         kind: "action" },
+                { id: "both",    icon: "󰍬", title: "Video + audio + mic",   kind: "action" }
+            ]
+        },
+
+        // The one with a caveat, and the row says so rather than the user
+        // finding out after the take: gsr's kms backend records a RECTANGLE,
+        // not a window, so a window that moves mid-recording leaves the frame.
+        // See select_window in scripts/screenrecord.sh.
+        "tools/capture/screenrecord/window": {
+            title: "Window", icon: "󰖯",
+            rows: [
+                { id: "none",    icon: "󰕧", title: "Only video",          kind: "action",
+                  trail: "fixed rectangle" },
+                { id: "desktop", icon: "󰕾", title: "Video + audio",       kind: "action",
+                  trail: "fixed rectangle" },
+                { id: "both",    icon: "󰍬", title: "Video + audio + mic", kind: "action",
+                  trail: "fixed rectangle" }
             ]
         },
 
@@ -227,35 +354,46 @@ QtObject {
         // what every other listing on this card already is.
         //
         // Two pages rather than one list, because the question has two forms
-        // and they want different answers. "By palette" is the shortlist that
-        // goes with the colours in force; "All" is everything, for when the
-        // palette is about to change anyway or the answer is simply "that one".
+        // and they want different answers. "By palette" is the set Ahaan sorted
+        // into the palette in force; "All" is everything, for when the palette
+        // is about to change anyway or the answer is simply "that one".
         //
-        // They also read two different COLLECTIONS as of 2026-09-15, and that
-        // is Ahaan's call rather than an implementation detail: his own
-        // ~/Pictures/wallpapers appears under "All" only, and "By palette"
-        // chooses from the omarchy backgrounds — one set per theme, and the
-        // theme names are the palette names. Before that both pages read the
-        // same eighteen images, most of them near-black, so the shortlist came
-        // back as the same eight whatever palette was in force.
+        // They read two different COLLECTIONS, and that is Ahaan's call rather
+        // than an implementation detail. Everything lives under
+        // ~/Pictures/wallpapers since 2026-09-19; his own sit flat at the top
+        // and show under "All" only, and each palette has a <theme>/ directory
+        // beside them that "By palette" shows and nothing else.
         //
-        // scripts/wallpapers.sh is the whole back end and carries the matching
-        // rule, which directory is which, and the fetch. This file knows
-        // nothing about colour distance and nothing about where an image is.
+        // "By palette" is a DIRECTORY, not a match. It used to be a colour
+        // score — every image ranked against the palette background in CIE Lab
+        // and cut at a tuned distance — because 92 downloaded backgrounds had
+        // to be sorted by something and nothing recorded what suited what.
+        // Ahaan sorts his own into the theme directories by hand now, so the
+        // answer is stated rather than estimated, and the estimate was deleted.
+        // His words: "if i am on vantablack palette, wallpapers -> by-palette
+        // shows only ones in the vantablack folder."
+        //
+        // A palette with an empty directory therefore shows an EMPTY PAGE, and
+        // so does "pywal", which is not a theme and has no directory. Both are
+        // correct answers and not gaps to fill — anything put there would be a
+        // wallpaper Ahaan did not choose for that palette.
+        //
+        // scripts/wallpapers.sh is the whole back end and carries which
+        // directory is which. This file knows nothing about where an image is.
         "theme/wallpaper": {
             title: "Wallpapers", icon: "󰸉",
             rows: [
                 { id: "palette", icon: "󰸌", title: "By palette", kind: "menu",
-                  sub: "backgrounds chosen for the colours in force" },
+                  sub: "the ones you sorted into the palette in force" },
                 { id: "all",     icon: "󰋫", title: "All",        kind: "menu",
-                  sub: "your own wallpapers, then every downloaded one" }
+                  sub: "your own, then every themed one" }
             ]
         },
 
         // `thumbs`: the row draws the file itself. Same decision as the Fonts
         // page's renderInOwnFont and the Palette page's swatch — a list of
-        // eighteen filenames is a list of smudges, and the one thing anybody
-        // is choosing between here is what the images LOOK like.
+        // filenames is a list of smudges, and the one thing anybody is
+        // choosing between here is what the images LOOK like.
         //
         // noGroup, for the reason the palette page sets it: grouping folds
         // VARIANTS of one thing behind a text door, and two files sharing a
@@ -263,14 +401,15 @@ QtObject {
         // exactly the wrong place for a picture.
         //
         // noSearch on the by-palette page ONLY, and it is about duplicates
-        // rather than about reach: the two pages list the same files, so
-        // without it every wallpaper that matches the palette answered a root
-        // search twice, once per page. "All" holds every one of them, so
-        // nothing becomes unfindable.
+        // rather than about reach: by-palette lists a strict SUBSET of "All"
+        // (the palette's own directory, which "All" also walks), so without it
+        // every wallpaper sorted into the current theme answered a root search
+        // twice, once per page. "All" holds every one of them, so nothing
+        // becomes unfindable.
         "theme/wallpaper/palette": { title: "By palette", icon: "󰸌", list: "wallpapers-by-palette",
-                                     thumbs: true, noGroup: true, noSearch: true, defer: true, width: 520 },
+                                     thumbs: true, noGroup: true, noSearch: true, width: 520 },
         "theme/wallpaper/all":     { title: "All", icon: "󰋫", list: "wallpapers",
-                                     thumbs: true, noGroup: true, defer: true, width: 520 },
+                                     thumbs: true, noGroup: true, width: 520 },
 
         // ── System ────────────────────────────────────────────────────────
         // The power menu and the power profiles were two finder MODES of their
@@ -552,6 +691,14 @@ QtObject {
     // (see root.search), which is how "privacy" finds the Security page. It is
     // only never drawn.
     function _decorate(key, r) {
+        // Mid-recording the only useful thing this row can do is stop, so it
+        // stops being a door and becomes the button. kind goes menu -> action,
+        // which routes it to _action("tools/capture/screenrecord") below
+        // instead of descending into the target picker.
+        if (key === "tools/capture" && r.id === "screenrecord" && root.recording)
+            return { id: r.id, icon: "󰝤", title: "Stop recording", kind: "action",
+                     trail: "recording" }
+
         if (key === "security/firewall" && r.kind === "menu") {
             const fw = root.fwState
             if (r.id === "zone" && fw.ZONE)
@@ -744,12 +891,18 @@ QtObject {
         root.lists = ({})
         root._queue = []
         // Listings marked `defer` go to the BACK of the queue rather than
-        // being skipped. The two wallpaper pages are the only ones, and the
-        // reason is the cold cache: wallpapers.sh quantises every image the
-        // first time it sees it (~3s for eighteen, once, then cached on mtime),
-        // and _pump runs one listing at a time. Queued in tree order that stall
-        // would sit in front of the fonts listing, which is the one search
-        // actually needs early. Behind it, nothing waits on it.
+        // being skipped. NOTHING is marked that way any more, and the flag is
+        // kept because the next expensive listing will want it.
+        //
+        // The two wallpaper pages were the only ones. The reason was a cold
+        // cache: wallpapers.sh quantised every image the first time it saw it
+        // (~3s), _pump runs one listing at a time, and queued in tree order
+        // that stall sat in front of the fonts listing, which is the one search
+        // actually needs early. On 2026-09-19 the colour scorer was deleted
+        // outright — "By palette" is one directory read now — and both pages
+        // became two find(1) calls. Measured over the 57-image set: 19ms for
+        // "All", 21ms for "By palette", against 519ms and a 3s cold scan
+        // before. Nothing that costs 19ms deserves to be queued last.
         const deferred = []
         for (const key in root.pages) {
             const pg = root.pages[key]
@@ -781,15 +934,16 @@ QtObject {
         if (key === "system" || key === "system/powerprofile") PowerProfiles.refresh()
         // The by-palette wallpaper page is the one listing that goes stale
         // while the menu is OPEN: the palette can be changed a few rows away,
-        // on Theme -> Palette, and everything the page is computed from moves
-        // with it. So it is dropped from the cache on the way in and re-read,
-        // rather than trusted from whenever it was last fetched.
+        // on Theme -> Palette, and the page IS that palette's directory — so
+        // changing it does not reorder the page, it replaces the page. Dropped
+        // from the cache on the way in and re-read, rather than trusted from
+        // whenever it was last fetched.
         //
         // Both keys, because both are entered and both show a stale answer:
-        // the page itself, and the door above it, whose row carries the match
-        // COUNT in its trailing slot. Two fetches when walking through the
-        // door into the page, and that is the whole cost — a warm run is one
-        // cached file and one awk, measured at 0.11s.
+        // the page itself, and the door above it, whose row carries the COUNT
+        // in its trailing slot. Two fetches when walking through the door into
+        // the page, and that is the whole cost — one find(1) over one
+        // directory, measured at 21ms.
         if (key === "theme/wallpaper" || key === "theme/wallpaper/palette") {
             const k = "theme/wallpaper/palette"
             if (root.lists[k] !== undefined) {
@@ -1529,6 +1683,27 @@ QtObject {
             return true
         }
 
+        // The nine screenrecord leaves — three targets x three soundtracks —
+        // matched by PREFIX rather than written out as nine cases. The path
+        // segments ARE the script's two flags (full|region|window and
+        // none|desktop|both), which is why the page ids were chosen to spell
+        // them: the row a user pressed and the command that runs are the same
+        // two words, so the two cannot drift apart the way nine hand-written
+        // cases would.
+        //
+        // BEFORE the switch, not inside it. It was written inside the switch
+        // body but under no `case` label, which JavaScript accepts and never
+        // executes — every one of the nine rows silently did nothing, while the
+        // screenshot rows beside them (real `case` labels) worked, which is
+        // exactly what made it look like a screen-recording problem rather than
+        // a placement one. The system/power/ handler above is the model.
+        if (path.indexOf("tools/capture/screenrecord/") === 0) {
+            const seg = path.substring("tools/capture/screenrecord/".length).split("/")
+            if (seg.length === 2)
+                root._capture("screenrecord.sh", "start --target=" + seg[0] + " --audio=" + seg[1])
+            return true
+        }
+
         switch (path) {
         // hold = true for the ones that exit the moment they finish. pacman
         // prints what it did and pkg-install.sh then returns, which closes the
@@ -1564,6 +1739,26 @@ QtObject {
             root.verifyRequired("Adding a fingerprint", "fp-enroll")
             return false
 
+        // ── Tools ─────────────────────────────────────────────────────────
+        // All four shell out, and all four run the SAME command the keybind
+        // runs — not a second copy of it. hyprpicker is the one that is a bare
+        // binary rather than a script in scriptDir, exactly as ALT+C has it, so
+        // it is wrapped by hand instead of going through _capture.
+        case "tools/colorpicker":
+            root._sh(root._q(root.scriptDir + "/capture-wait.sh") + " hyprpicker -a")
+            break
+        case "tools/ocr":         root._capture("ocr-region.sh", ""); break
+
+        case "tools/capture/screenshot/region":     root._capture("screenshot.sh", "region"); break
+        case "tools/capture/screenshot/window":     root._capture("screenshot.sh", "window"); break
+        case "tools/capture/screenshot/fullscreen": root._capture("screenshot.sh", "output"); break
+
+        // The decorated Stop row. No wait-for-menu wrapper: stopping draws
+        // nothing on screen, so there is nothing for the menu to be in front of.
+        case "tools/capture/screenrecord":
+            root._sh(root._q(root.scriptDir + "/screenrecord.sh") + " stop")
+            break
+
         case "setup/monitors":
             // nwg-displays, not a panel of our own: it is what wrote the
             // monitors.lua the compositor is running, and it is the only thing
@@ -1597,6 +1792,19 @@ QtObject {
         shProc.command = ["bash", "-c",
             "setsid bash -c \"$1\" </dev/null >/dev/null 2>&1 &", "_", cmd]
         shProc.running = true
+    }
+
+    // A capture tool, launched THROUGH capture-wait.sh so it does not draw its
+    // picker over a settings menu that has not finished unmapping. Every row
+    // under Tools goes out this way; see that script's header for the
+    // measurement. args is a pre-split flag string, not user input — each word
+    // is quoted separately so a flag never arrives as one argument.
+    function _capture(script, args) {
+        var cmd = root._q(root.scriptDir + "/capture-wait.sh") + " " +
+                  root._q(root.scriptDir + "/" + script)
+        const parts = String(args || "").split(" ").filter(a => a !== "")
+        for (let i = 0; i < parts.length; i++) cmd += " " + root._q(parts[i])
+        root._sh(cmd)
     }
 
     // A terminal window for the things that are genuinely interactive: an fzf

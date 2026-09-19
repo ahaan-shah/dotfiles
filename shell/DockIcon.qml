@@ -69,7 +69,7 @@ Item {
 
     // ── Running / active state (queried from WindowTracker) ───────
     readonly property var   matchedWindows: WindowTracker.windowsFor(windowClass, "")
-    // ── what the running dots are drawn with ──────────────────────────────
+    // ── what the running dots and the row separator are drawn with ────────
     // The palette's FOREGROUND, not white. The dots were hardcoded white, which
     // is invisible on a light palette: the pill under them is color0 at 0.82
     // alpha (see Dock.qml), and on Catppuccin Latte or White that is a
@@ -84,9 +84,14 @@ Item {
     // but nothing promises it contrasts with color0, and a dot nobody can see is
     // the bug being fixed.
     //
+    // 2026-09-18: the separator bar below was the same bug, left behind by the
+    // dot pass, so it now reads this too — hence the rename from `dotColor`.
+    // Measured on the flexoki-light palette in use that day (color0 #FFFCF0,
+    // foreground #100F0F): white on the pill is 1.03:1, foreground is 18.62:1.
+    //
     // Declared as a `color` rather than read inline: WalColors exposes strings,
     // and .r/.g/.b below need the coerced type.
-    readonly property color dotColor: WalColors.foreground
+    readonly property color fg: WalColors.foreground
 
     readonly property bool  isRunning:      matchedWindows.length > 0
     readonly property bool  isActive:       matchedWindows.length > 0 &&
@@ -144,7 +149,9 @@ Item {
         anchors.centerIn: parent
         width:  1
         height: root.baseSize * 0.65
-        color:  Qt.rgba(1, 1, 1, 0.30)
+        // Same foreground as the dots, same reason: a white hairline on a
+        // near-white pill is not a hairline, it is nothing.
+        color:  Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.30)
     }
 
     // ── Icon container ────────────────────────────────────────────
@@ -206,6 +213,9 @@ Item {
                          || (iconImg.status === Image.Ready && iconImg.paintedWidth <= 0)
                 anchors.fill: parent
                 radius: parent.width * 0.22
+                // Deliberately NOT palette-driven, and so is the letter on it:
+                // this tile is its own fixed ground, so white is legible on it
+                // whatever pywal is doing. Left alone by the 2026-09-18 sweep.
                 color:  "#5A72D8"
 
                 Text {
@@ -238,8 +248,8 @@ Item {
             // Full strength when this app is focused, half when it is merely
             // running — the same two-step the white version had, so only the
             // hue changes and the "which one is focused" reading does not.
-            color:  root.isActive ? root.dotColor
-                                  : Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.50)
+            color:  root.isActive ? root.fg
+                                  : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.50)
             anchors.verticalCenter: parent.verticalCenter
 
             Behavior on color { ColorAnimation { duration: 150 } }
@@ -248,14 +258,14 @@ Item {
         Rectangle {
             visible: root.matchedWindows.length >= 2
             width:  4; height: 4; radius: 2
-            color:  Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.55)
+            color:  Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.55)
             anchors.verticalCenter: parent.verticalCenter
         }
         // Dot 3 — shown when 3 windows open
         Rectangle {
             visible: root.matchedWindows.length >= 3
             width:  4; height: 4; radius: 2
-            color:  Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.55)
+            color:  Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.55)
             anchors.verticalCenter: parent.verticalCenter
         }
     }
@@ -271,8 +281,8 @@ Item {
         width:  16
         height: 4
         radius: 2
-        color:  root.isActive ? root.dotColor
-                              : Qt.rgba(root.dotColor.r, root.dotColor.g, root.dotColor.b, 0.50)
+        color:  root.isActive ? root.fg
+                              : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.50)
 
         Behavior on color { ColorAnimation { duration: 150 } }
     }

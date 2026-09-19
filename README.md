@@ -1,8 +1,8 @@
 # My Archlinux dotfiles
 
-**This is a totally personal setup, not a one-click installer.**
+**This is a totally personal setup, and also ships with a simple installer.**
 
-**So cherry-pick whatever's cool to you!**
+**If you don't want the whole setup, cherry-pick whatever's cool to you!**
 
 ## Preview ✨
 
@@ -12,28 +12,37 @@
 
 ```bash
 git clone https://github.com/ahaan-shah/dotfiles.git ~/.config/dotfiles
+~/.config/dotfiles/install/install.sh
 ```
 
 It uses:  
-- Hyprland 0.56+ (the config is `hyprland.lua`, not `.conf`)  
-- Quickshell  
-- and a decent pile of CLI tools  
+**- Hyprland  
+- Quickshell**
+
+That's about it.
 
 Two Quickshell apps, both autostarted from `hypr/hyprland.lua`:
 
 - `shell/` — the entire desktop in one process: bar and its dropdowns,
   notifications, OSD, dock, Alt+Tab switcher, wallpaper, and the launcher with
-  its settings menu. It was three separate apps and 395 MB of RAM; merging them
-  cut it to 200.
+  its settings menu.
 - `lockscreen/` — spawned per lock, not a daemon.
 
-`SUPER+Return` opens the settings menu, which is where most of the system is
-actually configured: packages, AUR, web apps, monitors, keybinds, window rules,
-defaults, firewall, fingerprints, power. 22 palettes plus pywal, and every
-surface on screen reads the same colours.
+`SUPER+Return` opens the settings menu, which is where most of the system can easily be configured: 
+- Repo packages  
+- AUR  
+- Web Apps  
+- Monitors  
+- Keybinds  
+- Window rules  
+- Defaults  
+- Themes  
+- Tools  
+- Power   
+- Security 
 
 Wallpapers live in `Pictures/wallpapers/` and are picked under Settings →
-Theme → Wallpapers, which also has a **By palette** page that ranks them by how
+Theme → Wallpapers, which also has a "by palette"" page that ranks them by how
 close each image's dominant colours sit to the palette you're on.
 
 ## Rebuilding from scratch

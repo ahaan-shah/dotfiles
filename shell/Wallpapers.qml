@@ -19,8 +19,9 @@ import Quickshell.Io
 // picker became a settings page instead (Settings.qml, Theme → Wallpapers) and
 // the keybind went with it. A settings listing comes from a script, like every
 // other listing on that card, so the directory walk moved to
-// scripts/wallpapers.sh — which also has to answer a question this file never
-// could: which of those images goes with the palette in force.
+// scripts/wallpapers.sh — which has to walk two shapes rather than one:
+// Ahaan's own, flat at the top of ~/Pictures/wallpapers, and the per-palette
+// <theme>/ directories beside them that the "By palette" page reads.
 //
 // What is left is the half nothing replaced. Settings.activate() calls it with
 // the absolute path the listing carried.

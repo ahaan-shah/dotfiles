@@ -92,6 +92,12 @@ done
 png_complete "$DIR/$FILE" ||
     echo "screenshot.sh: $FILE still incomplete after 4s; preview may not render" >&2
 
+# Text only -- no -i, as of Ahaan's ask that neither capture notification carry
+# a thumbnail.  Note that the IEND wait ABOVE stays: it was written because a
+# partial PNG handed to -i rendered as a magenta checkerboard, and that reason
+# is gone, but it is also the only test this script has for "did the capture
+# actually finish writing", which is still worth having and still decides
+# whether this notification fires at all.
 notify-send "Screenshot Saved" \
             "Image saved in ~/Pictures/Screenshots/ and copied to clipboard" \
-            -a Hyprshot -i "$DIR/$FILE"
+            -a Hyprshot

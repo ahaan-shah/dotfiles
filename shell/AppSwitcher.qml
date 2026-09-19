@@ -28,6 +28,31 @@ Item {
     readonly property string _walBg:     WalColors.color0
     readonly property string _walAccent: WalColors.color7
 
+    // ── and everything drawn ON the pill ──────────────────────────────────
+    // The window label, the selection wash and the empty state were all
+    // hardcoded white. The pill is color0 at 0.92, and on the flexoki-light
+    // palette in use on 2026-09-18 that is #FFFCF0 — white on it measures
+    // 1.03:1, which is why Ahaan's screenshot shows the two Zen Browser
+    // titles as ghosts. foreground measures 18.62:1 on the same pair.
+    //
+    // Same reasoning as the dock's running dots (DockIcon.qml, `fg`):
+    // foreground-against-background is the one pair pywal guarantees legible,
+    // and the pill IS the background. On the dark palettes this file was
+    // written against, foreground is already near-white, so those are
+    // unchanged by this.
+    //
+    // Measured off the deployed switcher with grim rather than predicted: the
+    // pill renders as (244,241,229) and an unselected label's stem as
+    // (119,117,112), which is 4.07:1. That is the DIM half of the two-step —
+    // the selected label is full foreground, ~18:1 — and it is left at 0.55
+    // because 4.07:1 reads cleanly at 14px in the capture. If it ever needs to
+    // be louder, this alpha is the whole fix.
+    //
+    // A `color`, not a `string` like the two above, because _fgA() needs
+    // .r/.g/.b and WalColors exposes strings.
+    readonly property color _walFg: WalColors.foreground
+    function _fgA(a) { return Qt.rgba(root._walFg.r, root._walFg.g, root._walFg.b, a) }
+
     // ── Public API ────────────────────────────────────────────────
     function next() {
         if (!shown) _open()
@@ -232,8 +257,8 @@ Item {
                         width:  panel.cardSize
                         height: panel.cardSize
                         radius: 14
-                        color:        card.sel ? Qt.rgba(1,1,1,0.15) : "transparent"
-                        border.color: card.sel ? Qt.rgba(1,1,1,0.35) : "transparent"
+                        color:        card.sel ? root._fgA(0.15) : "transparent"
+                        border.color: card.sel ? root._fgA(0.35) : "transparent"
                         border.width: 2
                         Behavior on color        { ColorAnimation { duration: 100 } }
                         Behavior on border.color { ColorAnimation { duration: 100 } }
@@ -265,6 +290,9 @@ Item {
                             anchors.fill: parent
                             radius: 12
                             visible: img.status !== Image.Ready
+                            // Its own fixed dark ground, so the white letter
+                            // on it stays legible on any palette — left alone
+                            // by the 2026-09-18 foreground sweep.
                             color:   Qt.rgba(0.25, 0.25, 0.30, 1)
                             Text {
                                 anchors.centerIn: parent
@@ -305,7 +333,7 @@ Item {
                         }
 
                         visible:         text !== ""
-                        color:           card.sel ? "white" : Qt.rgba(1,1,1,0.55)
+                        color:           card.sel ? root._walFg : root._fgA(0.55)
                         font.pixelSize:  14
                         font.family:     UiConfig.fontFamily
                         font.weight:     card.sel ? Font.Medium : Font.Normal
@@ -324,7 +352,7 @@ Item {
             anchors.centerIn: parent
             visible: root.appList.length === 0
             text:  "No windows open"
-            color: Qt.rgba(1,1,1,0.8)
+            color: root._fgA(0.80)
             font.family:    UiConfig.fontFamily
             font.pixelSize: 14
         }

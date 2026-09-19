@@ -94,18 +94,46 @@ PanelWindow {
         id: imgA
         anchors.fill: parent
         fillMode: Image.PreserveAspectCrop
-        // Decode bounded to the output. A wallpaper is usually larger than the
-        // screen and decoding it at native size costs real memory for pixels
-        // that cannot be drawn — the same trap finder's preview pane documents,
-        // where a 6000x4000 photo is ~96 MB as a pixmap. At 2880x1620 this is
-        // ~18 MB, and two of them exist only across a fade.
+        // Decode bounded to the output, in PHYSICAL pixels.
         //
-        // The trade, stated: Qt fits the decode INSIDE this box preserving
-        // aspect, so an image far wider than the screen (a panorama) decodes
-        // shorter than the screen and is then upscaled by the crop. Soft, not
-        // broken, and not the shape of anything in ~/Pictures/wallpapers.
-        sourceSize.width:  win.screen.width
-        sourceSize.height: win.screen.height
+        // ── The * devicePixelRatio is the whole of this, and it was missing ──
+        // `screen.width` is LOGICAL — 1440 on this 2880x1620 panel at scale 2 —
+        // and Qt honours sourceSize verbatim. So the wallpaper decoded at half
+        // the panel's resolution and the surface then stretched it 2x, on every
+        // image, since the move off hyprpaper on 2026-09-14. Reported as "all my
+        // wallpapers appear blur now, even the ones that looked perfectly fine
+        // before", and measured rather than reasoned about: a grim capture of a
+        // window-free strip of the live desktop matched a 1440x810-then-upscaled
+        // render at RMSE 0.0024 against 0.0131 for a true 2880x1620 render, with
+        // edge energy 43 against 102. It was drawing half the pixels it had.
+        //
+        // The comment that used to sit here said "at 2880x1620 this is ~18 MB",
+        // which is the arithmetic for the PHYSICAL size — so the intent was
+        // always this and only the expression was wrong. Worth knowing: every
+        // other Image in this repo that needs the same correction hardcodes
+        // `* 2` (DockIcon, SettingsPanel, Bar's SVG glyphs). This asks the
+        // screen instead, because a hardcoded 2 is exactly the machine-specific
+        // constant the rest of the repo keeps out of configs.
+        //
+        // devicePixelRatio carries no change signal of its own, but width and
+        // height notify through geometryChanged and the binding reads all
+        // three — so a scale change re-evaluates this and picks up the new
+        // ratio with it.
+        //
+        // Memory is unchanged from what that comment claimed: 2880x1620 RGBA is
+        // ~18 MB, and two exist only across a fade. Decoding at native size
+        // instead would be ~74 MB each for the 5760x3240 images here.
+        //
+        // The trade that remains, now with numbers: Qt fits the decode INSIDE
+        // this box preserving aspect, so an image whose aspect is not the
+        // screen's decodes short on one axis and is upscaled by the crop.
+        // Measured over the 17 wallpapers here, 15 are exactly 16:9 and need no
+        // upscale at all; lunar-tides (5120x4266) needs 1.48x and space-arc
+        // (1893x4096, a portrait) needs 3.85x. Fixing that properly means
+        // decoding to COVER rather than to fit, which needs the image's aspect
+        // before the decode — deliberately not done here.
+        sourceSize.width:  Math.round(win.screen.width  * win.screen.devicePixelRatio)
+        sourceSize.height: Math.round(win.screen.height * win.screen.devicePixelRatio)
         // Synchronous, and only this one: it holds the FIRST wallpaper, and a
         // session that comes up showing black for a beat before the desktop
         // appears is the one moment this is visible. The lock screen's own
@@ -126,8 +154,9 @@ PanelWindow {
         id: imgB
         anchors.fill: parent
         fillMode: Image.PreserveAspectCrop
-        sourceSize.width:  win.screen.width
-        sourceSize.height: win.screen.height
+        // Physical pixels, for the reason spelled out on imgA above.
+        sourceSize.width:  Math.round(win.screen.width  * win.screen.devicePixelRatio)
+        sourceSize.height: Math.round(win.screen.height * win.screen.devicePixelRatio)
         asynchronous: true
         cache: false
         opacity: win._frontIsA ? 0 : 1

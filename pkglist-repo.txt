@@ -26,6 +26,7 @@ edk2-ovmf
 efibootmgr
 fastfetch
 fd
+ffmpegthumbnailer
 figlet
 firewalld
 flatpak
@@ -42,9 +43,11 @@ gnome-clocks
 gnome-disk-utility
 gnome-text-editor
 go
+gpu-screen-recorder
 gradia
 greetd
 greetd-tuigreet
+gst-libav
 gst-plugin-pipewire
 gvfs
 gvfs-mtp

@@ -92,11 +92,26 @@ sync "$HOME/.config/btop"        "$DOTDIR/btop"
 sync "$HOME/.config/scripts"     "$DOTDIR/scripts"
 sync "$HOME/.config/gtk-3.0"     "$DOTDIR/gtk-3.0"
 sync "$HOME/.config/gtk-4.0"     "$DOTDIR/gtk-4.0"
+# This carries the themed backgrounds too since 2026-09-19 — they moved in
+# beside Ahaan's own, one <theme>/ directory each, and he decided the mirror
+# publishes them rather than being taught to skip them. That is +37 MB and +40
+# files of omarchy's images in the public repo, MIT-licensed, with
+# wallpapers/.source naming the commit they came from. rsync -a takes the
+# subdirectories with no change needed here; the line is annotated because the
+# SIZE of what it publishes changed without the line itself changing.
 sync "$HOME/Pictures/wallpapers" "$DOTDIR/wallpapers"
 
 # ---------------- SINGLE FILES ----------------
-copy "$HOME/.zshrc"                   "$DOTDIR/shell/.zshrc"
-copy "$HOME/.bashrc"                  "$DOTDIR/shell/.bashrc"
+# shellrc/, not shell/ — and the rename is not cosmetic. ~/.config/shell is the
+# Quickshell config as of 2026-09-14, so it syncs to $DOTDIR/shell like every
+# other config directory does, and these two would have been sitting inside it.
+# The sync above is `rsync --delete`, so the collision was live: it would have
+# deleted both of these from the mirror on every run and this copy would have
+# put them back, leaving a directory that is half a desktop and half a login
+# shell. install.sh reads them from the new name, with a fallback to the old one
+# for a mirror taken before this.
+copy "$HOME/.zshrc"                   "$DOTDIR/shellrc/.zshrc"
+copy "$HOME/.bashrc"                  "$DOTDIR/shellrc/.bashrc"
 copy "$HOME/.config/starship.toml"    "$DOTDIR/starship/starship.toml"
 copy "$HOME/.config/mimeapps.list"    "$DOTDIR/mimeapps.list"
 sync "$HOME/.config/spicetify/Themes/pywaldynamic" "$DOTDIR/spicetify/Themes/pywaldynamic"

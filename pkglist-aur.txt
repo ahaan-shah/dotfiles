@@ -1,6 +1,5 @@
 bibata-cursor-theme
 brave-bin
-catppuccin-gtk-theme-mocha
 cliamp
 clock-tui
 freesurfer-bin

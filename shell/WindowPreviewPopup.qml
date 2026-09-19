@@ -51,6 +51,23 @@ Item {
 
     property int _hoverIndex: -1
 
+    // The tile wash and the window title under it were hardcoded white, and
+    // the card they sit on is color0 at 0.92 — so on a light palette both
+    // vanished: #FFFCF0 with white on it measures 1.03:1 (flexoki-light,
+    // 2026-09-18), against 18.62:1 for foreground. Same fix and same reason as
+    // the dock's running dots (DockIcon.qml's `fg`) and the switcher's labels:
+    // foreground-on-background is pywal's one guarantee, and the card is the
+    // background. Dark palettes are unaffected — their foreground is already
+    // near-white, which is what these were.
+    //
+    // Measured on the deployed popup with grim: a title stem is (16,15,15) on
+    // a (231,229,217) tile — 15.14:1. The hover wash was checked the same way,
+    // with the pointer walked into a tile: hovered (213,210,199) against
+    // unhovered (231,229,217), i.e. it now DARKENS by ~18 levels where the
+    // white version would have lightened by ~3 and read as nothing.
+    readonly property color _walFg: WalColors.foreground
+    function _fgA(a) { return Qt.rgba(root._walFg.r, root._walFg.g, root._walFg.b, a) }
+
     Rectangle {
         id: card
         anchors.centerIn: parent
@@ -100,8 +117,8 @@ Item {
                     height: 92
                     radius: 10
                     color: root._hoverIndex === index
-                        ? Qt.rgba(1, 1, 1, 0.16)
-                        : Qt.rgba(1, 1, 1, 0.07)
+                        ? root._fgA(0.16)
+                        : root._fgA(0.07)
                     Behavior on color { ColorAnimation { duration: 120 } }
 
                     // Grey per-window border, matching macswitcher's own
@@ -140,7 +157,7 @@ Item {
                             wrapMode:         Text.Wrap
                             text:  tile.modelData.title || tile.modelData.initialTitle
                                    || tile.modelData.class
-                            color: "white"
+                            color: root._walFg
                             font.family:    UiConfig.fontFamily
                             font.pixelSize: 12
                         }

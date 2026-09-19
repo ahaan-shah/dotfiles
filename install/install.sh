@@ -1259,9 +1259,29 @@ phase_theming() {
     wanted="$(head -1 "$DOTDIR/../.local/state/hyprahaan/wallpaper" 2>/dev/null || true)"
     [ -n "$wanted" ] ||
         wanted="$(sed -n 's/^\s*path\s*=\s*//p' "$DOTDIR/hypr/hyprpaper.conf" 2>/dev/null | head -1)"
-    if [ -n "$wanted" ] && [ -f "$HOME/Pictures/wallpapers/$(basename "$wanted")" ]; then
-        wp="$HOME/Pictures/wallpapers/$(basename "$wanted")"
+    # What is recorded is the SOURCE machine's absolute path, so only the part
+    # below the wallpapers directory can be trusted here — a different username
+    # makes the prefix wrong. That used to be `basename`, which was right for as
+    # long as every wallpaper sat flat in one directory. Since 2026-09-19 the
+    # themed tree lives in there too, one level down as <theme>/<file>, and a
+    # basename lookup misses every one of those: it would find no
+    # "1-fjord.webp" at the top level and fall through to the first image
+    # alphabetically, quietly installing the wrong wallpaper on a machine that
+    # had recorded a perfectly valid one. Everything after the last
+    # "wallpapers/" keeps the theme component when there is one and still
+    # resolves a flat name to itself.
+    local rel=""
+    case "$wanted" in
+        */wallpapers/*) rel="${wanted##*/wallpapers/}" ;;
+        ?*)             rel="$(basename "$wanted")" ;;
+    esac
+    if [ -n "$rel" ] && [ -f "$HOME/Pictures/wallpapers/$rel" ]; then
+        wp="$HOME/Pictures/wallpapers/$rel"
     else
+        # -maxdepth 1 stays: with nothing recorded, prefer one of Ahaan's own
+        # flat images over the 40 themed ones below them. A machine with no
+        # history should come up on a picture he chose, not on whichever theme
+        # happens to sort first.
         wp="$(find "$HOME/Pictures/wallpapers" -maxdepth 1 -type f \
               \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | sort | head -1)"
     fi
