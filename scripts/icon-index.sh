@@ -118,6 +118,18 @@ for sz in 128x128 64x64 48x48 32x32 24x24 scalable; do
             "$HOME/.local/share/flatpak/exports/share/icons/hicolor/$sz/apps" \
             -maxdepth 1 \( -name '*.svg' -o -name '*.png' \) 2>/dev/null
 done
+# /usr/share/pixmaps is the oldest icon location there is — it predates the
+# theme spec — and a handful of packages still ship their only icon there and
+# into no theme at all. Found through chatgpt-bin: its .desktop says
+# Icon=chatgpt, the single file on this system is /usr/share/pixmaps/chatgpt.png,
+# nothing here looked in that directory, and the launcher drew a letter tile
+# for an app that ships a perfectly good icon.
+#
+# LAST, after the theme chain and the flatpak exports, because an icon a theme
+# ships under the same name is the theme's deliberate choice and should win
+# over the app's own. maxdepth 1 and no recursion: this directory is flat by
+# convention and has subdirectories that are not icon sets.
+find -L /usr/share/pixmaps -maxdepth 1 \( -name '*.svg' -o -name '*.png' \) 2>/dev/null
 } | awk '{ n = $0; sub(/.*\//, "", n); sub(/\.(svg|png)$/, "", n); if (!(n in seen)) { seen[n]; print } }'
 
 exit 0
