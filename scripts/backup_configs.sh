@@ -90,6 +90,19 @@ sync "$HOME/.config/fum"         "$DOTDIR/fum"
 # fresh machine silently got stock btop settings.
 sync "$HOME/.config/btop"        "$DOTDIR/btop"
 sync "$HOME/.config/scripts"     "$DOTDIR/scripts"
+# Neovim, since 2026-09-20: the LazyVim starter plus the two files that make it
+# reproducible rather than merely present. lazy-lock.json pins every plugin to
+# the commit this machine is actually running, so a rebuild gets THIS set of
+# plugins and not whatever upstream happens to be that day, and lazyvim.json
+# records which LazyExtras are switched on. ~80 KB, no machine-specific content
+# — checked for absolute homes and addresses before it was added here, because
+# a new tree in this list is a new tree in a public repo.
+#
+# The plugins themselves are NOT here: they live in ~/.local/share/nvim, which
+# is a few hundred MB of cloned git repositories that lazy.nvim restores from
+# the lockfile on first launch. Mirroring them would publish other people's
+# repositories to look like ours.
+sync "$HOME/.config/nvim"        "$DOTDIR/nvim"
 sync "$HOME/.config/gtk-3.0"     "$DOTDIR/gtk-3.0"
 sync "$HOME/.config/gtk-4.0"     "$DOTDIR/gtk-4.0"
 # This carries the themed backgrounds too since 2026-09-19 — they moved in
@@ -112,6 +125,12 @@ sync "$HOME/Pictures/wallpapers" "$DOTDIR/wallpapers"
 # for a mirror taken before this.
 copy "$HOME/.zshrc"                   "$DOTDIR/shellrc/.zshrc"
 copy "$HOME/.bashrc"                  "$DOTDIR/shellrc/.bashrc"
+# .vimrc joins them for the same structural reason rather than any similarity
+# of content: it is a dotfile in $HOME, not under ~/.config, and shellrc/ is
+# where this mirror keeps those. It is small and it is load-bearing — Arch's
+# vim is built with -clipboard, so without this file plain `vim` on a fresh
+# machine has no working copy or paste at all (see the file's own header).
+copy "$HOME/.vimrc"                   "$DOTDIR/shellrc/.vimrc"
 copy "$HOME/.config/starship.toml"    "$DOTDIR/starship/starship.toml"
 copy "$HOME/.config/mimeapps.list"    "$DOTDIR/mimeapps.list"
 sync "$HOME/.config/spicetify/Themes/pywaldynamic" "$DOTDIR/spicetify/Themes/pywaldynamic"

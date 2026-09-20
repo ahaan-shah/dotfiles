@@ -326,8 +326,11 @@ phase_configs() {
     # before that still has. They are stale rather than harmful — nothing
     # starts them any more — and removing another machine's directories is not
     # this installer's business, so they are left alone and simply not deployed.
+    # nvim is the LazyVim config (2026-09-20). Only the config travels; the
+    # plugins are restored by lazy.nvim itself on first launch, pinned to
+    # lazy-lock.json, which is why that file is mirrored with it.
     for d in shell lockscreen \
-             kitty cava fastfetch neofetch fum btop mpv yazi gtk-3.0 gtk-4.0; do
+             kitty cava fastfetch neofetch fum btop mpv yazi gtk-3.0 gtk-4.0 nvim; do
         deploy_dir "$DOTDIR/$d" "$HOME/.config/$d" || true
     done
 
@@ -354,8 +357,12 @@ phase_configs() {
     # reason; it is applied here rather than asked of the rc files themselves,
     # because for a mirror-only file the LIVE copy is the source of truth and
     # the installer does not get to edit it upstream.
+    # .vimrc is in this loop rather than beside it because it lands in the same
+    # place from the same directory. It carries no /home paths today, so the
+    # rewrite below is a no-op for it — which is the point: a file that gains
+    # one later is already covered.
     local rc
-    for rc in .zshrc .bashrc; do
+    for rc in .zshrc .bashrc .vimrc; do
         # shellrc/ since 2026-09-14: $DOTDIR/shell is the Quickshell config now
         # (it was taskbar + macshell + finder), and these two rc files used to
         # live in a directory of that name. The old path is still read so a
@@ -1619,8 +1626,8 @@ phase_verify() {
     # purpose is to be read before it is trusted.
     foreign="$(grep -rhoI --exclude='*.bak*' --exclude='backup_configs.sh' \
                  -E '/home/[A-Za-z0-9_.-]+' \
-                 "$HOME/.config"/{hypr,shell,lockscreen,scripts} \
-                 "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null \
+                 "$HOME/.config"/{hypr,shell,lockscreen,scripts,nvim} \
+                 "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.vimrc" 2>/dev/null \
                | sort -u | grep -vx "/home/$USER" || true)"
     if [ -n "$foreign" ]; then
         bad "deployed configs reference another machine's home: $(echo "$foreign" | tr '\n' ' ')"
