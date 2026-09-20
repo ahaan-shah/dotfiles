@@ -11,7 +11,6 @@ breeze-icons
 brightnessctl
 btop
 cava
-chatgpt-bin
 chromium
 cmake
 cmatrix
