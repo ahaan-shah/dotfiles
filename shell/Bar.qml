@@ -2783,6 +2783,440 @@ Scope {
         }
     }
 
+    // The agents module's icon: the little bot, drawn rather than set in a font.
+    //
+    // It replaces the md-robot glyph that stood there until 2026-09-20, from a
+    // reference image Ahaan sent — a round blob with two eyes. The ring of
+    // usage that surrounds it in that reference is deliberately NOT here, at
+    // his ask: a ring around a 14px disc is about 2px of stroke carrying a
+    // percentage that is already one click away in the panel. (Which is the
+    // battery ring's argument run backwards — there the ring IS the reading,
+    // and there is nothing inside it competing for the same pixels.)
+    //
+    // Monochrome, like every other icon on this bar: one fill in col7, hover
+    // to col9 — and the eyes are HOLES rather than dark shapes. A painted eye
+    // needs a colour, and the only honest one is the island's own background,
+    // which is colBg at alpha .7 over the wallpaper: an opaque copy of it
+    // would be a slightly wrong shade of whatever happens to be behind the bar
+    // at that moment. OddEvenFill punches them instead, so what shows through
+    // an eye is literally what is behind the bar.
+    component AgentBot: Item {
+        id: bot
+        property color baseColor: root.col7
+        property color hoverColor: root.col9
+        property string tip: ""
+        signal leftClicked()
+        signal rightClicked()
+        signal scrolledUp()
+        signal scrolledDown()
+
+        // 14, where the battery ring next to it is 16. A SOLID shape at the
+        // same diameter as an outline one out-weighs it — mocked at real size
+        // in four variants (D13 to D15) before any of this was written, and 16
+        // read as a dot on the bar rather than as a face. The item still
+        // claims the 20px a BarLabel occupies, so the island geometry is
+        // exactly what it was when this was a glyph.
+        readonly property real headSize: 14
+        implicitHeight: 20
+        implicitWidth: headSize + 10             // BarLabel's 5px padding, both sides
+
+        // Not readonly: a Behavior cannot attach to a read-only property. Same
+        // 200ms fade BarLabel and BatteryRing use, so the three hover alike.
+        property color liveColor: hover.hovered ? hoverColor : baseColor
+        Behavior on liveColor { ColorAnimation { duration: 200; easing.type: Easing.InOutQuad } }
+
+        // ── The eyes are alive ────────────────────────────────────────────
+        // Ahaan's ask, and the whole character of the thing: they look around
+        // and they dilate. Three properties, all in PIXELS at the head's own
+        // scale, so the arcs below read as geometry rather than as a transform
+        // stack:
+        //
+        //   gazeX/gazeY  where the pair is pointed, both eyes together —
+        //                they are one creature's eyes, not two independent
+        //                ones, and moving them apart reads as a fault
+        //   dilate       a multiplier on both radii
+        //   lid          a multiplier on the VERTICAL radius only, which is
+        //                what a blink is
+        //
+        // Nothing here runs continuously. Each is a Behavior'd property moved
+        // by a timer, so the icon repaints in short bursts and is entirely
+        // static between them.
+        //
+        // What that costs: NOTHING MEASURABLE. Three 20s samples of the
+        // shell's own CPU time with the gaze and blink timers running —
+        // 375 / 363 / 357 ticks — against three with both stopped —
+        // 337 / 366 / 381. The animated mean is inside the static spread, so
+        // this is below the noise floor of the instrument, and the honest
+        // claim is "not distinguishable", not a number. (A single pair of
+        // samples would have read 390 against 337 and been written up as
+        // 2.6 points of a core. It was run three times each because a bar
+        // item that animates for as long as an agent is up is exactly the
+        // kind of thing that deserves more than one reading.)
+        property real gazeX: 0
+        property real gazeY: 0
+        property real dilate: 1
+        property real lid: 1
+
+        // Set by the module below to the panel's own visibility. While it is
+        // true the bot holds still and looks straight out — Ahaan's ask, and
+        // it is the right behaviour for a reason beyond liking it: the panel
+        // is a thing you opened to read, and an icon still wandering above it
+        // is movement in the corner of the eye of someone trying to read
+        // numbers. It keeps blinking, because a face that stops blinking
+        // entirely stops looking alive and starts looking switched off.
+        property bool attentive: false
+        onAttentiveChanged: {
+            if (bot.attentive) {
+                gazeTimer.stop();
+                bot.gazeX = 0; bot.gazeY = 0;      // the Behaviors above turn it forward
+                bot.hold();
+            } else if (bot.visible) {
+                bot.look();                        // straight back to wandering
+                gazeTimer.restart();
+            }
+        }
+
+        // The steady, slightly-wide size it settles to while the panel is up.
+        // 1.15 sits between the idle floor of 1.0 and the click reaction's
+        // 1.32, so attention reads as held rather than as either resting or
+        // startled, and it is reached slowly: this is the tail of a reaction,
+        // not a second one.
+        function hold() {
+            idleSwell.to = 1.15;
+            idleSwell.duration = 520;
+            idleSwell.restart();
+        }
+
+        // 340ms, eased at BOTH ends. This was 170ms OutCubic on the argument
+        // that real eyes saccade — they snap and hold — and that is true of
+        // real eyes and wrong for this face: Ahaan's note is "a chill smooth
+        // turn". A snap at 14px reads as a twitch, because the whole travel
+        // is about two pixels and there is nothing in between to see; the
+        // slower ease is what makes it a turn you can watch happen.
+        Behavior on gazeX { NumberAnimation { duration: 340; easing.type: Easing.InOutQuad } }
+        Behavior on gazeY { NumberAnimation { duration: 340; easing.type: Easing.InOutQuad } }
+        // A pupil is slower than a glance and is not a snap, so this one eases
+        // both ends and takes more than twice as long.
+        //
+        // An explicit animation and NOT a Behavior, unlike the two above, and
+        // the difference is load-bearing. A Behavior cannot be stopped: when
+        // the startle below began while an idle swell was still in flight,
+        // BOTH wrote `dilate` on the same frames — traced, with the two series
+        // interleaved at identical timestamps (1.103/1.181, 1.107/1.259, …)
+        // and the property left creeping toward the stale target long after
+        // the reaction had ended. One animator that can be told to stop is
+        // what makes the pop start from wherever the face actually is.
+        NumberAnimation {
+            id: idleSwell
+            target: bot; property: "dilate"
+            duration: 420; easing.type: Easing.InOutSine
+        }
+
+        // How far the pair may travel. Bounded so the eyes never reach the rim
+        // — at 14px an eye touching the edge stops reading as an eye and turns
+        // the head into a crescent. The margin is the head's radius less the
+        // eye's own offset, its widest dilated radius and 1px of white.
+        // ── How far the pair may travel ───────────────────────────────────
+        // Solved per direction, not picked as a box. The first two versions
+        // used a fixed ellipse sized against the WORST direction, which is
+        // what made the wander look small: the tightest case is sideways,
+        // where an eye already sits 2.7px off centre, and every other
+        // direction was then held to that same 1px because one number had to
+        // cover all of them. Ahaan's note — "the rotation can be more for the
+        // look around part" — is that showing up on the bar.
+        //
+        // So the limit is computed from the geometry instead. For a glance in
+        // direction d, an eye's centre travels from its resting c0 along d,
+        // and it must stay inside a circle of Rmax = head radius less the
+        // widest the eye can dilate to less a hair of margin. |c0 + r·d| =
+        // Rmax is a quadratic in r, and its positive root is exactly how far
+        // that eye may go that way; the smaller of the two eyes' roots wins.
+        //
+        // Evaluated over 720 directions with the numbers below: sideways it
+        // yields 1.62px, up 1.85, straight DOWN 4.75 — the pair sits above
+        // centre, so there was always that much room underneath and one
+        // number for every direction was throwing it away. Capped at 2.2
+        // regardless, because the solved limit is where the eye hits the rim,
+        // not where it stops reading as a glance.
+        //
+        // Sideways was 1.13 until the solver stopped pretending the eye is a
+        // CIRCLE. It is 2.0 x 2.5 at full dilation, and treating it as a
+        // circle of its larger radius charged every sideways glance half a
+        // pixel it was not using — which is most of why Ahaan could report
+        // that "he doesn't look left very often": the sideways travel was two
+        // thirds of the vertical, so a glance left moved less than a glance
+        // anywhere else and read as barely moving.
+        readonly property real eyeDX: 2.7          // resting offset, either side of centre
+        readonly property real eyeDY: 1.6          // resting offset, above centre
+        readonly property real eyeBaseRX: 1.6      // the drawing below reads these too,
+        readonly property real eyeBaseRY: 2.0      // so the solver cannot disagree with it
+        readonly property real dilateMax: 1.25     // the idle ceiling
+        readonly property real rimMargin: 0.35
+        readonly property real travelCap: 2.2
+
+        function gazeLimit(dx, dy) {
+            var rx = bot.eyeBaseRX * bot.dilateMax;
+            var ry = bot.eyeBaseRY * bot.dilateMax;
+            var lim = bot.travelCap;
+            for (var sx = -1; sx <= 1; sx += 2) {
+                var c0x = sx * bot.eyeDX, c0y = -bot.eyeDY;
+                var b = c0x * dx + c0y * dy;
+                var r = 0;
+                // The eye is an ELLIPSE, and how much of the head's radius it
+                // eats depends on which way it lies from the middle — which
+                // depends on r, which is what is being solved for. So: guess
+                // r, take the ellipse's radius in that direction, solve the
+                // quadratic against it, repeat. Three passes is convergence at
+                // this scale, checked against an exhaustive sweep of both
+                // eyes' outlines over 720 glance directions: worst point 6.73
+                // of the 7px radius, so nothing reaches the rim.
+                for (var i = 0; i < 3; i++) {
+                    var cx = c0x + r * dx, cy = c0y + r * dy;
+                    var n = Math.hypot(cx, cy) || 1e-6;
+                    var ex = ry * (cx / n), ey = rx * (cy / n);
+                    var rho = rx * ry / Math.sqrt(ex * ex + ey * ey);
+                    var rmax = bot.headSize / 2 - rho - bot.rimMargin;
+                    var disc = b * b - (c0x * c0x + c0y * c0y - rmax * rmax);
+                    if (disc <= 0) { r = 0; break; }
+                    r = -b + Math.sqrt(disc);
+                }
+                lim = Math.min(lim, Math.max(0, r));
+            }
+            return Math.max(0, lim);
+        }
+
+        function look() {
+            // A point in the unit DISC, not the unit square: sqrt() on the
+            // radius is what keeps the draws uniform over the area instead of
+            // clustering them in the middle, and the corners of a square would
+            // put the extreme diagonal gazes at 1.4x the intended range.
+            //
+            // One glance in three returns to centre. Without it the gaze
+            // wanders forever and never settles, which reads as twitchy rather
+            // than as alive — something looking around comes back to rest.
+            if (Math.random() < 0.34) {
+                bot.gazeX = 0; bot.gazeY = 0;
+            } else {
+                var a = Math.random() * 2 * Math.PI;
+                var dx = Math.cos(a), dy = Math.sin(a);
+                // And he leans LEFT, at Ahaan's ask, by mirroring 45% of the
+                // rightward draws — so roughly seven glances in ten that are
+                // not straight ahead go left. It is a bias and not a
+                // correction: the two directions were already equally likely
+                // and equally far, verified in the solver above. There is a
+                // reason to want it beyond liking it, though. This icon sits
+                // at the LEFT edge of the right island, so everything on the
+                // bar is on that side of it; a glance right is a glance at
+                // the bluetooth glyph six pixels away and the end of the bar
+                // just past it.
+                if (dx > 0 && Math.random() < 0.45) dx = -dx;
+                // sqrt() on the radius keeps the draws uniform over the area
+                // rather than clustered in the middle; 0.45 is a floor, so a
+                // glance is always far enough to be seen as one.
+                var r = (0.45 + 0.55 * Math.sqrt(Math.random())) * bot.gazeLimit(dx, dy);
+                bot.gazeX = dx * r;
+                bot.gazeY = dy * r;
+            }
+            // 1.0 .. 1.3, i.e. the base size is now the FLOOR. It used to run
+            // 0.82 .. 1.25 and Ahaan's verdict was that the big end is the
+            // face and the small end is a squint — so the range keeps the
+            // dilation as a swell rather than as a pair of states, and the
+            // only thing that ever goes smaller than base is a blink.
+            idleSwell.to = 1.0 + Math.random() * (bot.dilateMax - 1.0);
+            idleSwell.duration = 420;              // hold() borrows this animator and slows it
+            idleSwell.restart();
+            // Re-randomised every time rather than a fixed period: a glance on
+            // a metronome is the one thing that cannot look alive.
+            //
+            // Back at 0.9-3.3s, which is where it started. It went to 0.55 and
+            // then 0.4 on "make him look around a little more" — which turned
+            // out to mean the ARC he turns through, not how often: "I meant
+            // the rotation he makes, not the frequency". The rotation is the
+            // solver above; this is just how often, and it was right the first
+            // time.
+            gazeTimer.interval = 900 + Math.random() * 2400;
+        }
+
+        Timer {
+            id: gazeTimer
+            // Only while the icon is on the bar AND not attending. The module
+            // is invisible unless an agent is actually running, and a timer
+            // waking the compositor to move eyes nobody can see — or eyes
+            // that are deliberately holding still — is pure cost.
+            running: bot.visible && !bot.attentive
+            repeat: true
+            interval: 1600
+            onTriggered: bot.look()
+        }
+
+        // The blink is a separate clock on purpose — tied to the gaze it would
+        // land on every glance, which is a tic. It squashes the vertical
+        // radius to a sliver rather than closing the hole outright: at 0 the
+        // arc degenerates and the curve renderer drops it, so the eyes would
+        // vanish for a frame instead of shutting.
+        Timer {
+            id: blinkTimer
+            running: bot.visible
+            repeat: true
+            // 2.2-5.2s, down from 3.8-9.0. Same ask as the gaze: more of it.
+            interval: 2200 + Math.random() * 3000
+            onTriggered: { blink.restart(); interval = 2200 + Math.random() * 3000; }
+        }
+        SequentialAnimation {
+            id: blink
+            NumberAnimation { target: bot; property: "lid"; to: 0.12; duration: 70; easing.type: Easing.InQuad }
+            NumberAnimation { target: bot; property: "lid"; to: 1.0;  duration: 110; easing.type: Easing.OutQuad }
+        }
+
+        // ── Being called ──────────────────────────────────────────────────
+        // Clicking the bot opens the panel, and Ahaan wanted it to notice:
+        // eyes forward, wide, and two big blinks — "like i called it
+        // suddenly". So this is a reaction, not an open animation, which is
+        // why it lives on the icon and fires from its own MouseArea rather
+        // than from togglePanel(): the bot reacting to being poked is true
+        // whatever the click then does.
+        //
+        // The idle clocks are STOPPED for the duration. Left running, a
+        // glance can land mid-reaction and drag the eyes off centre in the
+        // middle of the double blink, which reads as a glitch rather than as
+        // a look — the whole point is that it is pointed at you.
+        //
+        // Sized DOWN twice. It began as a pop to 1.45 with two full blinks,
+        // and Ahaan's verdict was "too big of a blink … also hes double
+        // blinking anyway": the pair of full closes read as a stutter rather
+        // than as a greeting, and against an idle blink that is already
+        // frequent it was not saying anything the face does not say on its
+        // own. So it is one blink, it does not close all the way (0.32, where
+        // an idle blink goes to 0.12), and the widening is 1.32 against the
+        // idle ceiling's 1.25 — just enough to be a different size from
+        // anything the face reaches by itself. OutBack keeps the small
+        // overshoot that makes it read as a reaction and not a fade.
+        SequentialAnimation {
+            id: startle
+            // Every other writer is stopped first, not just the clocks that
+            // schedule them: an idle swell or a blink already in flight goes
+            // on writing the same property this sequence is about to animate.
+            ScriptAction {
+                script: {
+                    gazeTimer.stop(); blinkTimer.stop();
+                    idleSwell.stop(); blink.stop();
+                    bot.gazeX = 0; bot.gazeY = 0;
+                }
+            }
+            NumberAnimation { target: bot; property: "dilate"; to: 1.32; duration: 140; easing.type: Easing.OutBack }
+            NumberAnimation { target: bot; property: "lid"; to: 0.32; duration: 70;  easing.type: Easing.InQuad }
+            NumberAnimation { target: bot; property: "lid"; to: 1.0;  duration: 110; easing.type: Easing.OutQuad }
+            // Held wide for a beat before it goes back to wandering, so the
+            // reaction has an end rather than being cut off by the next
+            // glance.
+            PauseAnimation { duration: 300 }
+            // Where it lands depends on what the click did. Opening the panel
+            // makes `attentive` true before this sequence ends, and resuming
+            // the wander there would undo the thing the click just asked for.
+            ScriptAction {
+                script: {
+                    blinkTimer.start();
+                    if (bot.attentive) { bot.gazeX = 0; bot.gazeY = 0; bot.hold(); }
+                    else { bot.look(); gazeTimer.start(); }
+                }
+            }
+        }
+        function startled() { startle.restart(); }
+
+        Shape {
+            anchors.centerIn: parent
+            width: bot.headSize
+            height: bot.headSize
+            // As the battery ring: analytic antialiasing, because the bar does
+            // not enable scene-wide multisampling and a 14px circle without it
+            // is a visibly stepped edge.
+            preferredRendererType: Shape.CurveRenderer
+
+            ShapePath {
+                id: eyePath
+                fillColor: bot.liveColor
+                strokeColor: "transparent"
+                strokeWidth: 0
+                // Even-odd is a FILL rule, which is the whole mechanism here:
+                // the two eye subpaths sit inside the head subpath, so they
+                // come out as holes. Nothing is stroked, because a stroke would
+                // outline the holes and make them read as spectacles.
+                fillRule: ShapePath.OddEvenFill
+
+                // The head.
+                PathAngleArc {
+                    centerX: bot.headSize / 2; centerY: bot.headSize / 2
+                    radiusX: bot.headSize / 2; radiusY: bot.headSize / 2
+                    startAngle: 0; sweepAngle: 360
+                }
+
+                // Two eyes, taller than wide and above the centre line, which
+                // is what makes a circle read as a face rather than as a
+                // button. Placed at 0.16 of the diameter either side of centre
+                // and 0.11 above it.
+                //
+                // The reference is not symmetric — measured off it, both eyes
+                // sit RIGHT of centre and 0.24 of the diameter up, i.e. a
+                // three-quarter view. At 14px that pose puts one eye almost on
+                // the edge of the disc and reads as a misdraw rather than as a
+                // head turned to look at something, so it is squared up here.
+                // The mock is what decided that: at this size the gap between
+                // "cute" and "a domino tile" is about one pixel, and it is not
+                // a thing to settle by argument.
+                //
+                // 1.6 x 2.0 base radii, grown twice: 1.1 x 1.5 to start, then
+                // 1.5 x 1.9, then this, each time because Ahaan asked for
+                // bigger. At the idle ceiling that is a 4.2 x 5.2px eye in a
+                // 14px head — nearly 40% of the head is eye, which is the
+                // proportion that makes it a character rather than a symbol.
+                //
+                // Spacing went with them, 2.2 to 2.6 to 2.7 either side of
+                // centre. At 2.2 a fully dilated pair left 0.4px of head
+                // between them and read as one wide band rather than as two
+                // eyes; that was visible only in a strip of frames sampled
+                // 0.55s apart, because it needs the moment the dilation peaks.
+                // Every size here was mocked at real pixel size across the
+                // whole dilation range before it went in — at 14px this is all
+                // one- and two-pixel decisions, which is not a thing to settle
+                // by looking at a big version of it.
+                readonly property real eyeRX: bot.eyeBaseRX * bot.dilate
+                readonly property real eyeRY: bot.eyeBaseRY * bot.dilate * bot.lid
+                readonly property real eyeY: bot.headSize / 2 - bot.eyeDY + bot.gazeY
+
+                PathAngleArc {
+                    moveToStart: true
+                    centerX: bot.headSize / 2 - bot.eyeDX + bot.gazeX; centerY: eyePath.eyeY
+                    radiusX: eyePath.eyeRX; radiusY: eyePath.eyeRY
+                    startAngle: 0; sweepAngle: 360
+                }
+                PathAngleArc {
+                    moveToStart: true
+                    centerX: bot.headSize / 2 + bot.eyeDX + bot.gazeX; centerY: eyePath.eyeY
+                    radiusX: eyePath.eyeRX; radiusY: eyePath.eyeRY
+                    startAngle: 0; sweepAngle: 360
+                }
+            }
+        }
+
+        HoverHandler { id: hover }
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: false
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            onClicked: (e) => {
+                if (e.button === Qt.RightButton) { bot.rightClicked(); return; }
+                // Only the click that OPENS gets the reaction. The same click
+                // closes the panel when it is already up, and being startled
+                // by someone leaving is the wrong way round.
+                if (!bot.attentive) bot.startled();
+                bot.leftClicked();
+            }
+            onWheel: (w) => w.angleDelta.y > 0 ? bot.scrolledUp() : bot.scrolledDown()
+        }
+
+        Tooltip { target: bot; text: bot.tip; shown: hover.hovered && bot.tip !== "" }
+    }
+
     // Waybar-style tooltip: separate popup surface, styled like `tooltip{}`.
     component Tooltip: PopupWindow {
         id: ttip
@@ -4046,13 +4480,29 @@ Scope {
                 // something to say, and driven by a state FILE rather than by
                 // polling for the process.
                 //
-                // The file is $XDG_RUNTIME_DIR/screenrecord/state, written by
-                // scripts/screenrecord.sh. That script rewrites it IN PLACE on
-                // every transition, for the reason voxtype's comment above
-                // gives: the inotify watch follows the INODE, so a
-                // write-temp-then-mv would leave this watching an unlinked file
-                // and the indicator would go deaf after the first
-                // idle -> recording -> idle cycle.
+                // The file is $XDG_RUNTIME_DIR/screenrecord.state, written by
+                // scripts/screenrecord.sh.
+                //
+                // ── Why that path is FLAT, and not screenrecord/state ───────
+                // This indicator never once appeared, from the day it was
+                // written until 2026-09-20, while recording itself worked
+                // perfectly. Measured against a stub shell on Quickshell
+                // 0.3.1: a FileView with watchChanges arms its inotify watch
+                // on the file's PARENT DIRECTORY — a file that does not exist
+                // yet is fine, and so is a mv that swaps the inode, because
+                // both arrive as directory events. A parent directory that
+                // does not exist when the watch is armed is fatal, and silent:
+                // nothing is watched and nothing re-arms it for the life of
+                // the process.
+                //
+                // The old screenrecord/ subdirectory was created by the first
+                // recording — i.e. always after this shell had started. tmpfs
+                // is empty at every boot, so the watch was dead from login
+                // onwards, every session. $XDG_RUNTIME_DIR itself always
+                // exists, which is the whole reason the files sit directly in
+                // it now. (The vox indicator above only escapes this because
+                // the voxtype daemon creates its directory at login, before
+                // the shell.)
                 //
                 // ── Unlike voxtype, this one is clickable ───────────────────
                 // voxtype's indicator only has to report; a recording that has
@@ -4215,12 +4665,14 @@ Scope {
 
                     FileView {
                         id: srecStateFile
-                        path: root.runtimeDir + "/screenrecord/state"
+                        path: root.runtimeDir + "/screenrecord.state"
                         watchChanges: true
                         // Same reason as the reminders store above: neither of
                         // these files exists until the first recording is made,
                         // and an ENOENT on every startup is noise, not a fault.
-                        // The onLoadFailed below is the real handling.
+                        // The onLoadFailed below is the real handling. The
+                        // watch survives that absence — see the path note
+                        // above for what it does NOT survive.
                         printErrors: false
                         onFileChanged: reload()
                         // Missing until the first ever recording, and FileView
@@ -4233,7 +4685,7 @@ Scope {
 
                     FileView {
                         id: srecStartFile
-                        path: root.runtimeDir + "/screenrecord/started-at"
+                        path: root.runtimeDir + "/screenrecord.started-at"
                         watchChanges: true
                         printErrors: false
                         onFileChanged: reload()
@@ -4384,13 +4836,16 @@ Scope {
                 // within the probe's 2s; Ctrl+C back to the prompt and it
                 // leaves. The records decide what the PANEL draws, never
                 // whether the module is in the bar at all.
-                BarLabel {
+                AgentBot {
                     id: agentBtn
                     visible: root.agentRunning
-                    text: root.g.robotOn
+                    // Holds still and faces front for as long as the panel is
+                    // up, however it was opened or closed — the keybind-less
+                    // IPC verb and a click on the scrim both move this.
+                    attentive: root.agentVisible
 
                     // The icon is only ever on screen while an agent is up,
-                    // so presence alone carries "running" and the glyph does not
+                    // so presence alone carries "running" and the bot does not
                     // need to. Colour is left to say the one thing that is
                     // urgent: red once the fullest window is nearly spent, at
                     // the same 90% the panel's own meters go red at. (Not

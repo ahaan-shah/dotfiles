@@ -4,10 +4,10 @@
 #
 #   ui-prefs.sh get  <KEY>
 #   ui-prefs.sh set  <KEY> <VALUE> [DETAIL]
-#   ui-prefs.sh list fonts|icons|themes|palettes|browsers|terminals|editors
+#   ui-prefs.sh list fonts|icons|themes|palettes|browsers|terminals|editors|pdf
 #
 # KEYS: UI_FONT  ICON_THEME  GTK_THEME  PALETTE  DEFAULT_BROWSER
-#       DEFAULT_TERMINAL  DEFAULT_EDITOR
+#       DEFAULT_TERMINAL  DEFAULT_EDITOR  DEFAULT_PDF
 #
 # ── Why a plain file, and why this one ────────────────────────────────────
 # Six different things need to agree on these values: the four Quickshell
@@ -39,7 +39,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/ui.conf"
 
 die() { echo "ui-prefs: $*" >&2; exit 1; }
 
-VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP"
+VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP DEFAULT_PDF"
 
 # ── store ────────────────────────────────────────────────────────────────
 
@@ -94,6 +94,18 @@ ini_set() {
     fi
 }
 
+# desktop_name <foo.desktop> — the Name= a .desktop file carries, for the one
+# place a value that IS a .desktop file has to be said out loud (the PDF
+# notification). Empty if the file is not on the search path.
+desktop_name() {
+    local f
+    for f in "$HOME/.local/share/applications/$1" "/usr/share/applications/$1"; do
+        [ -f "$f" ] || continue
+        sed -n 's/^Name=//p' "$f" | head -1
+        return 0
+    done
+}
+
 notify() {
     command -v notify-send >/dev/null || return 0
     notify-send -a "Settings" "$1" "${2:-}" 2>/dev/null || true
@@ -110,6 +122,17 @@ notify() {
 # out of whatever actually holds it.
 effective() {
     local key="$1" v kconf d exec_line
+    # DEFAULT_PDF is the one key whose truth is NOT ui.conf. Everything else
+    # here is a preference this desktop reads back out of ui.conf; a PDF
+    # association lives in mimeapps.list, and anything on the system can move
+    # it — a package's post-install `xdg-mime default`, a GTK app's "always
+    # open with", a hand edit. Asking ui.conf first would then tick the row the
+    # menu last set rather than the one that actually opens a PDF. The stored
+    # key is a record of the choice, not the answer to this question.
+    if [ "$key" = DEFAULT_PDF ]; then
+        xdg-mime query default application/pdf 2>/dev/null || true
+        return 0
+    fi
     v="$(pref_get "$key")"
     if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
     case "$key" in
@@ -237,6 +260,46 @@ list_browsers() {
         cmd="$(printf '%s' "$exec_line" | sed 's/ *%[a-zA-Z]//g')"
         [ -n "$name" ] && [ -n "$cmd" ] || continue
         printf '%s\t%s\t%s\n' "$cmd" "$name" "$(basename "$f")"
+    done | sort -u -t"$(printf '\t')" -k2,2
+    return 0
+}
+
+# The PDF viewers. Same shape as list_browsers and for the same reason — the
+# mime database can only be asked which handler is CURRENT, never which ones
+# exist — but the value is the .desktop file name, not the Exec command.
+#
+# That difference is the whole of what DEFAULT_PDF is. A browser's value is a
+# command because things RUN it: hyprland.lua's $BROWSER, finder's web search.
+# Nothing anywhere runs a PDF command — FileSearch's Enter is `xdg-open` and
+# every other app asks the mime database too — so the setting is an
+# association, and an association is keyed by .desktop file. Resolving that to
+# a command here would only mean resolving it back before it could be applied.
+#
+# Browsers appear in this list on purpose: Zen, Brave and Chromium all render
+# PDFs and all register for them, and one of them is a legitimate answer to
+# "what should open this". They are filtered from nothing but the webapp guard.
+list_pdf_viewers() {
+    local f name
+    for f in /usr/share/applications/*.desktop "$HOME"/.local/share/applications/*.desktop; do
+        [ -f "$f" ] || continue
+        [ "$(grep -c '^MimeType=.*application/pdf' "$f" || true)" -gt 0 ] || continue
+        # Same guard as list_browsers: a webapp installed by webapp-install.sh
+        # inherits chromium's MimeType line, and "WhatsApp" is not a PDF
+        # viewer. (Today's template writes no MimeType at all, so this catches
+        # nothing here — it is one line against the day it does.)
+        [ "$(grep -c '^Exec=.*--app=' "$f" || true)" -eq 0 ] || continue
+        # Hidden=true is the spec's "this entry has been deleted by the user"
+        # and means exactly that. NoDisplay=true is NOT filtered, and that is
+        # a measurement rather than a preference: Arch's
+        # org.pwmt.zathura-pdf-poppler.desktop sets it — NoDisplay only means
+        # "keep me out of the app grid", and the spec still uses such an entry
+        # as a mime handler. Filtering on it dropped Zathura, which is both
+        # the most likely answer on this machine and the one thing
+        # hyprland.lua already carries a window rule for.
+        [ "$(grep -c '^Hidden=true' "$f" || true)" -eq 0 ] || continue
+        name="$(sed -n 's/^Name=//p' "$f" | head -1)"
+        [ -n "$name" ] || continue
+        printf '%s\t%s\t%s\n' "$(basename "$f")" "$name" ""
     done | sort -u -t"$(printf '\t')" -k2,2
     return 0
 }
@@ -380,6 +443,16 @@ case "$cmd" in
             GTK_THEME)        apply_gtk_theme "$val";  notify "Theme" "$val" ;;
             PALETTE)          apply_palette "$val";    notify "Palette" "$val" ;;
             DEFAULT_TERMINAL) reload_hyprland;         notify "Default terminal" "$val" ;;
+            DEFAULT_PDF)
+                # The association is the setting; the ui.conf line is only the
+                # record of having chosen it (effective() reads the mime
+                # database back, not this key). No reload_hyprland — nothing in
+                # the compositor config mentions a PDF viewer.
+                if command -v xdg-mime >/dev/null; then
+                    xdg-mime default "$val" application/pdf 2>/dev/null || true
+                fi
+                notify "Default PDF viewer" "$(desktop_name "$val" || true)"
+                ;;
             DEFAULT_EDITOR)   reload_hyprland;         notify "Default editor" "$val" ;;
             DEFAULT_BROWSER)
                 # DETAIL is the .desktop file name. xdg-settings is what every
@@ -410,14 +483,15 @@ case "$cmd" in
             browsers)  list_browsers  | mark "$(effective DEFAULT_BROWSER)" ;;
             terminals) list_terminals | mark "$(effective DEFAULT_TERMINAL)" ;;
             editors)   list_editors   | mark "$(effective DEFAULT_EDITOR)" ;;
-            *) die "usage: ui-prefs.sh list fonts|icons|themes|palettes|browsers|terminals|editors" ;;
+            pdf)       list_pdf_viewers | mark "$(effective DEFAULT_PDF)" ;;
+            *) die "usage: ui-prefs.sh list fonts|icons|themes|palettes|browsers|terminals|editors|pdf" ;;
         esac
         ;;
 
     *)
         echo "usage: $(basename "$0") get <KEY>" >&2
         echo "       $(basename "$0") set <KEY> <VALUE> [DETAIL]" >&2
-        echo "       $(basename "$0") list fonts|icons|themes|palettes|browsers|terminals|editors" >&2
+        echo "       $(basename "$0") list fonts|icons|themes|palettes|browsers|terminals|editors|pdf" >&2
         exit 2
         ;;
 esac

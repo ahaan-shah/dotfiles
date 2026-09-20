@@ -1,3 +1,4 @@
+7zip
 apostrophe
 asusctl
 base
@@ -16,6 +17,7 @@ cmatrix
 cpupower
 cups
 cups-pk-helper
+dcraw
 discord
 dmidecode
 dnsmasq
@@ -68,6 +70,7 @@ intel-ucode
 inxi
 iwd
 keyd
+kimageformats
 kitty
 lazydocker
 lazygit
@@ -99,6 +102,7 @@ nwg-displays
 obs-studio
 obsidian
 obsidian-icon-theme
+openai-codex
 opencode
 otf-codenewroman-nerd
 otf-font-awesome
@@ -140,6 +144,7 @@ ttf-jetbrains-mono
 ttf-jetbrains-mono-nerd
 ttf-roboto
 ttf-roboto-mono
+ttf-terminus-nerd
 ttf-ubuntu-mono-nerd
 ttf-ubuntu-nerd
 unzip

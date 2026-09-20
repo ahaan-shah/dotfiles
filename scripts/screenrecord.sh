@@ -45,23 +45,42 @@ set -u
 RECORDER=gpu-screen-recorder
 
 # ── State, and why it is written the way it is ───────────────────────────
-# The bar's indicator (Bar.qml, the `srec` block) watches this file with one
-# inotify watch and never re-arms it.  That is copied from the voxtype
-# indicator beside it, and it carries voxtype's constraint with it: the watch
-# follows the INODE, so this file must be rewritten IN PLACE on every
-# transition.  The usual write-a-temp-and-mv is exactly wrong -- mv swaps in a
-# new inode, the watch stays pointed at the unlinked old one, and the indicator
-# goes deaf after the first idle -> recording -> idle cycle.  `printf >` on the
-# existing path truncates and rewrites, which is what is wanted.
+# The bar's indicator (Bar.qml, the `srec` block) and the Settings row that
+# turns into "Stop recording" both watch STATE_FILE with one Quickshell
+# FileView each, armed once at shell startup and never re-armed.
+#
+# FLAT FILES IN THE RUNTIME DIR, not a screenrecord/ subdirectory, and that is
+# the whole point of this block.  Measured on Quickshell 0.3.1 with a stub
+# shell (idle -> create -> rewrite -> mv-replace -> delete -> recreate):
+# `FileView { watchChanges: true }` arms its inotify watch on the file's PARENT
+# DIRECTORY, so a file that does not exist yet is fine -- its creation arrives
+# as fileChanged -- and so is a mv that swaps the inode.  What is NOT fine is
+# the parent directory itself being absent when the watch is armed: nothing is
+# watched, nothing is re-armed, and the FileView is deaf for the life of the
+# process.
+#
+# That is exactly what a screenrecord/ subdirectory did here.  $XDG_RUNTIME_DIR
+# is tmpfs and empty at boot; the subdirectory was created by the first
+# recording, which is always AFTER the shell has started and armed its watches.
+# So the indicator never appeared -- not once per boot, not after the first
+# recording, never -- while every recording itself worked perfectly.  It looked
+# fine when it was written only because that session had already made a test
+# recording before the shell was relaunched.  $XDG_RUNTIME_DIR itself always
+# exists, so watching files directly in it cannot reproduce this.
+#
+# (The in-place rewrite below is kept, but it is NOT what that measurement
+# says is required: state_write uses `printf >`, which truncates and rewrites
+# the existing path, and a mv would in fact also be seen.  Cheap, and it keeps
+# this identical to voxtype's state file beside it.)
 #
 # In the per-user runtime dir, which is 0700.  STATE_FILE holds a path that is
 # read back on stop and handed to ffmpeg and mv, so a fixed name in
 # world-writable /tmp is a name any other local account could create first and
 # point wherever it liked.
-RUNTIME_DIR="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/screenrecord"
-STATE_FILE="$RUNTIME_DIR/state"          # idle | recording   (the bar reads this)
-FILE_FILE="$RUNTIME_DIR/filename"        # path of the recording in flight
-START_FILE="$RUNTIME_DIR/started-at"     # epoch seconds, for the bar's timer
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}"
+STATE_FILE="$RUNTIME_DIR/screenrecord.state"       # idle | recording  (the bar reads this)
+FILE_FILE="$RUNTIME_DIR/screenrecord.filename"     # path of the recording in flight
+START_FILE="$RUNTIME_DIR/screenrecord.started-at"  # epoch seconds, for the bar's timer
 
 OUT_DIR="${SCREENRECORD_DIR:-$HOME/Videos/Screencasts}"
 
@@ -112,7 +131,11 @@ recording_active() { pgrep -f "$RECORDER_PAT" >/dev/null; }
 
 state_write() {
     mkdir -p "$RUNTIME_DIR" || return 1
-    # XDG_STATE_HOME may sit outside a private home; protect the fallback too.
+    # Only in the no-XDG_RUNTIME_DIR fallback, where these land in
+    # ~/.local/state rather than in the 0700 runtime dir.  0700 is systemd's
+    # own mode for that directory, so this tightens rather than surprises --
+    # and it is the mode FILE_FILE needs, since it holds a path that is read
+    # back and handed to ffmpeg and mv.
     [ -n "${XDG_RUNTIME_DIR:-}" ] || chmod 700 "$RUNTIME_DIR" 2>/dev/null
     printf '%s' "$1" > "$STATE_FILE"      # in place -- see the note above
 }

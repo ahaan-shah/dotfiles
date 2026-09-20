@@ -58,8 +58,14 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # `hyprctl-option` is what getoption is asked for, and it is the live truth:
 # the menu shows what the compositor is ACTUALLY doing rather than what was
 # last written here, so a value changed by any other means still reads back
-# correctly. ANIM_SPEED is the one exception — see current().
+# correctly. Two rows have no option and are reported from the store instead —
+# ANIM_SPEED and TILING_MODE; see current().
+#
+# TILING_MODE is first because it is the only row here that changes what the
+# desktop DOES rather than what it looks like, and because it is the one a
+# reader is most likely to have come to this page for.
 RULES=$(cat <<'EOF'
+WIN_TILING_MODE	Tiling Mode	Windows tile side by side instead of floating	bool						false
 WIN_BORDER_SIZE	Border thickness	Outline drawn around every window	int	general:border_size	px	0	12	1	2
 WIN_ROUNDING	Corner rounding	Radius of every window corner	int	decoration:rounding	px	0	40	1	16
 WIN_GAPS_IN	Inner gaps	Space between two tiled windows	css	general:gaps_in	px	0	60	1	3
@@ -84,7 +90,7 @@ row_for() {
 field() { printf '%s' "$1" | cut -d"$(printf '\t')" -f"$2"; }
 
 # ── reading ───────────────────────────────────────────────────────────────
-# From the file, for the one rule the compositor cannot be asked about.
+# From the file, for the two rules the compositor cannot be asked about.
 stored() {
     [ -f "$CONF" ] || return 0
     sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*$/\1/p" "$CONF" | tail -1
@@ -99,6 +105,16 @@ stored() {
 # products. Reading one leaf back and dividing would make the displayed value
 # depend on which leaf was picked and drift as soon as a leaf's base speed
 # changed, so this one is reported from the store, defaulting to 1.
+#
+# TILING_MODE has none either, for a harder reason: it is the enabled flag of a
+# window RULE, not a config option, and HL.WindowRule is write-only from Lua.
+# Measured on 0.56 — `set_enabled()` is the only method the object carries,
+# `globalFloatRule.enabled` reads nil, and its metatable's __index is a C
+# function with nothing enumerable behind it. So the store is the source of
+# truth for this one, and the two things that can write it — this script and
+# SUPER+T, which now comes through this script — are the only two that do.
+# A hand-run `hyprctl eval 'globalFloatRule:set_enabled(...)'` would still
+# drift the page from the compositor, and nothing here can detect that.
 # One record of hyprctl's JSON, and the type to pull out of it.
 extract_typed() {
     local raw="$1" kind="$2"
@@ -200,6 +216,47 @@ apply_live() {
     }')"
     [ -n "$expr" ] || return 1
     hyprctl eval "$expr" >/dev/null 2>&1 || return 1
+}
+
+# ── tiling mode ───────────────────────────────────────────────────────────
+# Not a config option and so not apply_live()'s shape at all: it enables or
+# disables globalFloatRule, the `class = ".*"` float rule hyprland.lua defines
+# as a global for exactly this purpose. Tiling ON means that rule OFF.
+#
+# TWO halves, and both are needed. Disabling the rule only decides what the
+# NEXT window does; the ones already open keep whatever they were given when
+# they opened, so each is converted by address. Toggling the rule alone looked
+# like it had done nothing at all, because the screen in front of you is
+# entirely made of windows that already exist.
+#
+# This body used to live in toggle-layout.sh, which SUPER+T runs. It is here
+# now and that script calls this one, so the keybind and the settings switch
+# cannot disagree about which mode the desktop is in — they are the same write
+# to the same file.
+apply_tiling_mode() {
+    local tiling="$1" action addrs addr
+    have hyprctl || return 0
+
+    if [ "$tiling" = "true" ]; then
+        hyprctl eval 'globalFloatRule:set_enabled(false)' >/dev/null 2>&1 || return 1
+        action="unset"
+    else
+        hyprctl eval 'globalFloatRule:set_enabled(true)' >/dev/null 2>&1 || return 1
+        action="set"
+    fi
+
+    # Captured, not piped into the loop. `hyprctl | jq | while read` under
+    # `set -o pipefail` takes the whole script down the moment either producer
+    # has nothing to say — the fourth time this repo has been bitten by that.
+    have jq || return 0
+    addrs="$(hyprctl clients -j 2>/dev/null | jq -r '.[].address' 2>/dev/null)" || addrs=""
+    while IFS= read -r addr; do
+        [ -n "$addr" ] || continue
+        # A Lua dispatcher expression, not the pre-0.55 positional
+        # `dispatch settiled address:...`, which parses as nothing and no-ops.
+        hyprctl dispatch "hl.dsp.window.float({ action = '$action', window = 'address:$addr' })" \
+            >/dev/null 2>&1 || true
+    done <<< "$addrs"
 }
 
 # Every leaf, because the multiplier is global. The base speeds are the ones
@@ -312,7 +369,9 @@ cmd_set() {
     # mv, and doing it first put all of that between a keypress and the border
     # actually moving. The file is what survives, so it cannot be skipped — but
     # nothing is waiting on it.
-    if [ -z "$opt" ]; then
+    if [ "$key" = "WIN_TILING_MODE" ]; then
+        apply_tiling_mode "$val" || echo "window-rules: saved, but the live apply failed" >&2
+    elif [ -z "$opt" ]; then
         apply_anim_speed "$val"
     else
         apply_live "$opt" "$val" || echo "window-rules: saved, but the live apply failed" >&2
@@ -323,7 +382,11 @@ cmd_set() {
 }
 
 cmd_reset() {
-    local key="$1" row
+    local key="$1" row was_tiling
+    # Read BEFORE the file is touched — after it, the store says "false"
+    # whatever the desktop is actually doing.
+    was_tiling="$(current WIN_TILING_MODE 2>/dev/null)" || was_tiling="false"
+
     if [ "$key" = "--all" ]; then
         rm -f "$CONF"
     else
@@ -334,6 +397,16 @@ cmd_reset() {
     # whatever hyprland.lua hardcodes, and this script does not know those —
     # re-parsing the config is what produces them.
     have hyprctl && hyprctl reload >/dev/null 2>&1 || true
+
+    # The reload restores globalFloatRule for the NEXT window, since
+    # hyprland.lua re-reads a window.conf that no longer names the key. It does
+    # nothing to the windows already open — a reload does not re-run rules over
+    # them — so a reset out of tiling would otherwise leave a tiled screen under
+    # a page that says floating. Only on the way OUT of tiling: the default is
+    # false, so resetting while already floating has nothing to undo.
+    if [ "$was_tiling" = "true" ] && { [ "$key" = "--all" ] || [ "$key" = "WIN_TILING_MODE" ]; }; then
+        apply_tiling_mode false || true
+    fi
 }
 
 case "${1:-}" in

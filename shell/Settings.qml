@@ -43,10 +43,15 @@ QtObject {
     }
 
     // ── Is a recording running? ───────────────────────────────────────────
-    // The same state file the bar's indicator watches, for the same reason and
-    // with the same constraint: scripts/screenrecord.sh rewrites it IN PLACE so
-    // one inotify watch survives every idle -> recording -> idle cycle. Two
-    // readers, one writer, no polling anywhere.
+    // The same state file the bar's indicator watches. Two readers, one
+    // writer, no polling anywhere.
+    //
+    // FLAT in $XDG_RUNTIME_DIR, not in a screenrecord/ subdirectory. That is
+    // not cosmetic: a FileView arms its inotify watch on the PARENT DIRECTORY,
+    // so a missing file is fine but a missing DIRECTORY is permanent deafness
+    // — and the subdirectory this used to live in was created by the first
+    // recording, always after the shell had armed this watch. Measured, with
+    // the full account, in the state block of scripts/screenrecord.sh.
     //
     // It is read here so _decorate can turn the Screenrecord row into a Stop
     // row, which is the menu half of "three ways to stop" — the bind, the bar
@@ -54,7 +59,7 @@ QtObject {
     readonly property bool recording: root._recState === "recording"
     property string _recState: "idle"
     property var _recFile: FileView {
-        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/screenrecord/state"
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/screenrecord.state"
         watchChanges: true
         // Does not exist until the first recording; onLoadFailed handles that,
         // and an ENOENT on every startup is noise. Same as Bar.qml's copy.
@@ -227,7 +232,7 @@ QtObject {
                 { id: "monitors",    icon: "󰍹", title: "Monitors",        kind: "action" },
                 { id: "keybindings", icon: "󰌌", title: "Keybindings",     kind: "menu", sub: "every bind, searchable" },
                 { id: "windowrules", icon: "󰖯", title: "Window rules",    kind: "menu", sub: "borders, gaps, rounding, opacity, blur, animation" },
-                { id: "defaults",    icon: "󰀻", title: "Defaults",        kind: "menu", sub: "browser, terminal, editor" }
+                { id: "defaults",    icon: "󰀻", title: "Defaults",        kind: "menu", sub: "browser, terminal, editor, PDFs" }
             ]
         },
 
@@ -290,7 +295,14 @@ QtObject {
             rows: [
                 { id: "browser",  icon: "󰖟", title: "Browser",  kind: "menu", sub: "opens links and finder's web search" },
                 { id: "terminal", icon: "󰆍", title: "Terminal", kind: "menu", sub: "SUPER+Q, and the settings menu's own tools" },
-                { id: "editor",   icon: "󰏫", title: "Editor",   kind: "menu", sub: "$EDITOR" }
+                { id: "editor",   icon: "󰏫", title: "Editor",   kind: "menu", sub: "$EDITOR" },
+                // The odd one out, and the subtitle says so: the three above
+                // are commands this desktop runs itself, while this one is a
+                // mime association — nothing here opens a PDF, xdg-open does,
+                // and the setting is which .desktop it hands it to. Which
+                // also means it is the only default on this page that other
+                // apps obey without being told.
+                { id: "pdf",      icon: "󰈦", title: "PDF viewer", kind: "menu", sub: "what xdg-open hands a .pdf to" }
             ]
         },
 
@@ -453,6 +465,11 @@ QtObject {
         "setup/defaults/browser":  { title: "Browser",  icon: "󰖟", list: "browsers",  pref: "DEFAULT_BROWSER", showDetail: true },
         "setup/defaults/terminal": { title: "Terminal", icon: "󰆍", list: "terminals", pref: "DEFAULT_TERMINAL" },
         "setup/defaults/editor":   { title: "Editor",   icon: "󰏫", list: "editors",   pref: "DEFAULT_EDITOR" },
+        // No showDetail, unlike Browser: there the row's value is a command and
+        // the .desktop name is the only thing that identifies it, so it earns a
+        // subtitle. Here the value IS the .desktop name and the label is the
+        // app's own Name= — a subtitle would repeat the row.
+        "setup/defaults/pdf":      { title: "PDF viewer", icon: "󰈦", list: "pdf", pref: "DEFAULT_PDF" },
 
         // Wider than everything else: a bind is a combo AND what it does, and
         // at 430 the description had nowhere to go. list-keybinds.sh already

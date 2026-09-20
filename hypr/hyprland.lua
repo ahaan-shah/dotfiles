@@ -870,15 +870,62 @@ globalFloatRule = hl.window_rule({
     name   = "global-float",
     match  = { class = ".*" },
     float  = true,
-    size   = {"(monitor_w*0.66)", "(monitor_h*0.679)"}, -- default size, relative to the monitor
+    -- Default size, relative to the monitor. Tuned 2026-09-20 to a window
+    -- Ahaan had already sized by hand and kept: the kitty running
+    -- scripts/system-update.sh, measured live at 938 x 567 logical px on this
+    -- 1440 x 810 panel. 938/1440 = 0.6514 and 567/810 = 0.7, and both
+    -- round-trip exactly here (1440*0.6514 = 938.016 -> 938, 810*0.7 = 567).
+    -- Was 0.66 x 0.679 (950 x 550) -- slightly narrower and noticeably taller now.
+    --
+    -- This is the fallback for apps with NO rule of their own. The 28 rules
+    -- below set their own `size` and are unaffected; changing them was
+    -- considered and declined on the same date.
+    size   = {"(monitor_w*0.6514)", "(monitor_h*0.7)"},
     center = true,
 })
 
+-- Tiling mode, carried across reloads.
+--
+-- WIN_TILING_MODE is written by scripts/window-rules.sh, from the Tiling Mode
+-- switch at the top of the settings menu's Window rules page and from SUPER+T,
+-- which goes through the same script. Without this lookup the mode lasted only
+-- until the next `hyprctl reload` — a wallpaper change, a monitor hotplug, a
+-- font being picked — because a reload re-parses this file and the rule above
+-- comes back enabled. That happens several times a session, and it put a tiled
+-- desktop back to floating with nothing on screen saying so.
+--
+-- Deliberately NOT `enabled = false` inside the table above: the state belongs
+-- to the store, not to the rule's declaration, and this keeps the rule itself
+-- reading the same on every machine.
+--
+-- Wrapped in pcall because this file is the one thing on the machine that
+-- cannot afford a parse error: a config that throws partway through silently
+-- drops every keybind after that point, which is a session you cannot use to
+-- fix it. Losing the restore is a desktop that floats when it should tile.
+-- Losing the binds is a desktop you cannot type into.
+if wbool("WIN_TILING_MODE", false) then
+    pcall(function() globalFloatRule:set_enabled(false) end)
+end
+
 -- Kitty (terminal)
+--
+-- No `size` key on purpose. Since 2026-09-20 a plain kitty INHERITS
+-- global-float's default (0.6514 x 0.7, 938 x 567 logical on this panel) so the
+-- terminal matches every other app that has no rule of its own. It previously
+-- set 0.521 x 0.531 (750 x 430); that number is recorded here rather than
+-- deleted because the about-float measurement further down was taken against
+-- it, and the arithmetic there still depends on knowing what it was.
+--
+-- The title-matched kitty rules below (kitty-tools, settings-tools, about,
+-- btop) keep their own sizes deliberately: those are sized to what runs inside
+-- them, not to taste, so they do not follow this.
+--
+-- Note this rule does not win on its own anyway -- `remember-float-size` above
+-- sets persistent_size for every class, so a kitty whose class+title you have
+-- resized by hand comes back at the size you left it at, not at this default.
 hl.window_rule({
     name   = "kitty-float",
     match  = { class = "^(kitty)$" },
-    size   = {"(monitor_w*0.521)", "(monitor_h*0.531)"},
     center = true,
 })
 
@@ -908,8 +955,13 @@ hl.window_rule({
 
 -- Settings-menu tools. Everything the settings menu cannot do inside finder —
 -- an fzf picker with a preview pane, the web-app form, a sudo prompt — gets a
--- terminal, and kitty-float's 0.521 x 0.531 is too small to split a preview
--- pane inside. Matched on the titles finder/Settings.qml spawns them with.
+-- terminal, and a plain kitty is too small to split a preview pane inside --
+-- 750 x 430 under the old kitty-float size, 938 x 567 under the global default
+-- it inherits since 2026-09-20, against this rule's 1036 x 608 (MEASURED live,
+-- three samples -- not the 1037 the fractions predict: 1440*0.72 = 1036.8 lands
+-- on 1036 here, though btop-float's 969.984 rounds up to 970 as the note at the
+-- top of this section says it should. Unexplained, 1 px, left alone). Matched on the
+-- titles finder/Settings.qml spawns them with.
 hl.window_rule({
     name   = "settings-tools-float",
     match  = { class = "^(kitty)$",
@@ -922,9 +974,13 @@ hl.window_rule({
 --
 -- Sized to the CONTENT, which is 26 rows by 112 columns (measured:
 -- `fastfetch --pipe | wc -l` and `| wc -L`, ANSI stripped). Cell size measured
--- the only way that is honest — by asking a real kitty. A kitty floated by the
--- kitty-float rule above comes up 750 x 430 logical px and reports 81 x 20 from
--- `stty size`, and its padding is 5 either side, so a cell is (750-10)/81 =
+-- the only way that is honest — by asking a real kitty. Measured when
+-- kitty-float still set its own 0.521 x 0.531: such a kitty came up 750 x 430
+-- logical px and reported 81 x 20 from `stty size` (kitty-float has since
+-- dropped its size and inherits the global default, so re-measuring today would
+-- start from 938 x 567 — the CELL size below is unchanged either way, being a
+-- property of the font, not of the window).
+-- Its padding is 5 either side, so a cell is (750-10)/81 =
 -- 9.14 px wide and (430-10)/20 = 21 px tall. 114 cols x 28 rows (content plus
 -- the "press any key" line and a margin) is then 1052 x 598, which over this
 -- panel's 1440 x 810 logical size is the two fractions below.
