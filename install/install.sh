@@ -1285,12 +1285,30 @@ phase_theming() {
     if [ -n "$rel" ] && [ -f "$HOME/Pictures/wallpapers/$rel" ]; then
         wp="$HOME/Pictures/wallpapers/$rel"
     else
-        # -maxdepth 1 stays: with nothing recorded, prefer one of Ahaan's own
-        # flat images over the 40 themed ones below them. A machine with no
-        # history should come up on a picture he chose, not on whichever theme
-        # happens to sort first.
+        # Flat images first: with nothing recorded, prefer one of Ahaan's own
+        # over the themed ones below them. A machine with no history should
+        # come up on a picture he chose, not on whichever theme sorts first.
+        #
+        # THEN the themed tree, which is the half this was missing. Two
+        # changes on 2026-09-19 combined into a fresh-machine bug: the themed
+        # images moved into ~/Pictures/wallpapers/<theme>/, and Ahaan deleted
+        # his own flat ones. A fresh install has no recorded wallpaper — that
+        # state file lives in ~/.local/state and is deliberately not mirrored
+        # — so it lands here, and here only looked at the top level, which
+        # now holds exactly one file and it is `.source`. The machine came up
+        # with no wallpaper and pywal unprimed, i.e. the whole colour scheme
+        # at defaults. Found by dry-running this installer out of a
+        # mirror-shaped tree on 2026-09-21, not by a report.
+        #
+        # The extension list is EXT_RE from scripts/wallpapers.sh, which is
+        # the picker's own list and includes webp — the format most of the
+        # themed set is in. The old list here was jpg/jpeg/png, so even a flat
+        # webp would have been invisible to it.
+        local wpfind="-regextype posix-extended -iregex .*\\.(png|jpe?g|webp|bmp|gif|tiff?)$"
         wp="$(find "$HOME/Pictures/wallpapers" -maxdepth 1 -type f \
-              \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | sort | head -1)"
+              $wpfind 2>/dev/null | sort | head -1)"
+        [ -n "$wp" ] || wp="$(find "$HOME/Pictures/wallpapers" -mindepth 2 -maxdepth 2 -type f \
+              $wpfind 2>/dev/null | sort | head -1)"
     fi
 
     if [ -n "$wp" ]; then
@@ -1584,6 +1602,20 @@ phase_verify() {
     for a in shell lockscreen; do
         check "$a/shell.qml deployed" "[ -f '$HOME/.config/$a/shell.qml' ]"
     done
+
+    # ── the editors ────────────────────────────────────────────────────
+    # Both are config-only: the packages are in the manifest, and what can go
+    # wrong is the config not travelling. nvim's is a hard check because the
+    # whole of LazyVim is that directory; ~/.vimrc is a warning because vim
+    # runs fine without it — it simply cannot copy or paste, since Arch's vim
+    # is built -clipboard and that file is the provider that fixes it.
+    check "neovim config deployed" "[ -f '$HOME/.config/nvim/init.lua' ]"
+    check "lazy-lock.json travelled with it" "[ -f '$HOME/.config/nvim/lazy-lock.json' ]"
+    if [ -f "$HOME/.vimrc" ]; then
+        chk "~/.vimrc deployed (vim clipboard provider)"
+    else
+        warn "no ~/.vimrc — plain vim will have no clipboard on Wayland"
+    fi
     # The merged shell is only whole if its three former roots travelled with
     # it: shell.qml is four lines that instantiate these, so a partial deploy
     # would load cleanly and draw nothing.
@@ -1665,16 +1697,24 @@ phase_verify() {
     # path nobody would think to connect to the settings menu. It falls back to
     # a plain `wal -i` there rather than leaving the desktop grey, which is a
     # degradation worth catching here rather than living with.
+    # capture-wait.sh, screenrecord.sh and wallpapers.sh joined on 2026-09-21,
+    # found by auditing this list against the menu rather than by a failure.
+    # All three are the same shape as the rest: reached from QML by absolute
+    # path, never from a keybind, so the bind sweep above cannot see them.
+    # capture-wait.sh is the one worth naming explicitly — EVERY Tools row is
+    # launched through it, so one missing file takes out the whole category
+    # while each tool it wraps still works from its own keybind.
     for sm in ui-prefs.sh palette.sh list-keybinds.sh keybinds.sh window-rules.sh \
               icon-index.sh about-system.sh \
               privileged-run.sh change-password.sh firewall.sh fingerprint.sh \
-              webapp-install.sh webapp-remove.sh nightlight.sh ocr-region.sh; do
+              webapp-install.sh webapp-remove.sh nightlight.sh ocr-region.sh \
+              capture-wait.sh screenrecord.sh wallpapers.sh; do
         [ -x "$HOME/.config/scripts/$sm" ] || miss_sm="$miss_sm $sm"
     done
     if [ -n "$miss_sm" ]; then
         bad "settings-menu back end missing or not executable:$miss_sm"
     else
-        chk "settings-menu back end deployed and executable (15 scripts)"
+        chk "settings-menu back end deployed and executable (18 scripts)"
     fi
 
     # The palettes themselves are DATA beside that script, and the Palette page
@@ -1849,7 +1889,8 @@ phase_verify() {
     for b in hyprctl quickshell qs socat jq fd fzf wl-copy wl-paste grim notify-send \
              gio qalc pdftoppm brightnessctl wal inotifywait nmcli bluetoothctl \
              python3 \
-             slurp tesseract magick hyprsunset pkcheck busctl chpasswd; do
+             slurp tesseract magick hyprsunset pkcheck busctl chpasswd \
+             gpu-screen-recorder ffmpeg ffprobe nvim; do
         have "$b" || bad "missing runtime dependency: $b"
     done
     chk "runtime dependency sweep finished"

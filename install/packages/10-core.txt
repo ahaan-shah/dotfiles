@@ -107,7 +107,19 @@ tesseract                 # ALT+F11 OCR, scripts/ocr-region.sh
 tesseract-data-eng        # the language data is a SEPARATE package from
                           #   tesseract, and without it OCR fails with an
                           #   empty result rather than an error
-ffmpeg
+ffmpeg                    # also the screen recorder's post-pass: scripts/
+                          #   screenrecord.sh runs ffprobe to decide whether the
+                          #   first GOP needs re-encoding and ffmpeg to move the
+                          #   moov atom to the front
+gpu-screen-recorder       # SUPER+Print and Settings -> Tools -> Capture. Chosen
+                          #   over wf-recorder and wl-screenrec because it is the
+                          #   only one that can mix desktop audio and the mic
+                          #   into ONE track, and because its kms backend reads
+                          #   the scanout plane instead of doing a full
+                          #   framebuffer readback per frame. The script says so
+                          #   ("gpu-screen-recorder is not installed") rather
+                          #   than failing silently, but a desktop missing it has
+                          #   a dead keybind and a dead settings category.
 poppler                   # pdftoppm, finder's PDF previews
 libnotify                 # notify-send
 glib2                     # gio launch, used by finder's app launcher
@@ -117,8 +129,18 @@ brightnessctl             # F4/F5, kbd backlight, micmute LED
 python                    # the agent-usage collectors are Python (stdlib only:
                           #   sqlite3, urllib). Pulled in by python-pywal anyway,
                           #   but named because code here calls it directly.
-python-pywal              # the whole colour scheme
-python-pywalfox           # finder/apply-wallpaper.sh calls `pywalfox update`
+aur:python-pywal          # AUR, NOT a repo package — it was declared here as
+                          #   a repo one until 2026-09-21 and a fresh install
+                          #   died on it: `error: target not found`, phase 2 of
+                          #   15, nothing else installed. Invisible from this
+                          #   machine, where it is long since installed, and
+                          #   invisible to --dry-run, which never resolves a
+                          #   name. Found by running the installer in a VM.
+                          #   install_manifest defers any aur: entry until it
+                          #   has bootstrapped yay, so the prefix is the whole
+                          #   fix. The whole colour scheme
+aur:python-pywalfox       # AUR as well, same failure, same fix.
+                          #   finder/apply-wallpaper.sh calls `pywalfox update`
                           #   as one step of the theme fan-out, so Firefox
                           #   retints with everything else. That script has no
                           #   `set -e` by design, so a missing pywalfox is not
@@ -126,6 +148,17 @@ python-pywalfox           # finder/apply-wallpaper.sh calls `pywalfox update`
                           #   nobody reads and the browser just stays on the
                           #   old palette.
 inotify-tools             # WalColors live theme reload in all three shells
+neovim                    # since 2026-09-20 the installer DEPLOYS a config for
+                          #   it (~/.config/nvim, the LazyVim starter pinned by
+                          #   lazy-lock.json), so the editor itself has to be
+                          #   here or that config lands on a machine with
+                          #   nothing to read it. vim is separately in this
+                          #   list and keeps its own ~/.vimrc.
+lazygit                   # LazyVim's <leader>gg, the git UI that config opens
+nodejs                    # not called by any script here: it is what Mason
+npm                       #   needs to install the npm-based language servers
+                          #   LazyVim sets up. Absent, :Mason installs about
+                          #   half of what it offers and says little about it.
 wtype                     # voxtype types through this
 keyd                      # capslock remap (see system/keyd/default.conf)
 
