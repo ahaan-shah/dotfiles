@@ -76,3 +76,14 @@ export PATH=$PATH:~/.spicetify
 export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/go/bin:$PATH"
 export LIBVIRT_DEFAULT_URI=qemu:///system
+
+### ---------- SECOND CLAUDE CODE ACCOUNT ----------
+# CLAUDE_CONFIG_DIR relocates the whole profile — credentials, settings.json,
+# MCP servers, session history and memory — so the two accounts share nothing
+# but the binary and whatever CLAUDE.md the project they're sitting in provides.
+# Verified isolated on 2.1.278: an alternate dir comes up with oauthAccount unset
+# rather than inheriting the default login.
+# Aliases exist only in interactive shells; if something spawns claude directly
+# (herdr's agent integration, a systemd unit) it gets the default account, and
+# this needs to become a wrapper script in ~/.local/bin instead.
+alias claude-avi='CLAUDE_CONFIG_DIR=$HOME/.claude-avi claude'

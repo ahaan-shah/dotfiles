@@ -83,7 +83,9 @@ Scope {
     readonly property color ncBg:     alpha(colBg, 0.93)
     readonly property color ncBgStrong: alpha(colBg, 0.95)
     readonly property color ncAccent: col9
-    readonly property color ncBorder: alpha(col7, 0.8)
+    // Theme.line, not its own alpha(col7, .8): one edge value for the whole
+    // desktop since 2026-09-27 — see Theme.qml.
+    readonly property color ncBorder: Theme.line
     readonly property string ncFont: UiConfig.fontFamily
 
     //=====================================================================//
@@ -111,10 +113,10 @@ Scope {
     // (control center, calendar, battery, wifi, bluetooth, audio) so they stay
     // aligned with each other.
     // 0 is as tight as this can go: these are layer surfaces, and the bar's
-    // 44px exclusive zone is a hard floor they cannot cross (a negative margin
-    // just clamps). The bar's visible island ends at y=38, so the gap bottoms
-    // out at 6px. Going tighter would mean trimming the bar's exclusive zone,
-    // which moves every tiled window up by the same amount.
+    // exclusive zone is a hard floor they cannot cross (a negative margin
+    // just clamps). The zone is 44px and the visible island ends at y=39, so
+    // the gap bottoms out at 5px — the same 5px every window keeps from the
+    // bar. See `zone` on the bar window.
     readonly property int panelTopMargin: 0
 
     // control center open/closed (toggled by the arch button in the bar)
@@ -2795,11 +2797,11 @@ Scope {
     //
     // Monochrome, like every other icon on this bar: one fill in col7, hover
     // to col9 — and the eyes are HOLES rather than dark shapes. A painted eye
-    // needs a colour, and the only honest one is the island's own background,
-    // which is colBg at alpha .7 over the wallpaper: an opaque copy of it
-    // would be a slightly wrong shade of whatever happens to be behind the bar
-    // at that moment. OddEvenFill punches them instead, so what shows through
-    // an eye is literally what is behind the bar.
+    // needs a colour, and the island's background was colBg at alpha .7 over
+    // the wallpaper, which no opaque copy could match. The island is opaque
+    // Theme.bg since 2026-09-27, so that reason is gone, but holes are still
+    // the one choice that can never disagree with what is behind them.
+    // OddEvenFill punches them.
     component AgentBot: Item {
         id: bot
         property color baseColor: root.col7
@@ -3247,22 +3249,37 @@ Scope {
     }
 
     // An island (one of .modules-left / -center / -right)
+    //
+    // Wears the settings card's surface, like the dock (2026-09-27, Ahaan: the
+    // bar "feels lighter than the rest of the UI and like its own thing").
+    // It was the Waybar port's `alpha(@background,.7)` with a 2px drop
+    // shadow and no edge: seventy percent of the ground over the wallpaper is
+    // visibly paler than the opaque card every dropdown, the launcher and the
+    // dock draw, and with no edge it had nothing tying it to them either. Now
+    // Theme.bg with the 2px Theme.line edge — the same alpha(color7, .8) the
+    // dropdowns call ncBorder — and no shadow, since the card has none (and
+    // the shadow was a MultiEffect layer per island).
+    //
+    // At 0.9, not opaque: tuned live with Ahaan on a dev instance. Opaque
+    // was right for the weight but heavier than he wanted on a strip that
+    // is always on screen; 0.85 went slightly too far. 0.9 keeps it clearly
+    // the card and nowhere near the old 0.7. (A 1.5px edge was tried on the
+    // way and reverted: 2px it is, matching the dock.)
+    //
+    // Radius is Theme.rowRadius rather than cardRadius: an island is ~34px
+    // tall, and 20 on that is nearly a stadium, where the dock's 20 on 54 and
+    // the card's 20 on a panel read as rounded rectangles. 12 keeps the
+    // proportion.
     component Island: Rectangle {
         default property alias content: rowInner.data
-        radius: 10                               // border-radius:10px
-        color: root.alpha(root.colBg, 0.7)       // background: alpha(@background,.7)
+        radius: Theme.rowRadius
+        color: Theme.alpha(Theme.bg, 0.9)
+        border.width: Theme.cardBorder
+        // Theme.line — 0.6 since 2026-09-27, tuned here first and then made
+        // the value for every card edge.
+        border.color: Theme.line
         implicitWidth: rowInner.implicitWidth + 14   // padding:7px  (7*2)
         implicitHeight: rowInner.implicitHeight + 14
-
-        // box-shadow: 0 0 2px rgba(0,0,0,.5)
-        layer.enabled: true
-        layer.effect: MultiEffect {
-            shadowEnabled: true
-            shadowBlur: 0.25
-            shadowColor: Qt.rgba(0, 0, 0, 0.5)
-            shadowVerticalOffset: 0
-            shadowHorizontalOffset: 0
-        }
 
         RowLayout {
             id: rowInner
@@ -4202,8 +4219,22 @@ Scope {
 
             color: "transparent"                 // window#waybar { all:unset }
             anchors { top: true; left: true; right: true }
-            implicitHeight: 44
-            exclusiveZone: 44                    // waybar "exclusive": true
+            // The bar's reserved strip, and the one number that sets how far
+            // every window and dropdown sits below it. The islands are pinned
+            // at y 5-39 whatever this is (centre 22, see the offset on each
+            // island), so the gap under them is `zone - 39`:
+            //
+            //   44  5px — the Waybar port's value, and again since 2026-09-27
+            //   42  3px — tried the same day to match the 3px side gaps;
+            //       Ahaan found it "too close" to the bar
+            //
+            // Tiled windows take gaps_out top = 0 (hyprland.lua), so their
+            // border starts on this line; SUPER+D (window-zoom.sh) reads it
+            // from `reserved`; dropdowns hang from it. Nothing else needs
+            // to change when it does.
+            readonly property int zone: 44
+            implicitHeight: zone
+            exclusiveZone: zone                  // waybar "exclusive": true
 
             //--------------------------------------------------------------//
             //  LEFT ISLAND : custom/notification , hyprland/workspaces      //
@@ -4211,6 +4242,7 @@ Scope {
             Island {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
+                anchors.verticalCenterOffset: 22 - bar.zone / 2   // island stays at y 5-39
                 anchors.leftMargin: 5            // margin:5px
 
                 // custom/notification  →  "󰣇"  →  toggles the Quickshell control center
@@ -4278,13 +4310,39 @@ Scope {
                         // match the .desktop file by its StartupWMClass and show its Name ("Claude").
                         // "__" is the tell-tale sign of a browser webapp window, so normal apps
                         // (kitty, org.gnome.Text-Editor, ...) skip this and keep the cleaned name below.
-                        if (id.indexOf("__") !== -1) {
-                            var entry = DesktopEntries.heuristicLookup(id);
-                            if (entry && entry.name) return entry.name;
-                        }
+                        if (id.indexOf("__") !== -1) return webappName(id);
                         // Everything else: clean reverse-DNS ids, e.g. org.gnome.Text-Editor -> text-editor
                         var parts = id.split(".");
                         return parts[parts.length - 1].toLowerCase();
+                    }
+                    // heuristicLookup alone showed "com__chart_lcrreits_-default" for TradingView:
+                    // its hand-written StartupWMClass lacked the trailing "_" Chromium puts in the
+                    // real appId ("...__chart_lCRrEItS_-Default"), so the lookup missed and the
+                    // reverse-DNS cleanup below mangled the raw id. So: exact StartupWMClass first,
+                    // then match the host of the entry's own --app=URL (which can't drift from what
+                    // the browser was launched with), then the bare site name — never the raw id.
+                    // Reading applications.values also makes this binding re-run when the entry
+                    // list is (re)loaded; before, a lookup that missed at window-open stayed wrong
+                    // until focus moved away and back.
+                    function webappName(id) {
+                        var entries = DesktopEntries.applications.values;
+                        var m = id.match(/^[a-z]+-(.+?)__/);
+                        var host = m ? m[1].toLowerCase() : "";
+                        var lid = id.toLowerCase();
+                        var hostHit = null;
+                        for (var i = 0; i < entries.length; i++) {
+                            var e = entries[i];
+                            if (!e || !e.name) continue;
+                            if (e.startupClass && e.startupClass.toLowerCase() === lid) return e.name;
+                            var u = (e.execString || "").match(/--app=["']?[a-z]+:\/\/([^\/"'\s?#:]+)/i);
+                            if (!hostHit && host && u && u[1].toLowerCase() === host) hostHit = e;
+                        }
+                        if (hostHit) return hostHit.name;
+                        var e2 = DesktopEntries.heuristicLookup(id);
+                        if (e2 && e2.name) return e2.name;
+                        // no .desktop at all: "www.tradingview.com" -> "tradingview"
+                        var labels = host.replace(/^www\./, "").split(".");
+                        return labels.length > 1 ? labels[labels.length - 2] : (labels[0] || id);
                     }
                     hoverable: false
                     baseColor: root.col7
@@ -4299,6 +4357,7 @@ Scope {
             Island {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
+                anchors.verticalCenterOffset: 22 - bar.zone / 2   // island stays at y 5-39
 
                 // clock  →  {:%a %d %B | %I:%M %p}  →  click: dropdown calendar
                 BarLabel {
@@ -4372,6 +4431,7 @@ Scope {
             Island {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
+                anchors.verticalCenterOffset: 22 - bar.zone / 2   // island stays at y 5-39
                 anchors.rightMargin: 5
 
                 //=== voxtype : voice-to-text ==================================

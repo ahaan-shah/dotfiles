@@ -63,9 +63,47 @@ sudo_prime() {
     printf '\n  %sThis installer needs sudo for packages and system files.%s\n' "$C_B" "$C_RST"
     printf '  %sIt is asked for once, here, and kept alive for the rest of the run.%s\n' "$C_DIM" "$C_RST"
     sudo -v || die "sudo authentication failed"
-    ( while true; do sudo -n true 2>/dev/null || exit; command sleep 50; done ) &
+    # The keepalive used to be `sudo -n true || exit`, which gives up the
+    # FIRST time a refresh fails and never comes back — and a single failure
+    # is not the same as "the ticket is gone". It tolerates three in a row
+    # now, and exits only when the installer itself has (kill -0 on the
+    # parent), so a transient miss cannot silently disarm it for the rest of
+    # a run that still has ten minutes of downloading to do.
+    ( fails=0
+      while kill -0 "$$" 2>/dev/null; do
+          if sudo -n true 2>/dev/null; then
+              fails=0
+          else
+              fails=$((fails + 1))
+              [ "$fails" -ge 3 ] && exit
+          fi
+          command sleep 50
+      done ) &
     SUDO_KEEPALIVE_PID=$!
     _log_raw "sudo primed, keepalive pid $SUDO_KEEPALIVE_PID"
+}
+
+# sudo_refresh — make sure the ticket is good RIGHT NOW, and if it is not, ask
+# here rather than letting the next command ask from inside its own output.
+#
+# Written after a VM install died like this, nine minutes into a 6.7 GB
+# download, in the middle of makepkg's output:
+#
+#   sudo: timed out reading password
+#   sudo: a password is required
+#   ==> WARNING: Failed to install built package(s).
+#   ✗ yay bootstrap failed
+#
+# makepkg -si runs `sudo pacman -U` itself, so the prompt appeared where
+# nobody was looking for it, waited out its own timeout, and took the whole
+# run down at phase 2 of 15. Call this before anything long that shells out
+# to a sudo this script does not own.
+sudo_refresh() {
+    [ "$DRY_RUN" = 1 ] && return 0
+    [ "$NO_ROOT" = 1 ] && return 0
+    sudo -n true 2>/dev/null && return 0
+    printf '  %ssudo needs re-authenticating before this step%s\n' "$C_DIM" "$C_RST"
+    sudo -v || die "sudo authentication failed"
 }
 sudo_release() {
     [ -n "$SUDO_KEEPALIVE_PID" ] || return 0

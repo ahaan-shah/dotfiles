@@ -36,7 +36,6 @@ fprintd
 fuzzel
 fzf
 gcc-fortran
-ghostty
 git
 github-cli
 gnome-calculator

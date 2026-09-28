@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Effects
 import Quickshell
 import "."
 
@@ -17,6 +16,38 @@ Item {
     readonly property int dockPadV:     0   // top/bottom padding inside pill
     readonly property int iconSpacing:  0
     readonly property int floatMargin:  4   // gap between pill bottom and screen edge
+
+    // ── Which way the dock faces ──────────────────────────────────
+    // Not an edge name but an angle, because the dock TURNS between edges
+    // rather than being redrawn at the new one. Ahaan, 2026-09-26: switching
+    // edge "abruptly cuts from 0 to 90 degrees and then moves smoothly to the
+    // new location" — make the angle gradual, and have it finish at the same
+    // moment the dock arrives. So MacShell.qml drives `angle` and `side` from
+    // the same progress value as the position, and everything here is laid
+    // out from them continuously.
+    //
+    //   angle  0 = row runs left-to-right (bottom), 90 = top-to-bottom (sides)
+    //   side  +1 = the edge is on the row's clockwise side (bottom, left)
+    //         -1 = the other side (right)
+    //
+    // Two vectors follow: d, the row's direction, and n, pointing from the row
+    // towards the screen edge. n is side times the row turned a quarter, so
+    // flying left <-> right swings `side` through 0 and the icons pass over
+    // the row's centre line to the far side instead of the whole row spinning
+    // round and reversing its order. The pill is symmetric, so turning it by
+    // `angle` is right for either side.
+    //
+    // Everything measured along the row — `hoverX`, `cellX`, `rowWidth`, the
+    // drag — keeps the bottom dock's names and means distance along d.
+    property real angle: 0
+    property real side: 1
+    readonly property real _c: Math.cos(root.angle * Math.PI / 180)
+    readonly property real _s: Math.sin(root.angle * Math.PI / 180)
+    readonly property real dx: root._c
+    readonly property real dy: root._s
+    readonly property real nx: -root.side * root._s
+    readonly property real ny:  root.side * root._c
+    readonly property bool vertical: root.angle > 45
 
     // ── Mouse X in row coordinates (–1 = outside) ─────────────────
     property real hoverX: -1
@@ -52,7 +83,18 @@ Item {
             _setHoverCandidate("", null)
             return
         }
-        const item = iconRow.childAt(root.hoverX, iconRow.height / 2)
+        // By slot, not childAt(): the cells are placed along a direction, so
+        // "which cell is at this distance along the row" is a lookup in the
+        // layout the cells themselves are placed from.
+        let item = null
+        const apps = root.dynamicApps
+        for (let i = 0; i < apps.length; i++) {
+            const x0 = root.cellX[i] ?? 0
+            if (root.hoverX >= x0 && root.hoverX < x0 + root._cellW(apps[i])) {
+                item = iconRepeater.itemAt(i)
+                break
+            }
+        }
         if (!item || item.separator || !item.windowClass || item.windowClass === "") {
             _setHoverCandidate("", null)
             return
@@ -96,8 +138,17 @@ Item {
         _previewIntentTimer.stop()
         const wins = WindowTracker.windowsFor(item.windowClass, "")
         if (wins.length < 2) return
+        // The anchor is the icon's edge FACING AWAY from the screen edge, at
+        // the middle of the icon — the top-centre on a bottom dock, where this
+        // always pointed. `local` is the same point in the dock window's own
+        // coordinates, which is what a side dock's popup is placed by: both
+        // windows span the same full-height strip, so a window-local y means
+        // the same thing in each, where a global y would have to know where
+        // the compositor put the strip under the bar.
         const p = item.mapToGlobal(item.width / 2, 0)
-        DockPreview.show(wins, item.iconPath, p.x, p.y, root.height, root.screen)
+        const local = item.mapToItem(null, item.width / 2, item.height / 2)
+        DockPreview.show(wins, item.iconPath, p.x, p.y,
+                         root.vertical ? root.width : root.height, root.screen, local.y)
     }
 
     // Sustained-hover gate — only shows the popup after 500ms of continuous
@@ -583,69 +634,75 @@ Item {
     }
 
     // ── Pill dimensions ───────────────────────────────────────────
+    // Named for the bottom dock, where they were written: pillWidth is the
+    // pill's length ALONG the row and pillHeight its thickness away from the
+    // edge, whichever way round the dock is.
     readonly property real pillWidth:  root.rowWidth + dockPadH * 2
     readonly property real pillHeight: maxIconSize + dockPadV * 2 + 14
+    readonly property real thickness:  pillHeight + floatMargin + 10   // extra 10 for shadow room
 
-    // Total height this item occupies (pill + float gap)
-    width:  pillWidth
-    height: pillHeight + floatMargin + 10   // extra 10 for shadow room
-    Behavior on width  { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-    Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+    // The pill's length, animated — what the width Behavior used to be, back
+    // when the length was always the width.
+    property real len: root.pillWidth
+    Behavior on len { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+    // Total size this item occupies (pill + float gap): the bounding box of a
+    // len x thickness rectangle turned to `angle`. Exactly that rectangle at
+    // either rest angle.
+    width:  Math.abs(root._c) * root.len + Math.abs(root._s) * root.thickness
+    height: Math.abs(root._s) * root.len + Math.abs(root._c) * root.thickness
+
+    // Points inside this item, from its centre. `v` is a distance along n —
+    // towards the screen edge — so "sits `gap` off the edge" is
+    // v = thickness/2 - gap - (its own thickness)/2, at any angle.
+    function _at(along, v) {
+        return Qt.point(root.width  / 2 + root.dx * along + root.nx * v,
+                        root.height / 2 + root.dy * along + root.ny * v)
+    }
+    readonly property point _pillC: root._at(0, root.thickness / 2 - root.floatMargin - root.pillHeight / 2)
 
     // ── Frosted glass background ──────────────────────────────────
     Rectangle {
         id: pill
-        anchors.bottom:           parent.bottom
-        anchors.bottomMargin:     root.floatMargin
-        anchors.horizontalCenter: parent.horizontalCenter
-
-        width:  root.pillWidth
+        // Always a horizontal pill, turned by `angle` about its centre.
+        width:  root.len
         height: root.pillHeight
         radius: root.pillHeight / 2
+        rotation: root.angle
+        x: root._pillC.x - width  / 2
+        y: root._pillC.y - height / 2
 
-        // Pywal: color0 (darkest bg tone) at 0.82 alpha for the fill;
-        // color1 (first accent) at 0.55 alpha for the border.
-        color:        Qt.rgba(
-                          parseInt(WalColors.color0.slice(1,3), 16) / 255,
-                          parseInt(WalColors.color0.slice(3,5), 16) / 255,
-                          parseInt(WalColors.color0.slice(5,7), 16) / 255,
-                          0.82)
-        border.color: Qt.rgba(
-                          parseInt(WalColors.color1.slice(1,3), 16) / 255,
-                          parseInt(WalColors.color1.slice(3,5), 16) / 255,
-                          parseInt(WalColors.color1.slice(5,7), 16) / 255,
-                          0.55)
-        border.width: 2
+        // The settings card's surface, token for token — Theme.bg, the 2px
+        // Theme.line edge, Theme.cardRadius — so the dock reads as the same
+        // system as the launcher and the settings menu (Ahaan, 2026-09-26:
+        // the dock "does not look like the ui matches the rest of my system").
+        // It was color0 at 0.82 with a color1 border at 0.55 and a drop
+        // shadow, none of which anything else on this desktop wears; the
+        // shadow was also a MultiEffect layer re-rendered every frame the
+        // dock moved. The card has no shadow, so neither does this.
+        color:        Theme.bg
+        border.color: Theme.line
+        border.width: Theme.cardBorder
 
         Behavior on color        { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
         Behavior on border.color { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
-        Behavior on width        { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-        Behavior on height       { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-
-        layer.enabled: true
-        layer.effect: MultiEffect {
-            shadowEnabled:          true
-            shadowColor:            Qt.rgba(0, 0, 0, 0.45)
-            shadowBlur:             0.7
-            shadowHorizontalOffset: 0
-            shadowVerticalOffset:   4
-        }
     }
 
     // ── Icon row ──────────────────────────────────────────────────
-    // A plain Item, not a Row: cells are placed by an animated x so a reorder
-    // can slide. implicitWidth reproduces what the Row reported (its own
-    // left/right padding included), because pillWidth is built from it.
+    // A plain Item, not a Row: cells are placed by an animated distance along
+    // the row so a reorder can slide, and now at any angle. It covers this
+    // whole item, so its coordinates are the Dock's; the row itself starts at
+    // `origin`, half a rowWidth back along d from the centre, and sits
+    // floatMargin off the edge like the pill.
     Item {
         id: iconRow
-        anchors.bottom:           parent.bottom
-        anchors.bottomMargin:     root.floatMargin
-        anchors.horizontalCenter: parent.horizontalCenter
-
-        implicitWidth:  root.rowWidth
-        implicitHeight: root.maxIconSize + 24
+        anchors.fill: parent
+        readonly property real thick: root.maxIconSize + 24
+        readonly property point origin:
+            root._at(-root.rowWidth / 2, root.thickness / 2 - root.floatMargin - iconRow.thick / 2)
 
         Repeater {
+            id: iconRepeater
             model: root.dynamicApps
 
             DockIcon {
@@ -660,6 +717,13 @@ Item {
                 windowClass: modelData.windowClass
                 isPinned:    modelData.isPinned
 
+                dx:         root.dx
+                dy:         root.dy
+                nx:         root.nx
+                ny:         root.ny
+                ox:         iconRow.origin.x
+                oy:         iconRow.origin.y
+                angle:      root.angle
                 baseSize:   root.baseIconSize
                 maxSize:    root.maxIconSize
                 magnRadius: root.magnRadius
@@ -688,20 +752,28 @@ Item {
 
     // Sits above the pill, inside the panel window's 130px height (the pill
     // itself only occupies the bottom ~68 of that) and outside the input mask,
-    // so it is never in the way of a click.
+    // so it is never in the way of a click. On a side dock it sits beside the
+    // pill, on the screen side away from the edge — MacShell.qml makes that
+    // window wide enough to hold it.
     Rectangle {
         id: pinToast
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom:           pill.top
-        anchors.bottomMargin:     8
+        // Beside the pill on the side away from the edge: back along n from
+        // the pill's centre by half the pill, the gap, and half of itself
+        // measured the same way.
+        readonly property real _back: root.pillHeight / 2 + 8
+                                      + Math.abs(root.nx) * width / 2 + Math.abs(root.ny) * height / 2
+        x: root._pillC.x - root.nx * _back - width  / 2
+        y: root._pillC.y - root.ny * _back - height / 2
 
-        width:  toastLabel.implicitWidth  + 26
-        height: toastLabel.implicitHeight + 12
-        radius: height / 2
+        // A small card of the same kind as the pill: Theme.bg, the 2px
+        // Theme.line edge, the settings card's row radius and row type.
+        width:  toastLabel.implicitWidth  + 28
+        height: toastLabel.implicitHeight + 14
+        radius: Theme.rowRadius
 
-        color:        pill.color
-        border.color: pill.border.color
-        border.width: 1
+        color:        Theme.bg
+        border.color: Theme.line
+        border.width: Theme.cardBorder
 
         opacity: 0
         visible: opacity > 0
@@ -711,9 +783,9 @@ Item {
             id: toastLabel
             anchors.centerIn: parent
             text:            root._toastText
-            color:           WalColors.foreground
-            font.family:     UiConfig.fontFamily
-            font.pixelSize:  13
+            color:           Theme.text
+            font.family:     Theme.font
+            font.pixelSize:  Theme.fsRow
         }
 
         Timer {
@@ -734,8 +806,13 @@ Item {
         propagateComposedEvents: true
         acceptedButtons: Qt.NoButton
 
+        // Distance along the row from where it starts. See `angle` above.
+        function _along(mx, my) {
+            return (mx - iconRow.origin.x) * root.dx + (my - iconRow.origin.y) * root.dy
+        }
+
         onPositionChanged: mouse => {
-            root.hoverX = iconRow.mapFromItem(dockMouseArea, mouse.x, 0).x
+            root.hoverX = _along(mouse.x, mouse.y)
             root._updateHoverCandidate()
         }
         onExited: {
@@ -744,7 +821,7 @@ Item {
             root._updateHoverCandidate()
         }
         onEntered: {
-            root.hoverX = iconRow.mapFromItem(dockMouseArea, mouseX, 0).x
+            root.hoverX = _along(mouseX, mouseY)
             root.hovered = true
             root._updateHoverCandidate()
         }

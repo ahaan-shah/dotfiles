@@ -1,12 +1,12 @@
-# voxtype — push-to-talk dictation, bound to CTRL+. in hyprland.lua.
+# voxtype — dictation, bound to CTRL+. in hyprland.lua (press to start,
+# press again to stop and transcribe).
 # @HOME@ is substituted by install.sh. Regenerate with: install.sh --only apps
 state_file = "auto"
 
 [hotkey]
-# Deliberately disabled: hyprland.lua owns the binding (press = record start,
-# release = record stop), which is what makes it push-to-talk rather than a
-# toggle. Two hl.bind() calls on the same key are fine because they differ by
-# the `release` flag.
+# Deliberately disabled: hyprland.lua owns the binding, as a single bind on
+# `voxtype record toggle`. voxtype's own hotkey grabs the key globally and
+# would fight the compositor bind for it.
 enabled = false
 key = "SCROLLLOCK"
 modifiers = []

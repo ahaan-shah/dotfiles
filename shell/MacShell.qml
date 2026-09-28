@@ -40,7 +40,80 @@ Scope {
             required property ShellScreen modelData
             screen: modelData
 
-            anchors { bottom: true; left: true; right: true }
+            // Settings -> Setup -> Dock -> Position.
+            //
+            // The surface is the WHOLE usable area on every edge, and it never
+            // changes size; the mask below cuts input down to the dock itself,
+            // so the rest is transparent to clicks. That is what makes the
+            // edge switch animatable. It was a strip along the dock's edge
+            // (130 deep at the bottom, 360 wide at a side), and switching edge
+            // resized the layer surface — which Hyprland animates by stretching
+            // the last frame, so the icons smeared into long coloured bars
+            // across the screen (Ahaan's recording, 2026-09-26). A fade-out,
+            // move, fade-in hid that and cost the fly to the new edge, which
+            // he wanted kept. A surface that never resizes gives the
+            // compositor nothing to stretch, and the dock flies inside it.
+            //
+            // ── The flight ──────────────────────────────────────────
+            // One animated number, `flyT`, 0 -> 1, and the dock's centre, its
+            // angle and its side are all straight interpolations on it — so
+            // the turn and the arrival end on the same frame by construction,
+            // which is what Ahaan asked for. The first version flew the
+            // position with x/y Behaviors and re-laid the row out at the new
+            // angle on the first frame, which read as a cut from 0 to 90
+            // degrees followed by a smooth move.
+            //
+            // `edge` is the committed edge, and a plain value rather than a
+            // binding on the setting: the flight has to read where the dock
+            // IS before anything is re-evaluated for where it is going.
+            readonly property string wantEdge: UiConfig.dockEdge
+            property string edge: "bottom"
+            readonly property bool vertical: edge !== "bottom"
+
+            property real flyT: 1
+            property real fromCx: 0
+            property real fromCy: 0
+            property real fromAngle: 0
+            property real fromSide: 1
+            readonly property real toAngle: vertical ? 90 : 0
+            readonly property real toSide:  edge === "right" ? -1 : 1
+            readonly property real curAngle: fromAngle + (toAngle - fromAngle) * flyT
+            readonly property real curSide:  fromSide  + (toSide  - fromSide)  * flyT
+
+            onWantEdgeChanged: {
+                if (wantEdge === edge) return
+                // The first read of ui.conf is where the dock starts, not a
+                // move: nothing has been seen yet, so there is nothing to fly.
+                if (!UiConfig.loaded) {
+                    edge = wantEdge
+                    fromAngle = toAngle
+                    fromSide  = toSide
+                    return
+                }
+                // From wherever it is right now — mid-flight included.
+                fromCx    = dockPanel.x + dockPanel.width  / 2
+                fromCy    = dockPanel.y + dockPanel.height / 2
+                fromAngle = curAngle
+                fromSide  = curSide
+                edge      = wantEdge
+                flyT      = 0
+                flyAnim.restart()
+            }
+            Component.onCompleted: {
+                edge = wantEdge
+                fromAngle = toAngle
+                fromSide  = toSide
+            }
+            NumberAnimation {
+                id: flyAnim
+                target: dockWindow
+                property: "flyT"
+                from: 0; to: 1
+                duration: 450
+                easing.type: Easing.InOutCubic
+            }
+
+            anchors { top: true; bottom: true; left: true; right: true }
 
             // Never reserve layout space. Reserving any non-zero zone makes
             // Hyprland's own tiling engine shrink windows to avoid it *before*
@@ -53,7 +126,7 @@ Scope {
             WlrLayershell.layer:     WlrLayer.Top
             WlrLayershell.namespace: "macdock"
             color:         "transparent"
-            implicitHeight: 130
+            implicitHeight: screen.height
             implicitWidth:  screen.width
 
             mask: Region { item: dockPanel }
@@ -62,6 +135,9 @@ Scope {
             QtObject {
                 id: dockController
 
+                // Whether the pointer is pressed against the dock's edge, inside
+                // the dock's span along it. Named for the bottom dock it was
+                // written for; it means whichever edge the dock is on.
                 property bool mouseNearBottom: false
                 // Bound (not set imperatively via a second MouseArea) — see the
                 // note on Dock.qml's `hovered` property for why a separate
@@ -95,7 +171,13 @@ Scope {
                     onTriggered: dockController._grace = false
                 }
 
-                readonly property bool dockVisible: hovering || _grace || !windowOverlaps
+                // Settings -> Setup -> Dock -> Always hide. "overlap" (switch
+                // off) is what this has always done: out of the way only while
+                // a window reaches the dock's edge. "always" drops that last
+                // term, so the pointer is the only thing that brings it up.
+                readonly property bool alwaysHide: UiConfig.dockHide === "always"
+                readonly property bool dockVisible: hovering || _grace
+                                                    || (!alwaysHide && !windowOverlaps)
 
                 // ── Poll cursor position ──────────────────────────
                 property string _cursorBuf: ""
@@ -116,15 +198,31 @@ Scope {
                             const pos = JSON.parse(dockController._cursorBuf)
                             const sh  = dockWindow.screen.height
                             // hyprctl cursorpos is in global (multi-monitor) coordinates;
-                            // translate the dock's horizontal span into that space.
+                            // translate the dock's span into that space.
                             const sx       = dockWindow.screen.x
+                            const sy       = dockWindow.screen.y
                             const sw       = dockWindow.screen.width
-                            const halfDock = dockPanel.width / 2
-                            const centerX  = sx + sw / 2
-                            const nearBottom = pos.y >= (sh - 10)
-                            const withinDockSpan =
-                                pos.x >= (centerX - halfDock) && pos.x <= (centerX + halfDock)
-                            dockController.mouseNearBottom = nearBottom && withinDockSpan
+                            const edge     = dockWindow.edge
+                            let near = false, within = false
+                            if (edge === "bottom") {
+                                const halfDock = dockPanel.width / 2
+                                const centerX  = sx + sw / 2
+                                near   = pos.y >= (sy + sh - 10)
+                                within = pos.x >= (centerX - halfDock) && pos.x <= (centerX + halfDock)
+                            } else {
+                                // A side strip is anchored top-to-bottom but the
+                                // compositor lays it out BELOW the bar's exclusive
+                                // zone, so its centre is not the screen's. Its
+                                // own height is the usable height; the part of
+                                // the screen it does not cover is the bar.
+                                const top      = sy + (sh - dockWindow.height)
+                                const centerY  = top + dockWindow.height / 2
+                                const halfDock = dockPanel.height / 2
+                                near   = edge === "left" ? pos.x <= (sx + 10)
+                                                         : pos.x >= (sx + sw - 10)
+                                within = pos.y >= (centerY - halfDock) && pos.y <= (centerY + halfDock)
+                            }
+                            dockController.mouseNearBottom = near && within
                         } catch(e) {}
                         dockController._cursorBuf = ""
                     }
@@ -181,11 +279,22 @@ Scope {
                 }
                 // Also recheck when active workspace changes
                 onActiveWorkspaceIdChanged: _checkOverlap()
+                // …and when the dock moves to another edge, or the answer is
+                // about the edge it just left.
+                property var _edgeConn: Connections {
+                    target: dockWindow
+                    function onEdgeChanged() { dockController._checkOverlap() }
+                }
 
+                // A window "overlaps" when it reaches within 60px of the
+                // dock's edge anywhere along that edge — the same strip the
+                // bottom dock has always measured, turned for a side dock.
                 function _checkOverlap() {
+                    const sx      = dockWindow.screen.x
+                    const sy      = dockWindow.screen.y
                     const sh      = dockWindow.screen.height
                     const sw      = dockWindow.screen.width
-                    const dockTop = sh - 60
+                    const edge    = dockWindow.edge
                     let overlaps  = false
                     WindowTracker.windowList.forEach(w => {
                         if (w.workspaceName.startsWith("special:")) return
@@ -193,9 +302,12 @@ Scope {
                         if (w.ww <= 0 || w.wh <= 0) return
                         // Only check windows on the currently active workspace
                         if (w.workspaceId !== dockController.activeWorkspaceId) return
-                        if ((w.y + w.wh) > dockTop && w.y < sh &&
-                             w.x < sw && (w.x + w.ww) > 0)
-                            overlaps = true
+                        // On this screen at all
+                        if (w.x >= sx + sw || (w.x + w.ww) <= sx) return
+                        if (w.y >= sy + sh || (w.y + w.wh) <= sy) return
+                        if (edge === "left"  && w.x < sx + 60)             overlaps = true
+                        if (edge === "right" && (w.x + w.ww) > sx + sw - 60) overlaps = true
+                        if (edge === "bottom" && (w.y + w.wh) > sy + sh - 60) overlaps = true
                     })
                     dockController.windowOverlaps = overlaps
                 }
@@ -205,14 +317,30 @@ Scope {
             Dock {
                 id: dockPanel
                 screen: modelData
-                anchors.bottom:           parent.bottom
-                anchors.horizontalCenter: parent.horizontalCenter
+                angle:  dockWindow.curAngle
+                side:   dockWindow.curSide
 
-                // Matches Finder's box animation: uniform ~150ms OutCubic both ways.
-                anchors.bottomMargin: dockController.dockVisible ? 0 : -(height + 16)
-                Behavior on anchors.bottomMargin {
+                // 0 shown, 1 hidden: slid off its own edge by its own depth
+                // plus 16. Matches Finder's box animation: uniform ~150ms
+                // OutCubic both ways.
+                property real hiddenT: dockController.dockVisible ? 0 : 1
+                Behavior on hiddenT {
                     NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
                 }
+                // Where the centre belongs at the committed edge — the rest
+                // position, and the far end of a flight.
+                readonly property real _hide: hiddenT * (thickness + 16)
+                readonly property real _toCx:
+                    dockWindow.edge === "left"  ? thickness / 2 - _hide
+                  : dockWindow.edge === "right" ? parent.width - thickness / 2 + _hide
+                  : parent.width / 2
+                readonly property real _toCy:
+                    dockWindow.edge === "bottom" ? parent.height - thickness / 2 + _hide
+                                                 : parent.height / 2
+                readonly property real _cx: dockWindow.fromCx + (_toCx - dockWindow.fromCx) * dockWindow.flyT
+                readonly property real _cy: dockWindow.fromCy + (_toCy - dockWindow.fromCy) * dockWindow.flyT
+                x: _cx - width  / 2
+                y: _cy - height / 2
                 opacity: dockController.dockVisible ? 1 : 0
                 Behavior on opacity {
                     NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
@@ -223,9 +351,11 @@ Scope {
 
     // ── Multi-instance hover preview ───────────────────────────────
     // A separate PanelWindow (own Variants block, one per screen) rather
-    // than a child of dockWindow above — dockWindow's implicitHeight (130)
-    // is exactly the dock's own footprint, and content positioned above y=0
-    // there would just be clipped by that surface's own bounds. Sized to
+    // than a child of dockWindow above. That was because dockWindow was once
+    // a 130px strip, the dock's own footprint, and content above y=0 would
+    // have been clipped; it is the whole usable area now, but the popup keeps
+    // its own window so it can sit on the Top layer above everything the
+    // dock's mask excludes. Sized to
     // its own content (like the OSD pill below, not the calendar dropdown's
     // full-screen catcher — see DockPreview.qml/WindowPreviewPopup.qml for
     // why full-screen was wrong here), so it only ever intercepts input
@@ -245,10 +375,24 @@ Scope {
             WlrLayershell.layer:     WlrLayer.Top
             WlrLayershell.namespace: "macdock-preview"
 
-            anchors { bottom: true; left: true }
+            // Bottom dock: a window the popup's own size, pinned bottom-left
+            // and pushed into place by margins, as it always was. Side dock: a
+            // full-height strip on the dock's edge, with the popup placed at
+            // the hovered icon's y inside it and the mask cutting input down
+            // to the popup — see DockPreview.localY for why a strip.
+            readonly property string edge: UiConfig.dockEdge
+            readonly property bool vertical: edge !== "bottom"
+
+            anchors {
+                bottom: true
+                top:    previewWindow.vertical
+                left:   previewWindow.edge !== "right"
+                right:  previewWindow.edge === "right"
+            }
 
             implicitWidth:  previewPopup.implicitWidth
-            implicitHeight: previewPopup.implicitHeight
+            implicitHeight: vertical ? modelData.height : previewPopup.implicitHeight
+            mask: Region { item: previewPopup }
 
             // Center the popup over the hovered icon's global x, clamped so
             // it can't slide off either edge of this screen. globalX is in
@@ -258,6 +402,7 @@ Scope {
             // PanelWindow.anchors is a plain 4-bool struct (edges only) —
             // offsets from those edges are a separate `margins` property.
             margins.left: {
+                if (vertical) return DockPreview.dockHeight + 2 - previewPopup.shadowMargin
                 const half = previewPopup.implicitWidth / 2
                 const raw  = (DockPreview.globalX - modelData.x) - half
                 return Math.max(0, Math.min(raw, modelData.width - previewPopup.implicitWidth))
@@ -265,10 +410,16 @@ Scope {
             // Sit just above the dock pill. Subtract the popup's own
             // shadowMargin padding (see WindowPreviewPopup.qml) so the
             // *visible* card sits this close, not the padded window edge.
-            margins.bottom: DockPreview.dockHeight + 2 - previewPopup.shadowMargin
+            margins.bottom: vertical ? 0 : DockPreview.dockHeight + 2 - previewPopup.shadowMargin
+            margins.right:  vertical ? DockPreview.dockHeight + 2 - previewPopup.shadowMargin : 0
 
             WindowPreviewPopup {
                 id: previewPopup
+                // Beside the icon on a side dock, clamped to the strip.
+                y: previewWindow.vertical
+                   ? Math.max(0, Math.min(DockPreview.localY - implicitHeight / 2,
+                                          previewWindow.height - implicitHeight))
+                   : 0
                 windows:       DockPreview.windows
                 iconPath:      DockPreview.iconPath
                 cancelClose:   DockPreview.cancelClose

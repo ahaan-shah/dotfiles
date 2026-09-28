@@ -20,16 +20,22 @@ QtObject {
     property string iconPath:    ""
     property real   globalX:     0       // hovered icon's mapToGlobal anchor
     property real   globalY:     0
-    property real   dockHeight:  0       // that screen's Dock.height, for vertical offset
+    property real   dockHeight:  0       // that screen's dock thickness away from its edge
+    // The hovered icon's centre, as a y in the dock WINDOW's own coordinates.
+    // Only a side dock uses it: there the popup sits beside the icon, and the
+    // dock and popup windows both span the same full-height strip, so a
+    // window-local y is already right for the popup's window.
+    property real   localY:      0
     property var    activeScreen: null   // the ShellScreen the hover originated on
 
-    function show(windows, iconPath, globalX, globalY, dockHeight, screen) {
+    function show(windows, iconPath, globalX, globalY, dockHeight, screen, localY) {
         _closeTimer.stop()
         root.windows      = windows
         root.iconPath     = iconPath
         root.globalX      = globalX
         root.globalY      = globalY
         root.dockHeight   = dockHeight
+        root.localY       = localY ?? 0
         root.activeScreen = screen
         root.visible      = true
     }

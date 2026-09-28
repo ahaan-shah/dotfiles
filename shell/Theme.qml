@@ -70,7 +70,13 @@ QtObject {
     // exactly what every dropdown panel in taskbar/shell.qml draws (its
     // `ncBorder`), and Ahaan's call is that finder wear the same one. It was
     // col7 at 0.30, which against a bright wallpaper was barely an edge at all.
-    readonly property color line:      root.alpha(root.col7, 0.80)   // the card edge
+    //
+    // 0.60 since 2026-09-27 (it was 0.80 from the taskbar port), at Ahaan's
+    // call: tuned live on the bar through 0.9, 0.5, 0.7 and 0.6, then made
+    // uniform — "the dock and settings cards and all" — so every card edge on
+    // the desktop is this one value. Bar.qml's ncBorder (every dropdown) reads
+    // this now rather than keeping its own copy.
+    readonly property color line:      root.alpha(root.col7, 0.60)   // the card edge
     readonly property color hairline:  root.alpha(root.text, 0.10)   // dividers inside it
     // There is no rowHover any more. It was alpha(col7, 0.035) — deliberately
     // far below rowSel, because at 0.07 a hovered row read as a second

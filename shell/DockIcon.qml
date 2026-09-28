@@ -49,14 +49,43 @@ Item {
     property real _pressRowX:    0
     property bool _suppressClick: false
 
+    // ── The frame the parent Dock lays this cell out in ───────────
+    // Not an edge name: a direction. (dx, dy) is the unit vector the row runs
+    // along, (nx, ny) points from the row towards the screen edge, and
+    // (ox, oy) is where the row starts, in the parent's coordinates. The Dock
+    // animates these continuously while it flies from one edge to another, so
+    // the row turns through every angle in between rather than jumping from
+    // horizontal to vertical — see Dock.qml's `angle`. At rest they are the
+    // four exact cases: row right/normal down at the bottom, row down/normal
+    // left or right at a side.
+    //
+    // targetX, dragX and dockHoverX are all measured ALONG the row; the names
+    // are the bottom dock's.
+    property real dx: 1
+    property real dy: 0
+    property real nx: 0
+    property real ny: 1
+    property real ox: 0
+    property real oy: 0
+    property real angle: 0          // the row's angle in degrees, for rotated parts
+    readonly property bool vertical: Math.abs(root.dy) > Math.abs(root.dx)
+
     // The cell follows the layout, except while it is being carried, when it
     // follows the pointer. Everything else slides because its targetX changed
-    // underneath this same Behavior.
-    x: root.dragging ? root.dragX - width / 2 : root.targetX
-    Behavior on x {
+    // underneath this same Behavior. It animates the distance along the row,
+    // not x or y, so a reorder slides the same way at any angle.
+    property real alongPos: root.dragging ? root.dragX - root.cellLen / 2 : root.targetX
+    Behavior on alongPos {
         enabled: !root.dragging     // the carried icon must not lag the pointer
         NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
     }
+    // The cell's centre, and its box: the bounding box of a cellLen x
+    // cellThick rectangle turned to the row's angle. Only the two rest angles
+    // matter for hit testing; in between, the box is just somewhere to draw.
+    readonly property real _cx: root.ox + root.dx * (root.alongPos + root.cellLen / 2)
+    readonly property real _cy: root.oy + root.dy * (root.alongPos + root.cellLen / 2)
+    x: root._cx - width / 2
+    y: root._cy - height / 2
 
     // The carried icon passes over its neighbours, not under them.
     z: root.dragging ? 2 : (root.armed ? 1 : 0)
@@ -99,7 +128,7 @@ Item {
 
     // ── Geometry ──────────────────────────────────────────────────
     // Centre of this icon in the row (used by parent to feed dockHoverX back)
-    readonly property real iconCenterX: x + width / 2
+    readonly property real iconCenterX: root.alongPos + root.cellLen / 2
 
     readonly property real _dist: dockHoverX < 0
                                   ? magnRadius + 1
@@ -113,7 +142,7 @@ Item {
     // cell the mouse is. Previously magnRadius (45) exceeded the cell pitch
     // (42), so a mouse near either edge of one icon was still close enough
     // to partially magnify the icon next to it.
-    readonly property real _effRadius: Math.min(magnRadius, width / 2)
+    readonly property real _effRadius: Math.min(magnRadius, root.cellLen / 2)
 
     readonly property real _magnFactor: _dist >= _effRadius
                                         ? 0
@@ -133,8 +162,11 @@ Item {
     // every hovered-icon growth tick shifted every later icon's Row-assigned
     // x, which fed back into their own iconCenterX-based magnFactor calc and
     // produced a per-frame wobble in icons that weren't even being hovered.
-    width:  separator ? 18 : baseSize + 8
-    height: maxSize + 24     // constant: icon bottom + dot clearance
+    // cellLen along the row, cellThick away from the screen edge.
+    readonly property real cellLen:   separator ? 18 : baseSize + 8
+    readonly property real cellThick: maxSize + 24     // constant: icon bottom + dot clearance
+    width:  Math.abs(root.dx) * root.cellLen + Math.abs(root.dy) * root.cellThick
+    height: Math.abs(root.dy) * root.cellLen + Math.abs(root.dx) * root.cellThick
 
     // Smooth fade in/out when dynamic icons appear or disappear
     opacity: 1
@@ -147,11 +179,13 @@ Item {
     Rectangle {
         visible: root.separator
         anchors.centerIn: parent
+        // Across the row, so it turns with the dock.
         width:  1
         height: root.baseSize * 0.65
+        rotation: root.angle
         // Same foreground as the dots, same reason: a white hairline on a
         // near-white pill is not a hairline, it is nothing.
-        color:  Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.30)
+        color:  Theme.dimmer
     }
 
     // ── Icon container ────────────────────────────────────────────
@@ -162,25 +196,37 @@ Item {
         width:  root.baseSize
         height: root.baseSize
 
-        // Sits on the bottom of the cell; leaves room for the running dot
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom:           parent.bottom
-        // Lifts off the row while armed or carried, which together with the
-        // jiggle below is the whole of the "you can move me now" affordance.
-        anchors.bottomMargin:     11 + ((root.armed || root.dragging) ? 7 : 0)
-        Behavior on anchors.bottomMargin {
+        // Sits on the screen-edge side of the cell; leaves room for the
+        // running dot. Lifts off the row while armed or carried, which together
+        // with the jiggle below is the whole of the "you can move me now"
+        // affordance.
+        property real edgeGap: 11 + ((root.armed || root.dragging) ? 7 : 0)
+        Behavior on edgeGap {
             NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
         }
+        // Offset from the cell's centre towards the edge. The icon itself is
+        // never turned: it stays upright at every angle, and only where it
+        // sits moves with the row.
+        readonly property real off: root.cellThick / 2 - edgeGap - root.baseSize / 2
+        x: root.width  / 2 + root.nx * off - width  / 2
+        y: root.height / 2 + root.ny * off - height / 2
 
         // Magnification is a pure visual transform (not a layout resize),
-        // scaled from the bottom so it grows upward in place and can overlap
-        // neighboring cells the way real dock magnification does, without
-        // ever changing this item's actual width/height/x.
-        transformOrigin: Item.Bottom
-        scale: (root.currentSize / root.baseSize)
-               * ((mouseArea.pressed && !root.dragging) ? 0.88 : 1.0)
-               * (root.dragging ? 1.18 : (root.armed ? 1.08 : 1.0))
-        Behavior on scale { NumberAnimation { duration: 70 } }
+        // scaled from the screen-edge side so it grows away from the edge in
+        // place and can overlap neighboring cells the way real dock
+        // magnification does, without ever changing this item's actual
+        // width/height/x. The origin is the point of the icon nearest the
+        // edge, taken from the normal, so it follows the row as it turns.
+        property real mag: (root.currentSize / root.baseSize)
+                           * ((mouseArea.pressed && !root.dragging) ? 0.88 : 1.0)
+                           * (root.dragging ? 1.18 : (root.armed ? 1.08 : 1.0))
+        Behavior on mag { NumberAnimation { duration: 70 } }
+        transform: Scale {
+            origin.x: iconItem.width  / 2 * (1 + root.nx)
+            origin.y: iconItem.height / 2 * (1 + root.ny)
+            xScale: iconItem.mag
+            yScale: iconItem.mag
+        }
 
         // A plain value, not a binding, so the animation below can drive it.
         rotation: 0
@@ -232,58 +278,43 @@ Item {
 
     }
 
-    // ── Running indicator dot(s) ──────────────────────────────────
-    Row {
-        visible: root.isRunning && !root.separator && root.matchedWindows.length <= 3
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom:           parent.bottom
-        anchors.bottomMargin:     3
-        spacing: 2
-
-        // Dot 1 — always shown when running
-        Rectangle {
-            width:  4
-            height: 4
-            radius: 2
-            // Full strength when this app is focused, half when it is merely
-            // running — the same two-step the white version had, so only the
-            // hue changes and the "which one is focused" reading does not.
-            color:  root.isActive ? root.fg
-                                  : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.50)
-            anchors.verticalCenter: parent.verticalCenter
-
-            Behavior on color { ColorAnimation { duration: 150 } }
-        }
-        // Dot 2 — shown when 2 windows open
-        Rectangle {
-            visible: root.matchedWindows.length >= 2
-            width:  4; height: 4; radius: 2
-            color:  Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.55)
-            anchors.verticalCenter: parent.verticalCenter
-        }
-        // Dot 3 — shown when 3 windows open
-        Rectangle {
-            visible: root.matchedWindows.length >= 3
-            width:  4; height: 4; radius: 2
-            color:  Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.55)
-            anchors.verticalCenter: parent.verticalCenter
-        }
-    }
-
-    // 4 or more instances: collapse the dots into a single thin rounded
-    // line, the same width the 3-dot row above occupies (3×4 + 2×2 = 16px),
-    // so there's no layout jump switching between the two representations.
+    // ── Running indicator ─────────────────────────────────────────
+    // A short bar on the edge side of the icon, turned with the row. These
+    // were dots — one to three, then a line for four or more — and Ahaan's
+    // verdict after the side docks landed was that they "look a little odd
+    // in the new positions": three 4px circles read as punctuation next to
+    // an icon, and more so standing in a column. One bar reads as a mark.
+    //
+    //   running           Theme.dimmer, the settings card's quiet ink
+    //   focused           Theme.accent. The focused app also had the
+    //                     settings card's selection wash behind its icon
+    //                     for a day; Ahaan had it removed (2026-09-27), so
+    //                     the bar alone says which app is current.
+    //   more than one     longer: 8 / 14 / 20px for 1 / 2 / 3+ windows,
+    //                     which keeps the count the dots used to carry
+    //
+    // The accent is safe here where it was not for text (see Theme.qml and
+    // the map's note on ncAccent): this is a fill, not a glyph that has to be
+    // read. It sits 1px past the icon cell's edge-side boundary — measured on
+    // screen at 4px it sat on the pill's bright 2px border and read as part of
+    // it; icons carry a few px of transparent padding, so 1px still leaves a
+    // visible gap under the artwork. Faded by the normal's length, for the reason the dots were:
+    // flying between the two sides the normal swings through zero, and the
+    // bar would otherwise cross the icon.
     Rectangle {
-        visible: root.isRunning && !root.separator && root.matchedWindows.length >= 4
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom:           parent.bottom
-        anchors.bottomMargin:     3
-        width:  16
-        height: 4
-        radius: 2
-        color:  root.isActive ? root.fg
-                              : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.50)
-
+        id: runBar
+        visible: root.isRunning && !root.separator
+        readonly property int n: root.matchedWindows.length
+        width:  n >= 3 ? 20 : (n === 2 ? 14 : 8)
+        height: 3
+        radius: 1.5
+        rotation: root.angle
+        opacity: Math.min(1, Math.sqrt(root.nx * root.nx + root.ny * root.ny))
+        color: root.isActive ? Theme.accent : Theme.dimmer
+        readonly property real off: root.cellThick / 2 - 11 + 1 + height / 2
+        x: root.width  / 2 + root.nx * off - width  / 2
+        y: root.height / 2 + root.ny * off - height / 2
+        Behavior on width { NumberAnimation { duration: Theme.motion; easing.type: Easing.OutCubic } }
         Behavior on color { ColorAnimation { duration: 150 } }
     }
 
@@ -297,14 +328,18 @@ Item {
         // that is about to start.
         preventStealing: root.armed || root.dragging
 
-        // root.x is this cell's position in row coordinates and mouse.x is
+        // alongPos is this cell's position along the row and the mouse is
         // measured from the cell, so the sum is the pointer in row coordinates
         // — and it stays true once the cell starts following the pointer,
-        // because the two move by equal and opposite amounts.
-        function _rowX(mx) { return root.x + mx }
+        // because the two move by equal and opposite amounts. The mouse is
+        // projected onto the row direction, so this holds at either rest angle.
+        function _rowX(mx, my) {
+            return root.alongPos + root.cellLen / 2
+                 + (mx - root.width / 2) * root.dx + (my - root.height / 2) * root.dy
+        }
 
         onPressed: mouse => {
-            root._pressRowX     = _rowX(mouse.x)
+            root._pressRowX     = _rowX(mouse.x, mouse.y)
             root._suppressClick = false
         }
 
@@ -331,7 +366,7 @@ Item {
         onPositionChanged: mouse => {
             if (root.separator || !pressed) return
             if (!root.armed && !root.dragging) return
-            const rx = _rowX(mouse.x)
+            const rx = _rowX(mouse.x, mouse.y)
             if (!root.dragging) {
                 // A double-click that never travels must not reorder anything,
                 // so the drag only begins once the pointer has actually moved.

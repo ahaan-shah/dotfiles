@@ -8,6 +8,8 @@
 #
 # KEYS: UI_FONT  ICON_THEME  GTK_THEME  PALETTE  DEFAULT_BROWSER
 #       DEFAULT_TERMINAL  DEFAULT_EDITOR  DEFAULT_PDF
+#       DOCK_AUTOHIDE (overlap|always)  DOCK_POSITION (bottom|left|right)
+#       SWITCHER_SPECIAL (on|off)
 #
 # ── Why a plain file, and why this one ────────────────────────────────────
 # Six different things need to agree on these values: the four Quickshell
@@ -39,7 +41,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/ui.conf"
 
 die() { echo "ui-prefs: $*" >&2; exit 1; }
 
-VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP DEFAULT_PDF"
+VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP DEFAULT_PDF DOCK_AUTOHIDE DOCK_POSITION SWITCHER_SPECIAL"
 
 # ── store ────────────────────────────────────────────────────────────────
 
@@ -436,6 +438,15 @@ case "$cmd" in
         [ $# -ge 3 ] || die "usage: ui-prefs.sh set <KEY> <VALUE> [DETAIL]"
         key="$2"; val="$3"; detail="${4:-}"
         case " $VALID_KEYS " in *" $key "*) ;; *) die "unknown key: $key" ;; esac
+        # The two dock keys are closed sets, and the dock reads whatever is
+        # here verbatim — a typo would otherwise park it at no edge at all.
+        case "$key=$val" in
+            DOCK_AUTOHIDE=overlap|DOCK_AUTOHIDE=always) ;;
+            DOCK_POSITION=bottom|DOCK_POSITION=left|DOCK_POSITION=right) ;;
+            DOCK_*) die "bad value for $key: $val" ;;
+            SWITCHER_SPECIAL=on|SWITCHER_SPECIAL=off) ;;
+            SWITCHER_SPECIAL=*) die "bad value for $key: $val" ;;
+        esac
         pref_set "$key" "$val"
         case "$key" in
             UI_FONT)          apply_font "$val";       notify "Font" "$val" ;;

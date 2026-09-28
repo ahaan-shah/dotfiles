@@ -120,12 +120,13 @@ extract_typed() {
     local raw="$1" kind="$2"
     case "$kind" in
         int)   printf '%s' "$raw" | sed -n 's/.*"int":[[:space:]]*\(-\?[0-9]*\).*/\1/p' ;;
-        # "css": "3 3 3 3" — gaps carry one value per edge. This page offers
-        # ONE number, which Hyprland expands to all four (measured: setting
-        # gaps_in = 8 reads back "8 8 8 8"), so the first is what to show. Four
-        # independent edges would be four boxes for something nobody sets
-        # asymmetrically on this desktop.
-        css)   printf '%s' "$raw" | sed -n 's/.*"css":[[:space:]]*"\([^ "]*\).*/\1/p' ;;
+        # "css": "3 3 3 3" — gaps carry one value per edge (top right bottom
+        # left). This page offers ONE number, which Hyprland expands to all
+        # four (measured: setting gaps_in = 8 reads back "8 8 8 8"). The LAST
+        # is what to show, not the first: gaps_out's top is held at 0 so
+        # windows meet the bar's edge (see hyprland.lua), and reading the
+        # first would report the outer gap as 0 whatever it was set to.
+        css)   printf '%s' "$raw" | sed -n 's/.*"css":[[:space:]]*"\([^"]*\)".*/\1/p' | awk '{ print $NF }' ;;
         float) printf '%s' "$raw" | sed -n 's/.*"float":[[:space:]]*\(-\?[0-9.]*\).*/\1/p' \
                  | awk '{ printf "%g", $1 }' ;;
         bool)  printf '%s' "$raw" | sed -n 's/.*"bool":[[:space:]]*\([a-z]*\).*/\1/p' ;;
@@ -322,8 +323,11 @@ cmd_list() {
                 val[o] = substr($0, RSTART + 7, RLENGTH - 7) + 0
             else if (match($0, /"float": *-?[0-9.]+/))
                 val[o] = sprintf("%g", substr($0, RSTART + 9, RLENGTH - 9) + 0)
-            else if (match($0, /"css": "[^ "]*/))
-                val[o] = substr($0, RSTART + 8, RLENGTH - 8)
+            else if (match($0, /"css": "[^"]*/)) {
+                # The LAST edge — see extract_typed for why not the first.
+                nc = split(substr($0, RSTART + 8, RLENGTH - 8), cv, " ")
+                val[o] = cv[nc]
+            }
             else if (match($0, /"bool": *(true|false)/)) {
                 # From the MATCHED SUBSTRING, not the line. Every record also
                 # carries "set": true, so index($0, "true") was true for every
@@ -373,6 +377,11 @@ cmd_set() {
         apply_tiling_mode "$val" || echo "window-rules: saved, but the live apply failed" >&2
     elif [ -z "$opt" ]; then
         apply_anim_speed "$val"
+    elif [ "$key" = "WIN_GAPS_OUT" ]; then
+        # Three edges, not four: the top stays 0 so windows meet the bar's
+        # edge, the same shape hyprland.lua gives it at parse time.
+        have hyprctl && hyprctl eval "hl.config({ general = { gaps_out = { top = 0, right = $val, bottom = $val, left = $val } } })" >/dev/null 2>&1 \
+            || echo "window-rules: saved, but the live apply failed" >&2
     else
         apply_live "$opt" "$val" || echo "window-rules: saved, but the live apply failed" >&2
     fi

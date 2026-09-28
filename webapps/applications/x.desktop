@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=X
+Exec=chromium --app=https://x.com/
+StartupWMClass=chrome-x.com__-Default
+Icon=/home/USER/.local/share/icons/webapps/x.png
+Type=Application
+Categories=Network;
+Keywords=x;webapp;

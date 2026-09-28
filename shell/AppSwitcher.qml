@@ -67,12 +67,23 @@ Item {
     function confirm() {
         if (!shown || appList.length === 0) return
         const w = appList[selectedIndex]
-        // Focus the window where it already is — focuswindow switches to the
-        // workspace the window lives on, so we follow it there instead of
-        // pulling the window onto the current workspace.
+        // A window on a normal workspace is focused where it already is —
+        // focuswindow switches to the workspace the window lives on, so we
+        // follow it there instead of pulling the window onto the current one.
+        //
+        // A "minimized" one (special workspace, only listed when
+        // SWITCHER_SPECIAL is on) goes the other way: it is moved to the
+        // current workspace ('e+0') first and focused there. Following it
+        // instead would open the special workspace as an overlay, which is
+        // not what picking a minimized app means. Same three dispatches the
+        // dock sends for a minimized window (DockIcon.qml, focusAddr).
+        //
         // hyprctl dispatch takes a Lua expression since 0.55 (shorthand for
         // eval 'hl.dispatch(...)'), not the old bare dispatcher-name form.
         focusProc.command = ["bash", "-c",
+            (w.special
+                ? "hyprctl dispatch \"hl.dsp.window.move({ workspace = 'e+0', window = 'address:" + w.address + "' })\" && "
+                : "") +
             "hyprctl dispatch \"hl.dsp.focus({ window = 'address:" + w.address + "' })\"" +
             " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\""]
         focusProc.running = true
@@ -97,14 +108,19 @@ Item {
 
     function _buildList() {
         // windowsMru is sorted MRU: index 0 = current, index 1 = previous
+        // Special-workspace windows are what this desktop calls minimized
+        // (SUPER+X). Left out unless Settings -> App switcher says otherwise;
+        // they keep their MRU place when listed, so a window minimized a
+        // moment ago sits where it was rather than in a tail of its own.
+        const withSpecial = UiConfig.switcherSpecial === "on"
         const sorted = WindowTracker.windowsMru
-            .filter(w => !w.workspaceName.startsWith("special:"))
+            .filter(w => withSpecial || !w.workspaceName.startsWith("special:"))
         // The shared WindowTracker polls continuously (the dock needs that),
         // where the switcher's old private WindowList only polled on open.
         // Reassigning appList rebuilds every Repeater delegate, so doing it on
         // every poll would restart the card animations several times a second
         // while the switcher is on screen. Rebuild only when the set changes.
-        const sig = sorted.map(w => w.address).join(",")
+        const sig = sorted.map(w => w.address + w.workspaceName).join(",")
         if (sig === root._listSig && root.appList.length > 0) return
         root._listSig = sig
 
@@ -112,7 +128,8 @@ Item {
             class:   w.class,
             title:   w.title || w.initialTitle || w.class,
             icon:    IconResolver.resolveForWindow(w),
-            address: w.address
+            address: w.address,
+            special: w.workspaceName.startsWith("special:")
         }))
     }
 

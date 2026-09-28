@@ -36,6 +36,35 @@ QtObject {
     property string terminal:   "kitty"
     property string editor:     "vim"
 
+    // The dock's two preferences (Settings -> Setup -> Dock, 2026-09-26).
+    // Only macshell's dock reads them; they live here rather than in a file of
+    // their own because ui.conf is already the store every chosen preference
+    // goes to, and this is already the thing watching it.
+    //   dockHide      "overlap"  hide only while a window reaches the dock's
+    //                            edge — what the dock always did before this
+    //                 "always"   hidden until the pointer reaches that edge
+    //   dockPosition  "bottom" | "left" | "right"
+    // Settings.qml also assigns these directly on a press, so the switch moves
+    // in the same frame instead of after the inotify round trip; the file read
+    // that follows lands the same value.
+    property string dockHide:     "overlap"
+    property string dockPosition: "bottom"
+    // The app switcher's one preference (Settings -> Setup -> App switcher,
+    // 2026-09-28). "off": Alt+Tab leaves special-workspace windows out, as it
+    // always had. "on": it lists them, and choosing one moves it to the
+    // current workspace rather than following it into the special one.
+    property string switcherSpecial: "off"
+
+    // What the dock actually uses: anything but the three known edges reads as
+    // the bottom, so a hand-edit typo cannot park the dock off every edge.
+    readonly property string dockEdge:
+        (dockPosition === "left" || dockPosition === "right") ? dockPosition : "bottom"
+
+    // True once ui.conf has been read at least once. Until then every value
+    // above is the built-in default, and a reader that animates changes (the
+    // dock's flight between edges) must not mistake the first read for a move.
+    property bool loaded: false
+
     property string _buf: ""
 
     property var _readProc: Process {
@@ -54,6 +83,7 @@ QtObject {
             if (readProc.running) return
             root._parse(root._buf)
             root._buf = ""
+            root.loaded = true
         }
     }
 
@@ -75,17 +105,26 @@ QtObject {
         target: watchProc
         function onRunningChanged() {
             if (watchProc.running) return
-            root._buf = ""
-            readProc.running = true
             watchRestartTimer.restart()
         }
     }
 
+    // The read waits for the timer rather than following the event at once.
+    // The FIRST event a ui-prefs.sh write produces is the `create` of its
+    // ui.conf.tmp.<pid>, before the `mv` — so an immediate read got the OLD
+    // file, and the `moved_to` that followed landed in the 300ms this watch is
+    // down and was never seen. Measured 2026-09-26: DOCK_POSITION written to
+    // the file, the dock never moved. Reading at the end of the window instead
+    // picks up whatever the burst left behind.
     property var _watchRestartTimer: Timer {
         id: watchRestartTimer
         interval: 300
         repeat: false
-        onTriggered: watchProc.running = true
+        onTriggered: {
+            root._buf = ""
+            readProc.running = true
+            watchProc.running = true
+        }
     }
 
     function _parse(raw) {
@@ -98,7 +137,10 @@ QtObject {
             "GTK_THEME":        "gtkTheme",
             "DEFAULT_BROWSER":  "browser",
             "DEFAULT_TERMINAL": "terminal",
-            "DEFAULT_EDITOR":   "editor"
+            "DEFAULT_EDITOR":   "editor",
+            "DOCK_AUTOHIDE":    "dockHide",
+            "DOCK_POSITION":    "dockPosition",
+            "SWITCHER_SPECIAL": "switcherSpecial"
         }
         const lines = String(raw).split("\n")
         for (let i = 0; i < lines.length; i++) {

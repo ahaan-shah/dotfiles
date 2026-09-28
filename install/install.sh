@@ -148,6 +148,10 @@ aur_install() {
 
 bootstrap_yay() {
     have yay && { skip "yay already present"; return 0; }
+    # makepkg -si calls sudo itself, and by the time we get here the repo
+    # packages may have been downloading for ten minutes. Ask now, visibly,
+    # rather than letting makepkg ask from inside its own output.
+    sudo_refresh
     info "bootstrapping yay from the AUR"
     pac_install base-devel git
     local tmp="/tmp/yay-bootstrap-$$"
@@ -2235,6 +2239,60 @@ phase_verify() {
 # ═══════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════
+# ── The reboot at the end ─────────────────────────────────────────────────
+# Offered, not assumed, and only where it is the obvious next action: a full
+# run, on a real terminal, that actually changed something. Enter takes it,
+# because after a fresh install rebooting is what you were going to do anyway
+# — step 1 of "Next steps" above is "log out completely", and a reboot is the
+# version of that nobody gets half right.
+#
+# NOT under --yes, and this is the one prompt in the installer that ignores
+# it deliberately. --yes means "do not ask me", and that is permission to
+# pick defaults for CONFIGURATION, not permission to take the machine down.
+# An unattended run is exactly the case where something else may be driving
+# the session — a VM harness, a provisioning script, another terminal — and a
+# reboot it did not ask for is the one action it cannot recover from. It
+# prints the command instead.
+#
+# Skipped for --only <phase> as well: a single phase is a repair, not an
+# install, and offering a reboot after `--only hardware` is noise.
+maybe_reboot() {
+    if [ "$DRY_RUN" = 1 ]; then
+        info "DRY would offer to reboot now"
+        return 0
+    fi
+    [ -z "$ONLY" ] || return 0
+    if [ "$ASSUME_YES" = 1 ]; then
+        printf '\n  Reboot when ready:  %ssudo systemctl reboot%s\n' "$C_B" "$C_RST"
+        return 0
+    fi
+    # ask_yn reads from /dev/tty, so a run whose stdin is a pipe can still be
+    # answered. A run with no controlling terminal at all — cron, a detached
+    # harness, anything under setsid — must not be asked.
+    #
+    # The test OPENS /dev/tty rather than testing it. `[ -r /dev/tty ]` is
+    # true in both cases, because it checks the device node's permission bits
+    # and not whether open() would succeed; with no controlling terminal the
+    # open fails with ENXIO. That distinction is not academic here: this
+    # function was written with `[ -r ]` first and caught by its own test —
+    # under setsid the guard passed, ask_yn's `read </dev/tty` then failed,
+    # `ans` fell back to the default, and the answer was YES. A detached run
+    # would have rebooted the machine.
+    # The braces matter: a FAILED redirection is reported by the shell itself,
+    # and `: < /dev/tty 2>/dev/null` does not suppress it — the message is
+    # written while the redirection is being set up, before that 2>/dev/null
+    # is in effect for the command. Grouping puts the whole attempt, error
+    # included, behind the redirect.
+    { : < /dev/tty; } 2>/dev/null || return 0
+    printf '\n'
+    if ask_yn "Reboot now?" y; then
+        info "rebooting — the full log stays at $LOGFILE"
+        run sudo systemctl reboot
+    else
+        printf '  Reboot when ready:  %ssudo systemctl reboot%s\n' "$C_B" "$C_RST"
+    fi
+}
+
 main() {
     printf '%s╭──────────────────────────────────────────────╮%s\n' "$C_B$C_BLU" "$C_RST"
     printf '%s│  hyprahaan — Hyprland + Quickshell installer │%s\n' "$C_B$C_BLU" "$C_RST"
@@ -2300,6 +2358,8 @@ main() {
   Backups of anything overwritten: ${BACKUP_ROOT:-<nothing was overwritten>}
   Full log: $LOGFILE
 NEXT
+
+    maybe_reboot
 }
 
 main "$@"

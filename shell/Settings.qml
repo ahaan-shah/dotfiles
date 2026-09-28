@@ -12,7 +12,7 @@ import Quickshell.Io
 //   Install  -> Package / AUR / Web app
 //   Remove   -> Package / Web app
 //   Update
-//   Setup    -> Monitors / Keybindings / Window rules / Defaults
+//   Setup    -> Monitors / Keybindings / Window rules / Dock / Defaults
 //   Fonts    -> every installed family
 //   Icons    -> every installed icon theme
 //   Theme    -> every installed GTK theme
@@ -98,7 +98,7 @@ QtObject {
                 // everything under Tools is a thing you reach for, does its
                 // work now, and leaves no setting behind.
                 { id: "tools",   icon: "󱁤", title: "Tools",   kind: "menu",   sub: "screenshot, screen recording, colour picker, OCR" },
-                { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, defaults" },
+                { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, dock, defaults" },
                 { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "palette, wallpaper, GTK theme, icons, fonts" },
                 { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
                 // Last, deliberately, and the only row here that is not about
@@ -232,7 +232,57 @@ QtObject {
                 { id: "monitors",    icon: "󰍹", title: "Monitors",        kind: "action" },
                 { id: "keybindings", icon: "󰌌", title: "Keybindings",     kind: "menu", sub: "every bind, searchable" },
                 { id: "windowrules", icon: "󰖯", title: "Window rules",    kind: "menu", sub: "borders, gaps, rounding, opacity, blur, animation" },
+                { id: "dock",        icon: "󱂬", title: "Dock",            kind: "menu", sub: "auto-hide, position" },
+                { id: "switcher",    icon: "󰕰", title: "App switcher",    kind: "menu", sub: "which windows Alt+Tab lists" },
                 { id: "defaults",    icon: "󰀻", title: "Defaults",        kind: "menu", sub: "browser, terminal, editor, PDFs" }
+            ]
+        },
+
+        // ── Dock ──────────────────────────────────────────────────────────
+        // Added 2026-09-26 on Ahaan's instruction: a switch for how the dock
+        // hides, and under it a door to where it sits. Both are ui.conf keys
+        // (DOCK_AUTOHIDE, DOCK_POSITION) that UiConfig reads and MacShell.qml
+        // acts on — no script of its own, because nothing outside the shell
+        // has to be told.
+        //
+        // One switch rather than a two-way choice page, because the two modes
+        // are "the old behaviour" and "more hidden than that": off is what the
+        // dock did before this page existed (hide only while a window reaches
+        // its edge), on is hidden until the pointer reaches the edge.
+        // _decorate writes which one is in force into the trail, so the switch
+        // is never a bare on/off with no word for what "on" means.
+        "setup/dock": {
+            title: "Dock", icon: "󱂬",
+            rows: [
+                { id: "autohide", icon: "󰈉", title: "Always hide", kind: "toggle" },
+                { id: "position", icon: "󰹑", title: "Position",    kind: "menu", sub: "bottom, left or right of the screen" }
+            ]
+        },
+
+        // "choice", ticked by _decorate from UiConfig.dockPosition — the same
+        // shape as Power profile, which is the other page whose rows are a
+        // fixed set rather than a script's listing.
+        "setup/dock/position": {
+            title: "Position", icon: "󰹑",
+            rows: [
+                { id: "bottom", icon: "󰁅", title: "Bottom", kind: "choice" },
+                { id: "left",   icon: "󰁍", title: "Left",   kind: "choice" },
+                { id: "right",  icon: "󰁔", title: "Right",  kind: "choice" }
+            ]
+        },
+
+        // ── App switcher ──────────────────────────────────────────────────
+        // Added 2026-09-28 on Ahaan's instruction, beside the dock because
+        // it is the dock's sibling in MacShell.qml. One ui.conf key,
+        // SWITCHER_SPECIAL, that UiConfig reads and AppSwitcher.qml acts on.
+        // Off is what Alt+Tab always did: special-workspace ("minimized")
+        // windows are left out. On lists them too, and picking one BRINGS it
+        // to the current workspace instead of travelling to it — the same
+        // move the dock makes for a minimized window (DockIcon.qml, focusAddr).
+        "setup/switcher": {
+            title: "App switcher", icon: "󰕰",
+            rows: [
+                { id: "special", icon: "󰘸", title: "Show minimized", kind: "toggle" }
             ]
         },
 
@@ -789,6 +839,30 @@ QtObject {
             return r
         }
 
+        // The dock page. Position says where it is from one level up, and the
+        // switch says in words what its current state does.
+        if (key === "setup/dock/position")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                     value: r.id, active: r.id === root.dockPosition }
+        if (key === "setup/dock" && r.id === "position")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
+                     trail: root.dockPosition.charAt(0).toUpperCase() + root.dockPosition.substring(1) }
+        if (key === "setup/dock" && r.id === "autohide") {
+            const always = UiConfig.dockHide === "always"
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                     sub: r.sub || "", active: always, pending: false,
+                     // Short on purpose: longer wording truncated the
+                     // title to "Always h…" at this card's width.
+                     trail: always ? "until pointed at" : "when covered" }
+        }
+
+        if (key === "setup/switcher" && r.id === "special") {
+            const on = UiConfig.switcherSpecial === "on"
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                     sub: r.sub || "", active: on, pending: false,
+                     trail: on ? "brought to you" : "left out" }
+        }
+
         if (r.kind !== "toggle") return r
         const on = (key === "security/firewall" && r.id === "enabled")
                      ? (root.fwState.AVAILABLE === undefined ? null
@@ -1219,8 +1293,16 @@ QtObject {
     // UNPRIVILEGED read, so the page renders its true state without asking for
     // a password. Only changing something needs one.
     property var fwState: ({})
+    // A read requested while one is in flight is QUEUED, not dropped. The
+    // read after a toggle is what the notification below speaks from, so it
+    // has to have started after the command ran — and "one is already
+    // running" does not mean "this one can be skipped", because the running
+    // one may have started before it. Not hypothetical: a status read is
+    // ~430ms with firewalld up and up to 3s with it down, where
+    // `firewall-cmd --get-active-zones` runs to its timeout.
+    property bool _fwAgain: false
     function refreshFirewall() {
-        if (fwProc.running) return
+        if (fwProc.running) { root._fwAgain = true; return }
         fwProc.running = true
     }
 
@@ -1255,7 +1337,14 @@ QtObject {
         // fwState stayed `{}` and the switch rendered as not-yet-known.
         stdout: StdioCollector {
             id: fwOut
-            onStreamFinished: root._parseFw(fwOut.text)
+            onStreamFinished: {
+                root._parseFw(fwOut.text)
+                // The queued read goes now. Restarting a Process from inside
+                // its own onStreamFinished is what the window-rules queue
+                // already does a few hundred lines down; this is the same
+                // move, one deep rather than a chain.
+                if (root._fwAgain) { root._fwAgain = false; fwProc.running = true }
+            }
         }
     }
 
@@ -1270,7 +1359,33 @@ QtObject {
         }
         return out
     }
-    function _parseFw(raw) { root.fwState = root._parseKv(raw) }
+    function _parseFw(raw) {
+        root.fwState = root._parseKv(raw)
+
+        // Armed by toggleSettled() for the daemon switch only, and consumed
+        // here rather than fired where the switch was pressed: what is
+        // announced is the state firewall.sh reports AFTER the change, not the
+        // state that was asked for. `systemctl start` is synchronous, so by
+        // the time the command exits this read is truthful — and if it
+        // disagrees with the request, the notification says the disagreeable
+        // thing, which is the whole reason it reads instead of assuming.
+        //
+        // NOT when a read is still queued behind this one: this text is then
+        // the in-flight read that STARTED BEFORE the change, and announcing
+        // from it would report the state the firewall was in a moment ago.
+        // The queued read is the one that saw the change; it announces.
+        if (root._fwAnnounce && !root._fwAgain) {
+            root._fwAnnounce = false
+            const up = (root.fwState.RUNNING === "yes")
+            root.notify(up ? "Firewall on" : "Firewall off",
+                        up ? "Zone " + (root.fwState.ZONE || "?") + " — "
+                             + (root.fwState.ALLOWED || "0") + " services allowed"
+                             // `off` stops the unit and never disables it, so
+                             // this is the reassurance the switch itself cannot
+                             // give: the machine is not unprotected from here on.
+                           : "Stopped — it comes back at the next boot")
+        }
+    }
 
     // ── activation ────────────────────────────────────────────────────────
     // Returns true when the menu should close. A choice or a switch keeps it
@@ -1321,6 +1436,13 @@ QtObject {
         // the same frame as the press.
         if (row.kind === "choice" && key === "system/powerprofile") {
             PowerProfiles.set(row.value || row.id)
+            return false
+        }
+
+        // Same as above: the value is assigned here so the tick moves on the
+        // press, and ui-prefs.sh persists it — the dock follows UiConfig.
+        if (row.kind === "choice" && key === "setup/dock/position") {
+            root.setDockPref("DOCK_POSITION", row.value || row.id)
             return false
         }
 
@@ -1470,11 +1592,41 @@ QtObject {
         }
     }
 
+    // Every firewall write goes through here, which is why the announce flag
+    // is set here and not in _toggle: a zone or service change clears what a
+    // CANCELLED toggle left armed, so the next successful write cannot inherit
+    // a notification that belongs to a press the user backed out of.
+    property bool _fwToggling: false
+    property bool _fwAnnounce: false
     function _fwAuth(reason, args) {
+        root._fwToggling = (args === "on" || args === "off")
         root.authRequired(reason, root._q(root.scriptDir + "/firewall.sh") + " " + args)
     }
 
+    // ── the dock ──────────────────────────────────────────────────────────
+    // UiConfig.dockEdge rather than the raw key: a value ui.conf holds that
+    // is none of the three reads as the bottom there, so it does here too,
+    // and the page never ticks nothing.
+    readonly property string dockPosition: UiConfig.dockEdge
+
+    function setDockPref(key, val) {
+        // Optimistic: moves the switch / tick and the dock itself this frame.
+        // UiConfig's own read of the file lands the same value a moment later.
+        if (key === "DOCK_AUTOHIDE") UiConfig.dockHide     = val
+        if (key === "DOCK_POSITION") UiConfig.dockPosition = val
+        if (key === "SWITCHER_SPECIAL") UiConfig.switcherSpecial = val
+        root._sh(root._q(root.scriptDir + "/ui-prefs.sh") + " set " + key + " " + root._q(val))
+    }
+
     function _toggle(key, row) {
+        if (key === "setup/switcher" && row.id === "special") {
+            root.setDockPref("SWITCHER_SPECIAL", row.active === true ? "off" : "on")
+            return
+        }
+        if (key === "setup/dock" && row.id === "autohide") {
+            root.setDockPref("DOCK_AUTOHIDE", row.active === true ? "overlap" : "always")
+            return
+        }
         if (key === "security/firewall" && row.id === "enabled") {
             // on/off, never enable/disable: the unit must always come back at
             // boot, so nothing here is allowed to disable it. `on` re-enables
@@ -1681,7 +1833,13 @@ QtObject {
 
     // Called by the password box once the command has actually succeeded, so
     // the switch reflects what happened rather than what was asked for.
-    function toggleSettled() { root.refreshFirewall() }
+    // Only reached on exit code 0 (PasswordPrompt keeps the box up otherwise),
+    // so a wrong password or a refused command never announces anything.
+    function toggleSettled() {
+        root._fwAnnounce = root._fwToggling
+        root._fwToggling = false
+        root.refreshFirewall()
+    }
 
     // Returns true when the menu should close after the action.
     function _action(path) {

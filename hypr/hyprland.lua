@@ -395,7 +395,15 @@ end)
 hl.config({
     general = {
         gaps_in          = wnum("WIN_GAPS_IN",     3),
-        gaps_out         = wnum("WIN_GAPS_OUT",    5),
+        -- Top is 0 on purpose (2026-09-27). The bar's reserved zone already
+        -- ends a few px below its islands (5px: Bar.qml's `zone`), and a
+        -- window's border starts at the zone's edge plus this — so the gap
+        -- under the bar is set by the bar's zone alone, and the WIN_GAPS_OUT
+        -- px below apply to the other three edges. A uniform number put the
+        -- top gap at zone slack + gaps_out. The Window rules page still offers
+        -- one number; window-rules.sh applies it the same way.
+        gaps_out         = { top = 0, right = wnum("WIN_GAPS_OUT", 5),
+                             bottom = wnum("WIN_GAPS_OUT", 5), left = wnum("WIN_GAPS_OUT", 5) },
         border_size      = wnum("WIN_BORDER_SIZE", 2),
         -- col.active_border in hyprlang becomes a nested col table here.
         col = {
@@ -690,18 +698,24 @@ hl.bind("SUPER + period", hl.dsp.exec_cmd("echo \"open:emoji\" | socat - UNIX-CO
 -- desc: Opens the reminder prompt
 hl.bind("SUPER + SHIFT + R", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call reminder prompt"))
 
--- Voice-to-text (voxtype, push-to-talk). Hold to record, release to transcribe
--- at the cursor. Two hl.bind() calls on one key is safe *here* only because
--- they differ by the `release` flag, so Hyprland registers them as distinct
--- binds -- verified live: `hyprctl binds -j` lists CTRL+period twice, once
--- with release:false and once with release:true.
+-- Voice-to-text (voxtype). Press once to start recording, press again to stop
+-- and transcribe at the cursor. This was push-to-talk (a press bind for
+-- `record start` plus a release bind for `record stop`) until 2026-09-21;
+-- Ahaan wanted a toggle, so one bind on `record toggle` replaces both. Keep it
+-- to ONE bind -- the old pair was only legal because the two differed by the
+-- `release` flag; two press binds on one key is not.
 --
--- The daemon must be running (`systemctl --user enable --now voxtype`) or both
--- binds are silent no-ops: `record start/stop` just signal an existing daemon.
--- desc: Starts voice typing (hold to record)
-hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record start"))
--- desc: Stops voice typing and transcribes
-hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record stop"), { release = true })
+-- No `repeating` flag, so holding the key fires the toggle exactly once --
+-- otherwise a held key would flip record/stop on every autorepeat tick.
+--
+-- Verified live before deploying (state file at $XDG_RUNTIME_DIR/voxtype/state,
+-- which is also what the bar's indicator watches):
+--     toggle -> "recording";  toggle -> "transcribing";  cancel -> "idle"
+--
+-- The daemon must be running (`systemctl --user enable --now voxtype`) or the
+-- bind is a silent no-op: `record toggle` just signals an existing daemon.
+-- desc: Toggles voice typing on/off
+hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record toggle"))
 
 -- Btop
 -- desc: Opens btop
