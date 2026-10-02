@@ -77,6 +77,24 @@ QtObject {
     // the desktop is this one value. Bar.qml's ncBorder (every dropdown) reads
     // this now rather than keeping its own copy.
     readonly property color line:      root.alpha(root.col7, 0.60)   // the card edge
+    // The BAR's edge, and deliberately quieter than `line` (2026-09-30, Ahaan:
+    // the bar's edge "draws away the focus from the actual windows"). The bar
+    // is the one card that never goes away, and `line` is color7 — the same
+    // slot hyprland.lua gives the focused window's border — so at 0.6 it was
+    // a second, permanent focus ring in the same hue.
+    //
+    // Measured over all 41 cached pywal schemes (WCAG contrast against bg):
+    // the focused-window border runs 7.1–19.1, `line` 3.3–6.8 — half the focus
+    // ring's strength, on a strip that is always on screen. color7 tinted 25%
+    // into bg lands at 1.5–2.1 on every one of them: visibly an edge, never in
+    // the focus ring's register. Opaque (a tint, not an alpha) so the wallpaper
+    // under the bar cannot brighten it — a translucent edge over a pale
+    // wallpaper was the other half of why `line` read loud up there.
+    // The dock's pill wears it too (same day, Ahaan: "match this color for
+    // the dock border too") — the other always-on surface. The dropdowns and
+    // the dock's pin toast keep `line`: they are transient and ARE the focus
+    // while open.
+    readonly property color barLine:   Qt.tint(root.bg, root.alpha(root.col7, 0.25))
     readonly property color hairline:  root.alpha(root.text, 0.10)   // dividers inside it
     // There is no rowHover any more. It was alpha(col7, 0.035) — deliberately
     // far below rowSel, because at 0.07 a hovered row read as a second

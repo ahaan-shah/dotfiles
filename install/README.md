@@ -93,7 +93,7 @@ manifest in `packages/` is installed:
 | `20-laptop.txt` | Battery, fingerprint, zram — installed only when a battery exists |
 | `30-fonts.txt` | JetBrainsMono Nerd Font and friends |
 | `40-apps.txt` | The applications. Deliberately excludes `r`, `steam`, `discord` |
-| `50-aur.txt` | Exactly four: `bibata-cursor-theme`, `voxtype`, `localsend-bin`, `neofetch` |
+| `50-aur.txt` | Exactly four: `bibata-cursor-theme`, `voxtype-bin`, `localsend-bin`, `neofetch` |
 | `60-virt.txt` | QEMU/libvirt — installed only when the CPU reports VT-x/AMD-V |
 | `90-nvidia.txt` | `nvidia-open`, `nvidia-utils`, `nvidia-prime` — only when the `nvidia` phase decides the machine fits |
 

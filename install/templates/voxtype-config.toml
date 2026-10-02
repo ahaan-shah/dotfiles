@@ -23,8 +23,16 @@ translate = false
 # whisper's own default is 4 threads, NOT nproc. Measured on a 5s clip:
 # 29.0s at the default vs 16.4s at 16 threads on small.en. Set it explicitly.
 threads = 16
-# Keeps the model resident so the first word is fast. Costs ~62 MB with the
-# Vulkan build (the model lives in GPU memory), ~477 MB on the CPU build.
+# The model is NOT resident: each recording spawns a `transcribe-worker` child
+# that loads it and exits after the text is out. The worker starts when
+# recording starts, so the ~1.1s load overlaps with speaking — measured with
+# throwaway daemons on a 3s recording, stop->idle was 565ms resident vs 568ms
+# isolated, while the idle daemon went 195 MB -> 27 MB RSS (the live resident
+# one sat at 325 MB). The old "~62 MB resident on Vulkan" note here was wrong:
+# on an iGPU "GPU memory" is system RAM (uma: 1), so the 147 MB model plus
+# ~200 MB of compute buffers count in full. Only a sub-second utterance can
+# outrun the load and wait on it.
+gpu_isolation = true
 on_demand_loading = false
 
 [output]

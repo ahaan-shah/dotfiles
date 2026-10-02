@@ -113,7 +113,11 @@ Item {
             return
         }
 
-        if (WindowTracker.windowsFor(cls, "").length >= 2) {
+        // Any running app, not only one with two or more windows (Ahaan,
+        // 2026-09-30: "even 1 window ... so i can see what it is anyway").
+        // A click on a one-window icon still focuses it directly; only the
+        // hover shows the preview for it.
+        if (WindowTracker.windowsFor(cls, "").length >= 1) {
             _previewIntentTimer.item = item
             _previewIntentTimer.restart()
         } else if (DockPreview.visible && isActiveScreen) {
@@ -131,13 +135,14 @@ Item {
     // The window count is re-read here rather than trusted from the caller:
     // the hover path can have had 500ms to go stale, and the click path can
     // fire on an icon whose last window closed between the hover and the
-    // press. One window (or none) left means there is nothing to choose
-    // between, so nothing is shown.
+    // press. No window left means there is nothing to show. One is enough
+    // since 2026-09-30 — the preview is also for seeing what an app has open,
+    // not only for choosing between windows.
     function showPreviewFor(item) {
         if (!item || item.separator || !item.windowClass) return
         _previewIntentTimer.stop()
         const wins = WindowTracker.windowsFor(item.windowClass, "")
-        if (wins.length < 2) return
+        if (wins.length < 1) return
         // The anchor is the icon's edge FACING AWAY from the screen edge, at
         // the middle of the icon — the top-centre on a bottom dock, where this
         // always pointed. `local` is the same point in the dock window's own
@@ -680,8 +685,13 @@ Item {
         // shadow, none of which anything else on this desktop wears; the
         // shadow was also a MultiEffect layer re-rendered every frame the
         // dock moved. The card has no shadow, so neither does this.
+        //
+        // The edge is Theme.barLine since 2026-09-30, not Theme.line: Ahaan
+        // asked for the bar's quieter edge here too. Same reasoning — the
+        // dock is always-on chrome, and Theme.line is the focused window's
+        // colour. The pin toast below keeps Theme.line; it is transient.
         color:        Theme.bg
-        border.color: Theme.line
+        border.color: Theme.barLine
         border.width: Theme.cardBorder
 
         Behavior on color        { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }

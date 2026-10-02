@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Magpie
+GenericName=Personal Finance
+Comment=Track spending, budgets, accounts and savings goals
+Exec=/home/USER/.local/bin/magpie
+Icon=magpie
+Terminal=false
+Categories=Office;Finance;
+Keywords=money;budget;expenses;finance;ledger;
+StartupWMClass=magpie
+StartupNotify=true
+Actions=demo;
+
+[Desktop Action demo]
+Name=Open demo workspace
+Exec=/home/USER/.local/bin/magpie --demo

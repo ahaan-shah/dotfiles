@@ -11,7 +11,7 @@ python-pywal
 python-pywalfox
 rstudio-desktop-bin
 spotify
-voxtype
+voxtype-bin
 vscodium-bin
 yay
 zen-browser-bin

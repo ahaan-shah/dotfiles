@@ -164,7 +164,7 @@ xdg-desktop-portal-hyprland
 xdg-user-dirs
 yazi
 zathura
-zathura-pdf-poppler
+zathura-pdf-mupdf
 zip
 zram-generator
 zsh

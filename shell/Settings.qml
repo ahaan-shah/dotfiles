@@ -859,8 +859,10 @@ QtObject {
         if (key === "setup/switcher" && r.id === "special") {
             const on = UiConfig.switcherSpecial === "on"
             return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                     sub: r.sub || "", active: on, pending: false,
-                     trail: on ? "brought to you" : "left out" }
+                     // No trail text. It read "brought to you" / "left
+                     // out" until 2026-09-30, when Ahaan had it removed:
+                     // the switch already says which way it is set.
+                     sub: r.sub || "", active: on, pending: false }
         }
 
         if (r.kind !== "toggle") return r
@@ -2012,7 +2014,14 @@ QtObject {
         var inner = root._q(root.scriptDir + "/" + script.split(" ")[0])
         const args = script.split(" ").slice(1)
         for (let i = 0; i < args.length; i++) inner += " " + root._q(args[i])
-        if (hold) inner += "; printf '\\nPress any key to close… '; read -rsn1 _"
+        // The closing line reads how the command ended (2026-09-30, Ahaan asked
+        // for "Done ✅"). The tick only on success — a tick under a failed
+        // pacman run would say the opposite of the screen above it. 130 is fzf
+        // cancelled with Esc: nothing happened, so the window just closes.
+        if (hold) inner += "; rc=$?; [ $rc -eq 130 ] && exit 0; " +
+            "if [ $rc -eq 0 ]; then printf '\\n✅ Done — press any key to close '; " +
+            "else printf '\\n⚠ Something went wrong — scroll up for the details. Press any key to close '; fi; " +
+            "read -rsn1 _"
         root._sh("kitty --title " + root._q(title) +
                  " -e bash -c " + root._q(inner))
     }

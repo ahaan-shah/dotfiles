@@ -2470,16 +2470,16 @@ Scope {
         }
     }
 
-    // ---- volume / backlight state for the control-center sliders -------------
-    // polled only while the center is open; written on drag (reuses pactl/brightnessctl).
-    property int volumePercent: 0
+    // ---- backlight state for the display panel's slider ----------------------
+    // Polled only while that panel is open; written on drag (brightnessctl).
+    //
+    // The control center carried a volume and a backlight slider too, until
+    // 2026-09-30 — Ahaan: "They anyway have keybinds and their own modules in
+    // the bar." The volume reading (volRead / volumePercent) and the
+    // control center's 500 ms poll existed only for those sliders and went
+    // with them; the backlight reading stays because the display panel's
+    // slider uses it.
     property int brightPercent: 0
-    Process {
-        id: volRead
-        command: ["bash", "-c", "pactl get-sink-volume @DEFAULT_SINK@ | awk '{print $5}' | tr -d '%' | head -1"]
-        stdout: StdioCollector { onStreamFinished: {
-            var v = parseInt((this.text || "").trim()); if (!isNaN(v)) root.volumePercent = v; } }
-    }
     Process {
         id: brightRead
         command: ["bash", "-c", "echo $(( $(brightnessctl get) * 100 / $(brightnessctl max) ))"]
@@ -2521,13 +2521,6 @@ Scope {
         root.brightPercent = pct;
         root.brightPending = pct;
     }
-    Timer {
-        interval: 500; repeat: true; running: root.ccVisible; triggeredOnStart: true
-        onTriggered: { volRead.running = true; brightRead.running = true; }
-    }
-    // The display panel wants the same backlight reading and none of the volume
-    // half, so it gets its own timer rather than making the control center's
-    // pactl round-trip run for a panel with no volume control on it.
     Timer {
         interval: 500; repeat: true; running: root.dispVisible; triggeredOnStart: true
         onTriggered: brightRead.running = true
@@ -2608,6 +2601,17 @@ Scope {
         // Bound to nothing — SUPER+B already opens finder's picker — but it is
         // what makes the row testable without a pointer.
         function profile(name: string): void { root.setPowerProfile(name); }
+    }
+
+    // Any dropdown by its togglePanel() key — cc, cal, bat, net, bt, aud,
+    // agent, disp. Added 2026-09-30 because wifi and bluetooth were still
+    // mouse-only, and comparing their section headers needed both on screen
+    // from a script (there is no ydotool here to click the bar with). Bound
+    // to nothing.
+    IpcHandler {
+        target: "panel"
+        function toggle(which: string): void { root.togglePanel(which); }
+        function close(): void { root.closePanels(); }
     }
 
     IpcHandler {
@@ -2950,8 +2954,8 @@ Scope {
         // anywhere else and read as barely moving.
         readonly property real eyeDX: 2.7          // resting offset, either side of centre
         readonly property real eyeDY: 1.6          // resting offset, above centre
-        readonly property real eyeBaseRX: 1.6      // the drawing below reads these too,
-        readonly property real eyeBaseRY: 2.0      // so the solver cannot disagree with it
+        readonly property real eyeBaseRX: 1.7      // the drawing below reads these too,
+        readonly property real eyeBaseRY: 2.1      // so the solver cannot disagree with it
         readonly property real dilateMax: 1.25     // the idle ceiling
         readonly property real rimMargin: 0.35
         readonly property real travelCap: 2.2
@@ -3166,10 +3170,12 @@ Scope {
                 // "cute" and "a domino tile" is about one pixel, and it is not
                 // a thing to settle by argument.
                 //
-                // 1.6 x 2.0 base radii, grown twice: 1.1 x 1.5 to start, then
-                // 1.5 x 1.9, then this, each time because Ahaan asked for
-                // bigger. At the idle ceiling that is a 4.2 x 5.2px eye in a
-                // 14px head — nearly 40% of the head is eye, which is the
+                // 1.7 x 2.1 base radii, grown three times: 1.1 x 1.5 to start,
+                // then 1.5 x 1.9, then 1.6 x 2.0, then this (2026-09-30, "ever
+                // so slightly bigger"), each time because Ahaan asked for
+                // bigger. At the idle ceiling that is a 4.25 x 5.25px eye in a
+                // 14px head; at the click reaction's 1.32 the pair still leaves
+                // 0.9px of head between them (1.2 at 1.6 x 2.0) — nearly 40% of the head is eye, which is the
                 // proportion that makes it a character rather than a symbol.
                 //
                 // Spacing went with them, 2.2 to 2.6 to 2.7 either side of
@@ -3275,9 +3281,11 @@ Scope {
         radius: Theme.rowRadius
         color: Theme.alpha(Theme.bg, 0.9)
         border.width: Theme.cardBorder
-        // Theme.line — 0.6 since 2026-09-27, tuned here first and then made
-        // the value for every card edge.
-        border.color: Theme.line
+        // Theme.line (0.6) from 2026-09-27, tuned here first and then made
+        // the value for every card edge. Theme.barLine since 2026-09-30: the
+        // always-on strip needed an edge below the focused window's border —
+        // measurements are in Theme.qml.
+        border.color: Theme.barLine
         implicitWidth: rowInner.implicitWidth + 14   // padding:7px  (7*2)
         implicitHeight: rowInner.implicitHeight + 14
 
@@ -5673,40 +5681,6 @@ Scope {
                         }
                     }
                 }
-
-                // ---------- volume slider ----------
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 12
-                    Text { text: "\uf028"; color: root.ncText; font.family: root.ncFont; font.pixelSize: root.ns(17) }   // volume label
-                    ThemedSlider {
-                        id: volSlider
-                        Layout.fillWidth: true
-                        Component.onCompleted: value = root.volumePercent
-                        Connections {
-                            target: root
-                            function onVolumePercentChanged() { if (!volSlider.pressed) volSlider.value = root.volumePercent; }
-                        }
-                        onMoved: root.run("pactl set-sink-volume @DEFAULT_SINK@ " + Math.round(value) + "%")
-                    }
-                }
-
-                // ---------- backlight slider ----------
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 12
-                    Text { text: "󰃠"; color: root.ncText; font.family: root.ncFont; font.pixelSize: root.ns(17) }         // backlight label
-                    ThemedSlider {
-                        id: brightSlider
-                        Layout.fillWidth: true
-                        Component.onCompleted: value = root.brightPercent
-                        Connections {
-                            target: root
-                            function onBrightPercentChanged() { if (!brightSlider.pressed) brightSlider.value = root.brightPercent; }
-                        }
-                        onMoved: root.setBrightness(value)
-                    }
-                }
             }
         }
     }
@@ -6646,7 +6620,7 @@ Scope {
                         width: parent.width
                         spacing: 6
 
-                        SectionLabel { text: "KNOWN NETWORKS"; visible: root.wifiKnown.length > 0 }
+                        SectionLabel { text: "SAVED"; visible: root.wifiKnown.length > 0 }
                         Repeater {
                             model: root.wifiKnown
                             delegate: WifiNetworkRow {
@@ -6659,7 +6633,7 @@ Scope {
                             Layout.fillWidth: true
                             Layout.topMargin: root.wifiKnown.length > 0 ? 6 : 0
                             spacing: 8
-                            SectionLabel { text: "UNKNOWN NETWORKS" }
+                            SectionLabel { text: "AVAILABLE" }   // was KNOWN / UNKNOWN NETWORKS; renamed 2026-09-30 to mirror the bluetooth panel's PAIRED / AVAILABLE
                             Item { Layout.fillWidth: true }
                             PanelIconBtn {
                                 glyph: root.g.radar

@@ -62,6 +62,7 @@ QtObject {
             if (findProc.running) return
             root._parse(root._buf)
             root._buf = ""
+            root._scanned = true
         }
     }
 
@@ -257,9 +258,79 @@ QtObject {
         function onIconThemeChanged() {
             // running = true is a no-op while already running, so a change that
             // lands mid-scan would otherwise be dropped silently.
-            if (findProc.running) return
-            root._buf = ""
-            findProc.running = true
+            root._rescan()
+        }
+    }
+
+    // ── new and removed apps appear without a shell relaunch ─────────────
+    // The scan above ran once, so an app installed after the launcher's first
+    // open was missing until the shell was relaunched. Omarchy (quattro, also
+    // Quickshell) gets this from the same place used here: its
+    // shell/services/AppLibrary.qml listens to DesktopEntries.applications'
+    // valuesChanged — checked against commit 821ae58, after it had been
+    // misremembered here as walker/elephant, which quattro removes.
+    // DesktopEntries holds a QFileSystemWatcher on every
+    // $XDG_DATA_DIRS/applications dir and emits applicationsChanged after its
+    // own rescan. Measured on 0.3.1 with a throwaway instance: a .desktop file
+    // created in ~/.local/share/applications fired it ~110 ms later, and
+    // removing it fired it again. $XDG_DATA_DIRS here covers all four dirs the
+    // find above walks, the flatpak exports included.
+    //
+    // One gap, measured 2026-10-03 with 10 s between events: a dir that does
+    // NOT exist when the shell starts is half-watched. Its creation (with a
+    // first file) fires, but later files added to it fire nothing — they show
+    // up only when some other dir changes, or at the next relaunch. Missing
+    // here at the time: ~/.local/share/flatpak/exports/share/applications
+    // (until the first `flatpak --user` install) and
+    // /usr/local/share/applications. Pacman's /usr/share/applications always
+    // exists, so ordinary installs are unaffected. Content rewritten in place
+    // in an existing file is also unreliable (7.6 s late once, missed once);
+    // pacman replaces files rather than rewriting them, so that is hand edits.
+    //
+    // Its parser is not used — this file's own parse carries the Papirus
+    // resolution, flatpak ids and exclusions — only its signal, as a trigger.
+    //
+    // Debounced because one pacman transaction writes several .desktop files
+    // and then update-desktop-database rewrites mimeinfo.cache in the same
+    // dir, each a separate event; the full rescan costs ~1.4 s of find/cat
+    // (measured), so it should run once per burst, not once per file.
+    property var _appsConn: Connections {
+        target: DesktopEntries
+        function onApplicationsChanged() {
+            // No scan finished yet: the one in flight (or the first open) picks
+            // the change up anyway. This also swallows the emission
+            // DesktopEntries makes at its own startup scan — this singleton is
+            // created on the launcher's first open, so that emission lands
+            // just after ensure() and, gated on _started instead, cost a
+            // second full scan (seen in the harness).
+            if (root._scanned) rescanDebounce.restart()
+        }
+    }
+    property var _rescanDebounce: Timer {
+        id: rescanDebounce
+        interval: 1500
+        onTriggered: root._rescan()
+    }
+
+    // running = true is a no-op while already running, so a change that lands
+    // mid-scan would be dropped silently. Hold it and rescan when the current
+    // one finishes — that scan may have walked the dirs before the new file
+    // landed.
+    property bool _scanned: false
+    property bool _rescanPending: false
+    function _rescan() {
+        if (findProc.running) { root._rescanPending = true; return }
+        root._buf = ""
+        findProc.running = true
+    }
+    property var _pendingConn: Connections {
+        target: findProc
+        function onRunningChanged() {
+            if (findProc.running || !root._rescanPending) return
+            root._rescanPending = false
+            // Defer one tick: _conn's handler for this same signal parses
+            // and clears _buf; starting again inside the signal would race it.
+            Qt.callLater(root._rescan)
         }
     }
 

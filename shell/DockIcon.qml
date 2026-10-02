@@ -252,26 +252,43 @@ Item {
             mipmap:      true
             fillMode:    Image.PreserveAspectFit
 
-            // Fallback coloured tile with initial letter
-            Rectangle {
-                visible: iconImg.status === Image.Error
-                         || iconImg.status === Image.Null
-                         || (iconImg.status === Image.Ready && iconImg.paintedWidth <= 0)
-                anchors.fill: parent
-                radius: parent.width * 0.22
-                // Deliberately NOT palette-driven, and so is the letter on it:
-                // this tile is its own fixed ground, so white is legible on it
-                // whatever pywal is doing. Left alone by the 2026-09-18 sweep.
-                color:  "#5A72D8"
+            // Until the icon index (DesktopEntryCache, one ~3s scan at shell
+            // start) has landed, an icon NAME cannot be mapped to a file and
+            // falls through to Quickshell's image://icon provider — which
+            // draws a magenta/black checkerboard for anything the Qt theme
+            // lacks, rather than failing. Ahaan saw that on launch, in the dock
+            // and in the switcher; the switcher got this first (2026-09-30).
+            // The icon re-resolves on its own when the scan finishes, so all
+            // that is needed is to show the letter tile, not the checkerboard,
+            // for those seconds. Only image://icon sources are held back: a
+            // pin with an absolute path (the webapps) draws correctly at once.
+            readonly property bool _premature: !DesktopEntryCache.ready
+                                               && String(source).startsWith("image://icon/")
+            visible: !_premature
+        }
 
-                Text {
-                    anchors.centerIn: parent
-                    text:       root.appName.length > 0 ? root.appName[0].toUpperCase() : "?"
-                    color:      "white"
-                    font.family:     UiConfig.fontFamily
-                    font.pixelSize:  parent.width * 0.45
-                    font.weight:     Font.Medium
-                }
+        // Fallback coloured tile with initial letter. A sibling of the Image,
+        // not its child, since 2026-09-30: it has to show while the Image is
+        // hidden, and a child of an invisible item is invisible too.
+        Rectangle {
+            visible: iconImg._premature
+                     || iconImg.status === Image.Error
+                     || iconImg.status === Image.Null
+                     || (iconImg.status === Image.Ready && iconImg.paintedWidth <= 0)
+            anchors.fill: parent
+            radius: parent.width * 0.22
+            // Deliberately NOT palette-driven, and so is the letter on it:
+            // this tile is its own fixed ground, so white is legible on it
+            // whatever pywal is doing. Left alone by the 2026-09-18 sweep.
+            color:  "#5A72D8"
+
+            Text {
+                anchors.centerIn: parent
+                text:       root.appName.length > 0 ? root.appName[0].toUpperCase() : "?"
+                color:      "white"
+                font.family:     UiConfig.fontFamily
+                font.pixelSize:  parent.width * 0.45
+                font.weight:     Font.Medium
             }
         }
 

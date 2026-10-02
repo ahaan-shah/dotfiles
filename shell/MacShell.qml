@@ -151,6 +151,15 @@ Scope {
                 // under a held icon would strand the gesture.
                 readonly property bool hovering: mouseNearBottom || mouseOnDock
                                                  || dockPanel.dragActive
+                                                 || previewOpenHere
+                // The hover preview is its own window, so moving onto it
+                // leaves the dock and started the 1s hide: the dock slid away
+                // from under the popup it had just opened. Ahaan, 2026-09-30:
+                // stay "until decision is made". The popup closes itself on a
+                // tile click (hideNow) or 250ms after the pointer leaves it,
+                // and the normal grace below then runs from that moment.
+                readonly property bool previewOpenHere: DockPreview.visible
+                                                        && DockPreview.activeScreen === dockPanel.screen
 
                 // Grace period: after the mouse leaves the reveal region, keep the
                 // dock up for a moment so a brief/accidental exit doesn't instantly
@@ -402,7 +411,7 @@ Scope {
             // PanelWindow.anchors is a plain 4-bool struct (edges only) —
             // offsets from those edges are a separate `margins` property.
             margins.left: {
-                if (vertical) return DockPreview.dockHeight + 2 - previewPopup.shadowMargin
+                if (vertical) return DockPreview.dockHeight - 3 - previewPopup.shadowMargin
                 const half = previewPopup.implicitWidth / 2
                 const raw  = (DockPreview.globalX - modelData.x) - half
                 return Math.max(0, Math.min(raw, modelData.width - previewPopup.implicitWidth))
@@ -410,8 +419,17 @@ Scope {
             // Sit just above the dock pill. Subtract the popup's own
             // shadowMargin padding (see WindowPreviewPopup.qml) so the
             // *visible* card sits this close, not the padded window edge.
-            margins.bottom: vertical ? 0 : DockPreview.dockHeight + 2 - previewPopup.shadowMargin
-            margins.right:  vertical ? DockPreview.dockHeight + 2 - previewPopup.shadowMargin : 0
+            //
+            // "- 3" was "+ 2" until 2026-09-30: Ahaan found the card floated
+            // too far off the dock, asked for half the gap, then settled on
+            // 7px after trying 9. Measured by scanning a grim capture column by column for
+            // the card's outer ring and the pill's top edge: "- 3" leaves
+            // 7px, "- 1" leaves 9px — one unit here is one pixel of gap, so
+            // "+ 2" was 12px. (Eyeballed readings of 14 and 7 before that
+            // were 2px generous each; trust the column scan.)
+            // All three edges use it.
+            margins.bottom: vertical ? 0 : DockPreview.dockHeight - 3 - previewPopup.shadowMargin
+            margins.right:  vertical ? DockPreview.dockHeight - 3 - previewPopup.shadowMargin : 0
 
             WindowPreviewPopup {
                 id: previewPopup

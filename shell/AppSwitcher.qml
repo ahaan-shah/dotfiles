@@ -127,7 +127,6 @@ Item {
         root.appList = sorted.map(w => ({
             class:   w.class,
             title:   w.title || w.initialTitle || w.class,
-            icon:    IconResolver.resolveForWindow(w),
             address: w.address,
             special: w.workspaceName.startsWith("special:")
         }))
@@ -174,6 +173,18 @@ Item {
     }
 
     // ── Keyboard ──────────────────────────────────────────────────
+    // Keys.* only fire on an item with active focus. Without this the layer
+    // surface took Exclusive keyboard focus but no item inside it held focus,
+    // so every handler below was dead: Escape did nothing and the only way
+    // out was releasing Alt, which always opened something. Tab never reaches
+    // here anyway (the ALT+Tab bind consumes it); Escape does, because nothing
+    // binds ALT+Escape. Alt release now also confirms from here as well as
+    // from the compositor's release bind — the second call is a no-op, since
+    // confirm() returns once shown is false. After Escape, shown is false, so
+    // the Alt release that follows confirms nothing.
+    focus: true
+    onShownChanged: if (shown) forceActiveFocus()
+
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Tab) {
             if (event.modifiers & Qt.ShiftModifier) prev()
@@ -293,10 +304,28 @@ Item {
                         Image {
                             id: img
                             anchors.fill: parent
-                            source:   card.modelData.icon
+                            // Resolved HERE, in a binding, not frozen into
+                            // appList when the list is built. The icon index
+                            // (DesktopEntryCache) is one ~3s scan at shell
+                            // start, and until it lands every lookup falls to
+                            // Quickshell's image://icon provider, which draws a
+                            // magenta/black checkerboard for anything the Qt
+                            // theme lacks (Ahaan, 2026-09-30: "happens on first
+                            // launch of the switcher. Then it works"). Frozen,
+                            // those stayed for that whole open. Reading
+                            // `revision` re-runs this when the scan finishes.
+                            // Measured: a first open 15s after a restart draws
+                            // every icon; one at 4s drew three checkerboards.
+                            source: {
+                                void DesktopEntryCache.revision
+                                return IconResolver.resolveForWindow({ class: card.modelData.class })
+                            }
                             fillMode: Image.PreserveAspectFit
                             smooth:   true
-                            visible:  status === Image.Ready
+                            // And until the index lands, the letter tile below
+                            // stands in: the image://icon fallback would draw
+                            // the checkerboard for those first ~3s instead.
+                            visible:  status === Image.Ready && DesktopEntryCache.ready
                             // Without this Qt decodes each icon at its intrinsic
                             // resolution and keeps that pixmap regardless of the
                             // size actually drawn.
@@ -306,7 +335,7 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             radius: 12
-                            visible: img.status !== Image.Ready
+                            visible: !img.visible
                             // Its own fixed dark ground, so the white letter
                             // on it stays legible on any palette — left alone
                             // by the 2026-09-18 foreground sweep.
@@ -340,7 +369,21 @@ Item {
                             // evince       → file name       (title = "report.pdf - …")
                             // papers       → file name       (title = "report.pdf", no suffix)
                             // text editor  → file name       (title = "main.py - …")
+                            // whatsapp     → "Call" on a call window only
                             // everyone else → nothing
+                            //
+                            // WhatsApp is a Chromium webapp, and a call opens a
+                            // SECOND window with the same class
+                            // (chrome-web.whatsapp.com__-Default) and the same
+                            // icon, so two identical logos sat side by side.
+                            // Measured 2026-09-30 with one of each open: the
+                            // main window is titled "web.whatsapp.com", the call
+                            // "WhatsApp call". Ahaan's ask: leave the main one
+                            // bare, label only the call. Matched on the word so
+                            // a "WhatsApp video call" title (not seen yet) is
+                            // labelled too.
+                            if (_cls.toLowerCase().includes("whatsapp"))
+                                return /\bcall\b/i.test(_title) ? "Call" : ""
                             if (_cls.includes("kitty"))                return _title
                             if (_cls === "org.gnome.nautilus")         return _title
                             if (_cls === "org.gnome.evince")           return _title.split(" - ")[0]

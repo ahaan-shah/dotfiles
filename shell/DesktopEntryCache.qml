@@ -318,9 +318,42 @@ QtObject {
         function onIconThemeChanged() {
             // running = true is a no-op while already running, so a change that
             // lands mid-scan would otherwise be dropped silently.
-            if (findProc.running) return
-            root._buf = ""
-            findProc.running = true
+            root._rescan()
+        }
+    }
+
+    // Rebuild when apps are installed or removed, so a new app's window gets
+    // its real icon in the dock and switcher without a shell relaunch. Same
+    // trigger and reasoning as AppIndex.qml's _appsConn (DesktopEntries'
+    // directory watch, debounced over a pacman transaction's burst of writes).
+    // `revision` bumps on the rebuild, which is what makes the dock re-resolve.
+    property var _appsConn: Connections {
+        target: DesktopEntries
+        // Its first emission is its own startup scan (~6 ms in), while ours
+        // from Component.onCompleted is still in flight; gating on `ready`
+        // keeps that from costing a second full scan at every shell start.
+        function onApplicationsChanged() { if (root.ready) rescanDebounce.restart() }
+    }
+    property var _rescanDebounce: Timer {
+        id: rescanDebounce
+        interval: 1500
+        onTriggered: root._rescan()
+    }
+
+    // running = true is a no-op while already running; hold a change that
+    // lands mid-scan and rescan once the current one finishes.
+    property bool _rescanPending: false
+    function _rescan() {
+        if (findProc.running) { root._rescanPending = true; return }
+        root._buf = ""
+        findProc.running = true
+    }
+    property var _pendingConn: Connections {
+        target: findProc
+        function onRunningChanged() {
+            if (findProc.running || !root._rescanPending) return
+            root._rescanPending = false
+            Qt.callLater(root._rescan)
         }
     }
 
