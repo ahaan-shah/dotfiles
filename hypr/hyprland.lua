@@ -1121,6 +1121,14 @@ hl.window_rule({
     float = true,
 })
 
+hl.window_rule({
+    name  = "spotifast-float",
+    match = { class = "^(spotifast)$" },
+    size  = {"(monitor_w*0.833)", "(monitor_h*0.827)"},
+    move  = {"(monitor_w*0.007)", "(monitor_h*0.093)"},
+    float = true,
+})
+
 -- Codium
 hl.window_rule({
     name  = "codium-float",

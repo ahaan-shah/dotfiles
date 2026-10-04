@@ -42,6 +42,7 @@ gnome-calculator
 gnome-calendar
 gnome-clocks
 gnome-disk-utility
+gnome-keyring
 gnome-text-editor
 go
 gpu-screen-recorder

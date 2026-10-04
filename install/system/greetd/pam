@@ -1,0 +1,21 @@
+#%PAM-1.0
+# /etc/pam.d/greetd — the stock Arch file plus the two pam_gnome_keyring lines.
+#
+# Without them nothing on this desktop answers org.freedesktop.secrets, and
+# every libsecret client loses what it stores at exit. Found 2026-10-04:
+# Spotifast asked for a fresh sign-in on every launch ("The system credential
+# store is unavailable") because only libsecret was installed — no keyring
+# daemon, no ~/.local/share/keyrings.
+#
+# auth    hands the typed login password to the keyring, which unlocks (or, on
+#         first login, creates) the "login" keyring with it — so no prompt.
+# session auto_start starts the daemon if the user socket has not already.
+# Both are `optional`: a missing or broken keyring must never block a login.
+
+auth       required     pam_securetty.so
+auth       requisite    pam_nologin.so
+auth       include      system-local-login
+auth       optional     pam_gnome_keyring.so
+account    include      system-local-login
+session    include      system-local-login
+session    optional     pam_gnome_keyring.so auto_start

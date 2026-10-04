@@ -33,6 +33,11 @@ qt6-imageformats          # webp/tiff/jp2/icns decoders for Qt. NOT optional
                           #   checked against before a format is added to it.
 greetd
 greetd-tuigreet
+gnome-keyring             # the Secret Service provider. libsecret alone is
+                          #   only a client: without a daemon, apps that store
+                          #   tokens (Spotifast, browsers, git-credential) lose
+                          #   them at exit. Unlocked at login by the
+                          #   pam_gnome_keyring lines in system/greetd/pam.
 polkit                    # and its GObject-introspection typelibs, which are
                           #   what scripts/polkit-agent.py drives: Polkit-1
                           #   registers the agent, PolkitAgent-1 runs the

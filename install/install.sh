@@ -979,6 +979,14 @@ phase_system() {
             warn "enable greetd only after disabling it, or you will get a conflict"
         elif ask_yn "Enable greetd (graphical login) on next boot?" y; then
             sudo_file "$SCRIPT_DIR/system/greetd/config.toml" /etc/greetd/config.toml
+            # Unlocks gnome-keyring with the login password. Gated on the
+            # module existing: a PAM line naming a missing .so is skipped as
+            # `optional`, but logs an error on every login.
+            if [ -f /usr/lib/security/pam_gnome_keyring.so ]; then
+                sudo_file "$SCRIPT_DIR/system/greetd/pam" /etc/pam.d/greetd
+            else
+                skip "gnome-keyring missing — /etc/pam.d/greetd left stock"
+            fi
             enable_unit greetd.service
             info "at the greeter, log in and start the session with: Hyprland"
         fi
