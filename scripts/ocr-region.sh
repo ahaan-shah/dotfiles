@@ -62,7 +62,25 @@
 
 set -euo pipefail
 
-note() { command -v notify-send >/dev/null 2>&1 && notify-send -a OCR "$@"; }
+# ── jarvis's options ──────────────────────────────────────────────────────
+# --geometry "X,Y WxH"  skip slurp and read this rectangle (logical, slurp's own
+#                       format) — how jarvis OCRs a named window or the whole
+#                       screen without asking for a drag.
+# --stdout              also print the text, and send no notification: the
+#                       caller shows it (jarvis's bar card), and two messages
+#                       for one action is noise.
+# ALT+F11 passes neither, so the keybind behaves exactly as before.
+geom_arg="" to_stdout=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --geometry) geom_arg="${2:-}"; shift 2 ;;
+        --geometry=*) geom_arg="${1#*=}"; shift ;;
+        --stdout) to_stdout=1; shift ;;
+        *) printf 'usage: %s [--geometry "X,Y WxH"] [--stdout]\n' "${0##*/}" >&2; exit 2 ;;
+    esac
+done
+
+note() { [ "$to_stdout" = 1 ] && return 0; command -v notify-send >/dev/null 2>&1 && notify-send -a OCR "$@"; }
 
 need() {
     local missing=()
@@ -93,7 +111,11 @@ fi
 # Escape or right-click leaves slurp with a non-zero exit and nothing on
 # stdout. That is a cancel, not a failure: it must be silent, because a
 # notification saying "cancelled" every time you change your mind is noise.
-geom="$(slurp -d 2>/dev/null || true)"
+if [ -n "$geom_arg" ]; then
+    geom="$geom_arg"
+else
+    geom="$(slurp -d 2>/dev/null || true)"
+fi
 [ -n "$geom" ] || exit 0
 
 # "X,Y WxH" — the W here is LOGICAL, which is exactly why it is the thing to
@@ -133,7 +155,12 @@ fi
 
 # printf, not echo: the text is arbitrary and may begin with a dash or contain
 # backslashes, both of which echo would eat.
-printf '%s' "$text" | wl-copy
+# wl-copy forks a child that stays alive to SERVE the selection, and that
+# child inherits our stdout. Under --stdout that is the caller's pipe, so the
+# caller never sees EOF: measured 2026-10-06, jarvis waited out its full 30 s
+# timeout and then read nothing, while the text had in fact been copied.
+printf '%s' "$text" | wl-copy >/dev/null 2>&1
+[ "$to_stdout" = 1 ] && printf '%s\n' "$text"
 
 # The first line, so the notification confirms it grabbed the right thing
 # without pasting a paragraph into the corner of the screen.

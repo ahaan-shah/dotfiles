@@ -560,6 +560,17 @@ hl.bind("ALT + S", hl.dsp.exec_cmd("echo \"open:default\" | socat - UNIX-CONNECT
 -- under $HOME via fd's own defaults, see FileSearch.qml)
 -- desc: Opens file search
 hl.bind("ALT + F", hl.dsp.exec_cmd("echo \"open:filesearch\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
+-- EVE (shell/Jarvis.qml), Claude in a pill (since 2026-10-20; it was a local
+-- planner before). SUPER+SPACE starts a new conversation and SUPER+ALT+SPACE
+-- carries on the current one — swapped the same day, Ahaan: "I like super
+-- space for new chats". The ALT bind took its key from voice input
+-- (`ipc call jarvis voice` still works, unbound). Down in the pill lists the
+-- conversations to switch between. While she is busy the pill still opens,
+-- and what is sent waits its turn.
+-- desc: Asks EVE (Claude), new conversation
+hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call jarvis fresh"))
+-- desc: Asks EVE (Claude), same conversation
+hl.bind(mainMod .. " + ALT + SPACE", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call jarvis open"))
 -- desc: Closes the focused window
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 -- desc: Toggles floating on the focused window
@@ -884,18 +895,25 @@ globalFloatRule = hl.window_rule({
     name   = "global-float",
     match  = { class = ".*" },
     float  = true,
-    -- Default size, relative to the monitor. Tuned 2026-09-20 to a window
-    -- Ahaan had already sized by hand and kept: the kitty running
-    -- scripts/system-update.sh, measured live at 938 x 567 logical px on this
-    -- 1440 x 810 panel. 938/1440 = 0.6514 and 567/810 = 0.7, and both
-    -- round-trip exactly here (1440*0.6514 = 938.016 -> 938, 810*0.7 = 567).
-    -- Was 0.66 x 0.679 (950 x 550) -- slightly narrower and noticeably taller now.
+    -- Default size AND position, relative to the monitor. Retuned 2026-10-16
+    -- to a window Ahaan had sized and placed by hand and kept: Magpie, measured
+    -- live (`hyprctl clients -j`) at 1080 x 675 logical px, top-left at
+    -- (17, 59), on this 1440 x 810 panel. All four round-trip exactly here:
+    --   1440*0.75   = 1080         810*0.8333 = 674.97 -> 675
+    --   1440*0.0118 = 16.99 -> 17  810*0.0728 = 58.97  -> 59
+    -- y=59 sits just under the bar's 44 px reserved strip.
     --
-    -- This is the fallback for apps with NO rule of their own. The 28 rules
-    -- below set their own `size` and are unaffected; changing them was
-    -- considered and declined on the same date.
-    size   = {"(monitor_w*0.6514)", "(monitor_h*0.7)"},
-    center = true,
+    -- `move` replaces the old `center = true`: the reference window is pinned
+    -- near the top-left, not centred, and the two keys would fight.
+    --
+    -- History: 0.66 x 0.679 (950 x 550) centred, then 2026-09-20 0.6514 x 0.7
+    -- (938 x 567, the system-update kitty) centred.
+    --
+    -- This is the fallback for apps with NO rule of their own. Rules below
+    -- that set their own `size`/`move`/`center` override it; a plain kitty
+    -- inherits this size but kitty-float re-centres it.
+    size   = {"(monitor_w*0.75)", "(monitor_h*0.8333)"},
+    move   = {"(monitor_w*0.0118)", "(monitor_h*0.0728)"},
 })
 
 -- Tiling mode, carried across reloads.
@@ -924,7 +942,7 @@ end
 -- Kitty (terminal)
 --
 -- No `size` key on purpose. Since 2026-09-20 a plain kitty INHERITS
--- global-float's default (0.6514 x 0.7, 938 x 567 logical on this panel) so the
+-- global-float's default (0.75 x 0.8333, 1080 x 675 logical on this panel) so the
 -- terminal matches every other app that has no rule of its own. It previously
 -- set 0.521 x 0.531 (750 x 430); that number is recorded here rather than
 -- deleted because the about-float measurement further down was taken against
@@ -1120,10 +1138,16 @@ hl.window_rule({
     move  = {"(monitor_w*0.007)", "(monitor_h*0.093)"},
     float = true,
 })
-
 hl.window_rule({
     name  = "spotifast-float",
     match = { class = "^(spotifast)$" },
+    size  = {"(monitor_w*0.833)", "(monitor_h*0.827)"},
+    move  = {"(monitor_w*0.007)", "(monitor_h*0.093)"},
+    float = true,
+})
+hl.window_rule({
+    name  = "spotsie-float",
+    match = { class = "^(spotsie)$" },
     size  = {"(monitor_w*0.833)", "(monitor_h*0.827)"},
     move  = {"(monitor_w*0.007)", "(monitor_h*0.093)"},
     float = true,

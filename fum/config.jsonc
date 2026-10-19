@@ -1,5 +1,5 @@
 {
-  "players": ["spotify"],
+  "players": ["spotify", "spotsie"],
   "keybinds": {
     "q": "quit()",
     "h": "prev()",

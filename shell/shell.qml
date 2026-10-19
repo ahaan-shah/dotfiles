@@ -41,4 +41,6 @@ ShellRoot {
     MacShell {}
     Bar {}
     Launcher {}
+    // The pill and the flight to the bar; the orb and its card live in Bar.
+    Jarvis {}
 }

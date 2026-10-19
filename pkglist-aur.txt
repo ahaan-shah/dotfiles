@@ -10,8 +10,6 @@ nomacs
 python-pywal
 python-pywalfox
 rstudio-desktop-bin
-spotifast-bin
-spotify
 voxtype-bin
 vscodium-bin
 yay

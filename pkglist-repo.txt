@@ -36,6 +36,8 @@ fprintd
 fuzzel
 fzf
 gcc-fortran
+ggml-cuda
+ggml-vulkan
 git
 github-cli
 gnome-calculator
@@ -84,6 +86,7 @@ limine
 linux
 linux-firmware
 linux-headers
+llama-cpp
 mesa-utils
 meson
 minicom
@@ -103,7 +106,6 @@ obs-studio
 obsidian
 obsidian-icon-theme
 openai-codex
-opencode
 otf-codenewroman-nerd
 otf-font-awesome
 otf-monaspace-nerd
@@ -113,6 +115,7 @@ pipewire
 pipewire-alsa
 pipewire-jack
 pipewire-pulse
+playerctl
 python-pipx
 qemu-desktop
 qt5-wayland

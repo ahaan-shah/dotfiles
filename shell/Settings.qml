@@ -12,7 +12,7 @@ import Quickshell.Io
 //   Install  -> Package / AUR / Web app
 //   Remove   -> Package / Web app
 //   Update
-//   Setup    -> Monitors / Keybindings / Window rules / Dock / Defaults
+//   Setup    -> Monitors / Keybindings / Window rules / Shell (Dock, App switcher) / AI / Defaults
 //   Fonts    -> every installed family
 //   Icons    -> every installed icon theme
 //   Theme    -> every installed GTK theme
@@ -98,7 +98,7 @@ QtObject {
                 // everything under Tools is a thing you reach for, does its
                 // work now, and leaves no setting behind.
                 { id: "tools",   icon: "󱁤", title: "Tools",   kind: "menu",   sub: "screenshot, screen recording, colour picker, OCR" },
-                { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, dock, defaults" },
+                { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, shell, AI, defaults" },
                 { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "palette, wallpaper, GTK theme, icons, fonts" },
                 { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
                 // Last, deliberately, and the only row here that is not about
@@ -232,9 +232,19 @@ QtObject {
                 { id: "monitors",    icon: "󰍹", title: "Monitors",        kind: "action" },
                 { id: "keybindings", icon: "󰌌", title: "Keybindings",     kind: "menu", sub: "every bind, searchable" },
                 { id: "windowrules", icon: "󰖯", title: "Window rules",    kind: "menu", sub: "borders, gaps, rounding, opacity, blur, animation" },
-                { id: "dock",        icon: "󱂬", title: "Dock",            kind: "menu", sub: "auto-hide, position" },
-                { id: "switcher",    icon: "󰕰", title: "App switcher",    kind: "menu", sub: "which windows Alt+Tab lists" },
+                { id: "shell",       icon: "󰨇", title: "Shell",           kind: "menu", sub: "dock, app switcher" },
+                { id: "ai",          icon: "󰧑", title: "AI",              kind: "menu", sub: "enable the assistant, pick its model" },
                 { id: "defaults",    icon: "󰀻", title: "Defaults",        kind: "menu", sub: "browser, terminal, editor, PDFs" }
+            ]
+        },
+
+        // Added 2026-10-08 on Ahaan's instruction: Dock and App switcher moved
+        // out of Setup's own list into this category, and AI moved in beside it.
+        "setup/shell": {
+            title: "Shell", icon: "󰨇",
+            rows: [
+                { id: "dock",     icon: "󰣆", title: "Dock",         kind: "menu", sub: "auto-hide, position" },
+                { id: "switcher", icon: "󰕰", title: "App switcher", kind: "menu", sub: "which windows Alt+Tab lists" }
             ]
         },
 
@@ -251,8 +261,8 @@ QtObject {
         // its edge), on is hidden until the pointer reaches the edge.
         // _decorate writes which one is in force into the trail, so the switch
         // is never a bare on/off with no word for what "on" means.
-        "setup/dock": {
-            title: "Dock", icon: "󱂬",
+        "setup/shell/dock": {
+            title: "Dock", icon: "󰣆",
             rows: [
                 { id: "autohide", icon: "󰈉", title: "Always hide", kind: "toggle" },
                 { id: "position", icon: "󰹑", title: "Position",    kind: "menu", sub: "bottom, left or right of the screen" }
@@ -262,7 +272,7 @@ QtObject {
         // "choice", ticked by _decorate from UiConfig.dockPosition — the same
         // shape as Power profile, which is the other page whose rows are a
         // fixed set rather than a script's listing.
-        "setup/dock/position": {
+        "setup/shell/dock/position": {
             title: "Position", icon: "󰹑",
             rows: [
                 { id: "bottom", icon: "󰁅", title: "Bottom", kind: "choice" },
@@ -279,10 +289,35 @@ QtObject {
         // windows are left out. On lists them too, and picking one BRINGS it
         // to the current workspace instead of travelling to it — the same
         // move the dock makes for a minimized window (DockIcon.qml, focusAddr).
-        "setup/switcher": {
+        "setup/shell/switcher": {
             title: "App switcher", icon: "󰕰",
             rows: [
                 { id: "special", icon: "󰘸", title: "Show minimized", kind: "toggle" }
+            ]
+        },
+
+        // Added 2026-10-06 on Ahaan's instruction: one switch that turns the
+        // assistant (EVE, jarvis/) on or off completely. ui.conf key AI_ENABLED,
+        // read by UiConfig and acted on in JarvisState.
+        "setup/ai": {
+            title: "AI", icon: "󰧑",
+            rows: [
+                { id: "enabled", icon: "󰚩", title: "Enable AI", kind: "toggle" },
+                { id: "model",   icon: "󰘦", title: "Model",     kind: "menu", sub: "which Claude EVE talks to" }
+            ]
+        },
+
+        // Added 2026-10-20, when EVE stopped being a local planner and became
+        // Claude in a popup (jarvis/chat.py): which model answers. ui.conf
+        // AI_MODEL, ticked by _decorate from UiConfig.aiModel — the dock
+        // Position page's shape. A change applies from the next message, in
+        // the same conversation.
+        "setup/ai/model": {
+            title: "Model", icon: "󰘦",
+            rows: [
+                { id: "sonnet", icon: "󰚩", title: "Sonnet 5.5", kind: "choice", sub: "the everyday one" },
+                { id: "haiku",  icon: "󰚩", title: "Haiku 5.5",  kind: "choice", sub: "fastest, for quick lookups" },
+                { id: "opus",   icon: "󰚩", title: "Opus 5.5",   kind: "choice", sub: "the deepest, and the slowest" }
             ]
         },
 
@@ -841,13 +876,13 @@ QtObject {
 
         // The dock page. Position says where it is from one level up, and the
         // switch says in words what its current state does.
-        if (key === "setup/dock/position")
+        if (key === "setup/shell/dock/position")
             return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
                      value: r.id, active: r.id === root.dockPosition }
-        if (key === "setup/dock" && r.id === "position")
+        if (key === "setup/shell/dock" && r.id === "position")
             return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
                      trail: root.dockPosition.charAt(0).toUpperCase() + root.dockPosition.substring(1) }
-        if (key === "setup/dock" && r.id === "autohide") {
+        if (key === "setup/shell/dock" && r.id === "autohide") {
             const always = UiConfig.dockHide === "always"
             return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
                      sub: r.sub || "", active: always, pending: false,
@@ -856,7 +891,17 @@ QtObject {
                      trail: always ? "until pointed at" : "when covered" }
         }
 
-        if (key === "setup/switcher" && r.id === "special") {
+        if (key === "setup/ai" && r.id === "enabled")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                     sub: r.sub || "", active: UiConfig.aiEnabled !== "off", pending: false }
+        if (key === "setup/ai" && r.id === "model")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
+                     trail: ({ sonnet: "Sonnet 5.5", haiku: "Haiku 5.5", opus: "Opus 5.5" })[root.aiModel] }
+        if (key === "setup/ai/model")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
+                     value: r.id, active: r.id === root.aiModel }
+
+        if (key === "setup/shell/switcher" && r.id === "special") {
             const on = UiConfig.switcherSpecial === "on"
             return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
                      // No trail text. It read "brought to you" / "left
@@ -1133,6 +1178,16 @@ QtObject {
     // entirely — so naming the family is what stops the row drawing the wrong
     // thing. Chrome's mark is in both and is taken from Font Awesome too, so the
     // two browser rows are one family and one weight.
+    // Glyphs drawn upside down. The Nerd Font has no "window with a bar along
+    // its bottom edge" — the closest, 󰣆 (md-dock_window), has the bar on top,
+    // which reads as a title bar rather than as the dock this repo puts at the
+    // bottom of the screen. Flipping it is the dock. Keyed on the glyph, not a
+    // row field, because rows are rebuilt field-by-field in a dozen places
+    // (rowsFor, search, groups) and a new field would have to be threaded
+    // through every one; SettingsPanel's row icon asks this instead.
+    readonly property var flippedGlyphs: ["󰣆"]
+    function glyphFlipped(g) { return root.flippedGlyphs.indexOf(g) >= 0 }
+
     readonly property var _glyphs: ({
         "editors": ({
             "vim":    "",   // custom-vim
@@ -1443,7 +1498,12 @@ QtObject {
 
         // Same as above: the value is assigned here so the tick moves on the
         // press, and ui-prefs.sh persists it — the dock follows UiConfig.
-        if (row.kind === "choice" && key === "setup/dock/position") {
+        if (row.kind === "choice" && key === "setup/ai/model") {
+            root.setDockPref("AI_MODEL", row.value || row.id)
+            return false
+        }
+
+        if (row.kind === "choice" && key === "setup/shell/dock/position") {
             root.setDockPref("DOCK_POSITION", row.value || row.id)
             return false
         }
@@ -1556,6 +1616,9 @@ QtObject {
     // password was FOR actually happens.
     function verified(action) {
         if (action === "fp-enroll") root.fingerprintEnrollRequested()
+        // A jarvis delete parked under this token; the files it listed go to
+        // the Trash only now that PAM has said the password is right.
+        else if (action.startsWith("jarvis:")) JarvisState.passwordAccepted(action.slice(7))
     }
 
     // Deleting runs as this user, not through privileged-run.sh — see the
@@ -1610,6 +1673,9 @@ QtObject {
     // is none of the three reads as the bottom there, so it does here too,
     // and the page never ticks nothing.
     readonly property string dockPosition: UiConfig.dockEdge
+    // Anything but the three known names is Sonnet, so a typo in ui.conf
+    // ticks a real row — and is what chat.py falls back to as well.
+    readonly property string aiModel: ["sonnet", "haiku", "opus"].indexOf(UiConfig.aiModel) >= 0 ? UiConfig.aiModel : "sonnet"
 
     function setDockPref(key, val) {
         // Optimistic: moves the switch / tick and the dock itself this frame.
@@ -1617,15 +1683,21 @@ QtObject {
         if (key === "DOCK_AUTOHIDE") UiConfig.dockHide     = val
         if (key === "DOCK_POSITION") UiConfig.dockPosition = val
         if (key === "SWITCHER_SPECIAL") UiConfig.switcherSpecial = val
+        if (key === "AI_ENABLED") UiConfig.aiEnabled = val
+        if (key === "AI_MODEL") UiConfig.aiModel = val
         root._sh(root._q(root.scriptDir + "/ui-prefs.sh") + " set " + key + " " + root._q(val))
     }
 
     function _toggle(key, row) {
-        if (key === "setup/switcher" && row.id === "special") {
+        if (key === "setup/ai" && row.id === "enabled") {
+            root.setDockPref("AI_ENABLED", row.active === true ? "off" : "on")
+            return
+        }
+        if (key === "setup/shell/switcher" && row.id === "special") {
             root.setDockPref("SWITCHER_SPECIAL", row.active === true ? "off" : "on")
             return
         }
-        if (key === "setup/dock" && row.id === "autohide") {
+        if (key === "setup/shell/dock" && row.id === "autohide") {
             root.setDockPref("DOCK_AUTOHIDE", row.active === true ? "overlap" : "always")
             return
         }

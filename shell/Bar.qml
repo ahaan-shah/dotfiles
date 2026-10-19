@@ -1531,6 +1531,11 @@ Scope {
     property var agents: []              // normalized records that have something to say
     property int agentIndex: 0           // which one the panel is showing
     property var agentLive: ({})         // id -> true while that CLI has a live process
+    // "<id>\t<config dir>" -> true for every live process, where the dir is
+    // the value of that agent's accountEnv (resolved), or "" when it is unset
+    // — i.e. the process is on the default account. What lights ACTIVE.
+    property var agentLiveHomes: ({})
+    property var agentAccountEnv: ({})   // id -> env var naming an account's dir
     property bool agentsBusy: false      // a collector run is in flight
     property string agentsError: ""
 
@@ -1708,12 +1713,18 @@ Scope {
     }
 
     function rebuildAgents() {
-        var out = [];
+        var out = [], envs = ({});
         for (var i = 0; i < agentWatchers.count; i++) {
             var w = agentWatchers.objectAt(i);
             if (!w || !w.record) continue;
             var r = w.record;
             var id = String(r.id || w.modelData);
+            // Read before the data gate: the live probe needs the env var of an
+            // agent that has no tab yet, or its first session never matches.
+            // Restricted to a shell identifier because it is spliced into the
+            // probe's script.
+            if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(r.accountEnv || "")))
+                envs[id] = String(r.accountEnv);
             if (!root.agentHasData(r) && !root.agentLive[id]) continue;
             out.push({
                 id:              id,
@@ -1729,14 +1740,58 @@ Scope {
                 todayTotalTokens: root.agentNum(r.todayTotalTokens),
                 totalPrompts:    root.agentNum(r.totalPrompts),
                 activeDays:      root.agentNum(r.activeDays),
+                dailyTokens:     (r.dailyTokens && typeof r.dailyTokens === "object") ? r.dailyTokens : ({}),
+                accounts:        root.agentAccounts(r),
                 updatedAt:       String(r.updatedAt || "")
             });
         }
+        // Set-stable for the same reason as agentLive: this feeds the probe's
+        // command, and rebuildAgents() runs on every live-set change.
+        if (JSON.stringify(envs) !== JSON.stringify(root.agentAccountEnv)) root.agentAccountEnv = envs;
         // Stable order, so the tab you picked stays where it was across a
         // refresh that rewrote the records in a different order.
         out.sort(function (a, b) { return a.name.localeCompare(b.name); });
         root.agents = out;
         if (root.agentIndex >= out.length) root.agentIndex = 0;
+    }
+
+    // One entry per login the agent is signed in with (2026-10-19: two Claude
+    // accounts, the second run as `claude-avi`, i.e. CLAUDE_CONFIG_DIR=
+    // ~/.claude-avi). A collector that knows nothing of accounts — codex —
+    // gets one synthesized from its top-level plan and limits, so the panel
+    // has a single shape to draw.
+    function agentAccounts(r) {
+        var list = Array.isArray(r.accounts) ? r.accounts : [], out = [];
+        for (var i = 0; i < list.length; i++) {
+            var a = list[i] || {};
+            out.push({ id: String(a.id || i),
+                       name: String(a.name || ("Account " + (i + 1))),
+                       home: String(a.home || ""),
+                       isDefault: a.isDefault === true,
+                       tierLabel: String(a.tierLabel || ""),
+                       usageStatusText: String(a.usageStatusText || ""),
+                       authHelpText: String(a.authHelpText || ""),
+                       limits: Array.isArray(a.limits) ? a.limits : [] });
+        }
+        if (out.length === 0)
+            out.push({ id: "default",
+                       name: String(r.accountName || "Default"),
+                       home: "", isDefault: true,
+                       tierLabel: String(r.tierLabel || ""),
+                       usageStatusText: String(r.usageStatusText || ""),
+                       authHelpText: String(r.authHelpText || ""),
+                       limits: Array.isArray(r.limits) ? r.limits : [] });
+        return out;
+    }
+
+    // A process with no account env set is on the default login; one with it
+    // set is on whichever account's dir it names. Both sides are resolved
+    // paths (readlink -f in the probe, Path.resolve() in the collector), so
+    // `$HOME/.claude-avi/` and `~/.claude-avi` land on the same key.
+    function agentAccountLive(agentId, acct) {
+        if (!acct || agentId === "") return false;
+        if (acct.isDefault && root.agentLiveHomes[agentId + "\t"]) return true;
+        return acct.home !== "" && root.agentLiveHomes[agentId + "\t" + acct.home] === true;
     }
 
     // Which subscription the panel opens on. The tabs sort by name, so with
@@ -1760,18 +1815,40 @@ Scope {
     // otherwise. Note the trailing `true`: with no agents the command would
     // otherwise be an empty script, and with agents the last pgrep failing
     // would make the whole thing exit non-zero for no reason.
+    //
+    // One line per live process, "<id>\t<account dir>", so the same probe
+    // answers "is it up" and "which account is it on". The dir is read from
+    // /proc/<pid>/environ — the env the process was STARTED with, which is
+    // exactly where `CLAUDE_CONFIG_DIR=… claude` puts it — with bash's own
+    // read rather than a tr|grep per pid, since this runs every 2 s. The
+    // `2>/dev/null` sits before the `<` so a pid that exits between pgrep and
+    // the read fails silently; it then prints with an empty dir and counts as
+    // the default account for one tick, which is harmless.
     Process {
         id: agentLiveProc
         command: ["bash", "-c",
             root.agentProbeIds.map(function (id) {
-                return "pgrep -x " + root.shq(id) + " >/dev/null 2>&1 && echo " + root.shq(id);
+                var env = root.agentAccountEnv[id] || "";
+                var read = env === "" ? ""
+                    : "while IFS= read -r -d '' kv; do case $kv in " + env + "=*) v=${kv#*=};; esac; done 2>/dev/null </proc/$p/environ; "
+                      + "[ -n \"$v\" ] && v=$(readlink -f -- \"$v\"); ";
+                return "for p in $(pgrep -x " + root.shq(id) + "); do v=; " + read
+                     + "printf '%s\\t%s\\n' " + root.shq(id) + " \"$v\"; done";
             }).join("; ") + (root.agentProbeIds.length > 0 ? "; true" : "true")]
         stdout: StdioCollector { onStreamFinished: {
-            var live = {}, ids = [], lines = (this.text || "").split("\n");
+            var live = {}, homes = {}, ids = [], lines = (this.text || "").split("\n");
             for (var i = 0; i < lines.length; i++) {
-                var id = lines[i].trim();
-                if (id !== "" && !live[id]) { live[id] = true; ids.push(id); }
+                var line = lines[i];
+                if (line === "") continue;
+                var tab = line.indexOf("\t");
+                var id = tab < 0 ? line : line.slice(0, tab);
+                homes[id + "\t" + (tab < 0 ? "" : line.slice(tab + 1))] = true;
+                if (!live[id]) { live[id] = true; ids.push(id); }
             }
+            // Only bindings read this one, so it does not rebuild anything —
+            // but it is still compared first, so a quiet tick writes nothing.
+            if (Object.keys(homes).sort().join("\n") !== Object.keys(root.agentLiveHomes).sort().join("\n"))
+                root.agentLiveHomes = homes;
             // Only reassign when the SET changed, for the same reason agentIds
             // does it: this probe fires every 2s, and agentLive now drives
             // rebuildAgents(), which reassigns root.agents. Reassigning that
@@ -1894,8 +1971,39 @@ Scope {
         if (text.indexOf("month") >= 0) return "Monthly";
         if (text.indexOf("week") >= 0 || text.indexOf("7-day") >= 0) return "Weekly";
         if (text.indexOf("session") >= 0 || text.indexOf("hour") >= 0) return "Session";
+        // codex names its windows by span alone ("720h window"); it is on a
+        // plan with a single 30-day one.
+        var hours = root.agentLimitHours(entry);
+        if (hours >= 672) return "Monthly";
+        if (hours >= 144) return "Weekly";
+        if (hours > 0) return "Session";
         var plain = String(entry.label || "").replace(/\s*\(.*\)\s*/, "").trim();
         return plain === "" ? "Limit" : plain;
+    }
+
+    // How long a window is, read from its label: "Session (5-hour)",
+    // "Weekly (7-day)", "720h window". 0 when the label does not say, which
+    // only costs the pace tick.
+    function agentLimitHours(entry) {
+        var text = String(entry.label || "") + " " + String(entry.title || "");
+        var m = text.match(/(\d+)\s*-?\s*(?:hours?|hrs?|h)\b/i);
+        if (m) return Number(m[1]);
+        m = text.match(/(\d+)\s*-?\s*days?\b/i);
+        if (m) return Number(m[1]) * 24;
+        var lower = text.toLowerCase();
+        if (lower.indexOf("month") >= 0) return 720;
+        if (lower.indexOf("week") >= 0) return 168;
+        return 0;
+    }
+
+    // How far through its window a limit is, 0–1, or -1 when that cannot be
+    // known (no reset time — a window that has not started — or no span).
+    // Drawn as the tick on the meter: fill left of it is on pace, right of it
+    // is spending faster than the window refills.
+    function agentLimitPace(row) {
+        var remaining = root.agentResetMs(row);
+        if (!(row && row.hours > 0) || !(remaining > 0)) return -1;
+        return Math.max(0, Math.min(1, 1 - remaining / (row.hours * 3600000)));
     }
 
     function agentLimitRows(a) {
@@ -1906,6 +2014,7 @@ Scope {
             var percent = Number(entry.percent);
             if (!(percent >= 0)) continue;
             out.push({ title: root.agentLimitTitle(entry),
+                       hours: root.agentLimitHours(entry),
                        percent: percent,
                        resetsAt: String(entry.resetsAt || "") });
         }
@@ -1914,10 +2023,21 @@ Scope {
 
     // The window that decides how much room is left is the FULLEST one — that
     // is the one that stops the next prompt, whatever its span.
+    //
+    // Across accounts, it is the fullest window of an account that is IN USE:
+    // a spent account nobody is running is not what stops the next prompt.
+    // With none live (the panel is open on a record, say) every account counts.
     function agentBindingLimit(a) {
-        var rows = root.agentLimitRows(a), best = null;
-        for (var i = 0; i < rows.length; i++)
-            if (!best || rows[i].percent > best.percent) best = rows[i];
+        if (!a) return null;
+        var accts = a.accounts || [], pool = [], best = null;
+        for (var i = 0; i < accts.length; i++)
+            if (root.agentAccountLive(a.id, accts[i])) pool.push(accts[i]);
+        if (pool.length === 0) pool = accts;
+        for (var j = 0; j < pool.length; j++) {
+            var rows = root.agentLimitRows(pool[j]);
+            for (var k = 0; k < rows.length; k++)
+                if (!best || rows[k].percent > best.percent) best = rows[k];
+        }
         return best;
     }
 
@@ -1937,43 +2057,30 @@ Scope {
         return Math.max(1, minutes) + "m";
     }
 
-    // Local calendar date, recomputed from agentNowMs so a panel left open
-    // across midnight moves its "Today" row with the clock.
-    function agentToday() {
-        var now = new Date(root.agentNowMs);
-        return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0")
-             + "-" + String(now.getDate()).padStart(2, "0");
-    }
-
-    function agentDayLabel(date) {
-        var parsed = new Date(String(date || "") + "T00:00:00");
-        if (isNaN(parsed.getTime())) return String(date || "");
-        return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][parsed.getDay()]
-             + " " + parsed.getDate();
-    }
-
-    function agentWeekPeak(a) {
-        var days = a ? (a.recentDays || []) : [], peak = 0;
-        for (var i = 0; i < days.length; i++)
-            peak = Math.max(peak, root.agentNum(days[i].messageCount));
-        return Math.max(1, peak);
-    }
-
-    // "1 session", not "1 sessions". Every count on this line could be 1 —
-    // codex's first day was 4 prompts, 1 session, 1 active day — and claude
-    // simply never was, which is why the line read correctly for a year.
-    function agentPlural(n, word) {
-        var v = root.agentNum(n);
-        return v + " " + word + (v === 1 ? "" : "s");
-    }
-
-    // Whether the week has anything in it. Not agentWeekPeak() > 0: that one
-    // floors at 1 so it can be divided by, which makes it useless as a test.
-    function agentWeekTotal(a) {
-        var days = a ? (a.recentDays || []) : [], total = 0;
-        for (var i = 0; i < days.length; i++)
-            total += root.agentNum(days[i].messageCount);
-        return total;
+    // The weekday that has carried the most tokens over everything on record,
+    // every agent and every account summed — the header line of the panel.
+    // dailyTokens is all of history; a collector that predates it still has
+    // its seven recentDays, which is a weaker answer but not a wrong one.
+    function agentBusiestDay() {
+        var sums = [0, 0, 0, 0, 0, 0, 0], any = false;
+        for (var i = 0; i < root.agents.length; i++) {
+            var a = root.agents[i], byDate = a.dailyTokens || ({});
+            if (Object.keys(byDate).length === 0) {
+                byDate = ({});
+                var days = a.recentDays || [];
+                for (var d = 0; d < days.length; d++) byDate[days[d].date] = days[d].messageCount;
+            }
+            for (var date in byDate) {
+                var parsed = new Date(String(date) + "T00:00:00"), n = root.agentNum(byDate[date]);
+                if (isNaN(parsed.getTime()) || n <= 0) continue;
+                sums[parsed.getDay()] += n;
+                any = true;
+            }
+        }
+        if (!any) return "";
+        var best = 0;
+        for (var w = 1; w < 7; w++) if (sums[w] > sums[best]) best = w;
+        return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][best];
     }
 
     function agentModelRows(a) {
@@ -1991,16 +2098,6 @@ Scope {
         }
         rows.sort(function (x, y) { return y.total - x.total; });
         return rows.slice(0, 4);
-    }
-
-    // The plan you pay for, under the name of the tool it pays for. Limits get
-    // their own section; this line just says what the subscription is — or what
-    // is wrong with it, which matters more when something is.
-    function agentHeroMeta(a) {
-        if (!a) return "";
-        if (a.usageStatusText !== "") return a.usageStatusText;
-        if (a.tierLabel === "") return "Subscription";
-        return a.tierLabel;
     }
 
     //========================================================================//
@@ -3277,7 +3374,21 @@ Scope {
     // the card's 20 on a panel read as rounded rectangles. 12 keeps the
     // proportion.
     component Island: Rectangle {
+        id: isl
         default property alias content: rowInner.data
+        // Jarvis grows the centre island DOWN, as one shape — Ahaan's spec is
+        // that the island itself expands rather than a card hanging under it
+        // (2026-10-05). extraW is a floor on the width, extraH is added below
+        // the row, and belowData is what fills that space. All three are inert
+        // at their defaults, so the other two islands are exactly what they
+        // were.
+        property alias belowData: below.data
+        property real extraW: 0
+        property real extraH: 0
+        // The row's own height. The islands are placed by THIS (y = 22 - rowH/2)
+        // rather than by their centre, so a taller island grows downward and
+        // its row stays on the y 5-39 line every other island sits on.
+        readonly property real rowH: rowInner.implicitHeight + 14
         radius: Theme.rowRadius
         color: Theme.alpha(Theme.bg, 0.9)
         border.width: Theme.cardBorder
@@ -3286,13 +3397,21 @@ Scope {
         // always-on strip needed an edge below the focused window's border —
         // measurements are in Theme.qml.
         border.color: Theme.barLine
-        implicitWidth: rowInner.implicitWidth + 14   // padding:7px  (7*2)
-        implicitHeight: rowInner.implicitHeight + 14
+        implicitWidth: Math.max(rowInner.implicitWidth + 14, extraW)   // padding:7px  (7*2)
+        implicitHeight: rowH + extraH
 
         RowLayout {
             id: rowInner
-            anchors.centerIn: parent
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 7
             spacing: 0
+        }
+        Item {
+            id: below
+            y: isl.rowH
+            width: isl.width
+            height: Math.max(0, isl.height - isl.rowH)
+            clip: true
         }
     }
 
@@ -4241,16 +4360,31 @@ Scope {
             // from `reserved`; dropdowns hang from it. Nothing else needs
             // to change when it does.
             readonly property int zone: 44
-            implicitHeight: zone
+            // The surface is TALLER than the zone it reserves, permanently, and
+            // masked down to the 44px strip plus whatever the centre island
+            // grows into — see jarvis below. Permanently, because Hyprland
+            // animates a layer surface's resize by stretching its last frame
+            // (the dock's smeared icons, recorded in the system map): an island
+            // that grew by resizing its window would smear on every request.
+            // A fixed surface gives the compositor nothing to stretch, and the
+            // mask means the extra height takes no clicks. Nearly the whole
+            // screen: a text answer stops at the calendar dropdown's edge, but
+            // a PDF or image preview may use all of it (Ahaan, 2026-10-06:
+            // "expand the island a lot more ... so i can actually read").
+            readonly property int jarvisRoom: (bar.screen ? bar.screen.height : 810) - zone - 16
+            implicitHeight: zone + jarvisRoom
             exclusiveZone: zone                  // waybar "exclusive": true
+            mask: Region {
+                x: 0; y: 0; width: bar.width; height: bar.zone
+                Region { item: centerIsland }
+            }
 
             //--------------------------------------------------------------//
             //  LEFT ISLAND : custom/notification , hyprland/workspaces      //
             //--------------------------------------------------------------//
             Island {
                 anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.verticalCenterOffset: 22 - bar.zone / 2   // island stays at y 5-39
+                y: 22 - rowH / 2                 // the row stays at y 5-39, however tall the island grows
                 anchors.leftMargin: 5            // margin:5px
 
                 // custom/notification  →  "󰣇"  →  toggles the Quickshell control center
@@ -4363,9 +4497,82 @@ Scope {
             //  CENTER ISLAND : clock , mpris                                //
             //--------------------------------------------------------------//
             Island {
+                id: centerIsland
                 anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.verticalCenterOffset: 22 - bar.zone / 2   // island stays at y 5-39
+                y: 22 - rowH / 2                 // the row stays at y 5-39, however tall the island grows
+
+                // ── jarvis: the island grows down to show what it did ───────
+                // ex is the whole expansion, 0..1, and the only writer of the
+                // size below. The card keeps the LAST result it was given, so
+                // collapsing shrinks around the content fading out rather than
+                // around an island that emptied the moment it was dismissed.
+                property real ex: JarvisState.expanded ? 1 : 0
+                Behavior on ex { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+                // Opaque while it shows something to read: at the islands'
+                // 0.9, whatever window sat behind it showed through the text
+                // (Ahaan's screenshot of the first web card).
+                color: Theme.alpha(Theme.bg, 0.9 + 0.1 * ex)
+                property var shownCard: null
+                Connections {
+                    target: JarvisState
+                    function onCardChanged() { if (JarvisState.card) centerIsland.shownCard = JarvisState.card }
+                }
+                // "Max expand till the calendar dropdown": the dropdown's bottom
+                // edge is 44 + panelTopMargin + its own height from the top of
+                // the screen, and the island grows from its own y.
+                // A preview is the exception: it takes nearly the whole height
+                // of the screen and up to 900 wide, so a PDF page is readable.
+                readonly property bool big: !!shownCard && shownCard.kind === "preview"
+                // A Claude reply (2026-10-20) gets the preview's height and a
+                // reading width: a chat answer with a list or a code block in
+                // it was a column of one-word lines at the card's width.
+                readonly property bool reading: !!shownCard && shownCard.kind === "reply"
+                // Its floor is 150 px above the screen's bottom: Ahaan marked
+                // the limit on a screenshot ("let the max open be till here"),
+                // ~660 of the 810-point-tall screen, level with the agents
+                // dropdown's lower reach.
+                readonly property real maxExtra: (big || reading)
+                    ? Math.max(80, (bar.screen ? bar.screen.height : 810) - 150 - y - rowH)
+                    : Math.max(80, bar.zone + root.panelTopMargin + calPanel.implicitHeight - y - rowH)
+                // At least as wide as a settings card's column while open, so a
+                // web result is not read through a slot the width of the clock.
+                extraW: (big ? Math.min(900, bar.width - 160)
+                             : reading ? Math.min(760, bar.width - 160)
+                             : Theme.cardWidth + 30) * ex
+                extraH: Math.min(jcard.wantHeight, maxExtra) * ex
+                Component.onCompleted: JarvisState.island = centerIsland
+                belowData: [
+                    JarvisCard {
+                        id: jcard
+                        anchors.fill: parent
+                        r: centerIsland.shownCard
+                        maxHeight: centerIsland.maxExtra
+                        opacity: Math.max(0, (centerIsland.ex - 0.35) / 0.65)
+                    }
+                ]
+
+                // The orb's slot, ahead of the clock. Zero wide until jarvis is
+                // working; it opens the moment the pill is sent, so the island
+                // is already widening while the orb is in the air, and the
+                // flight lands on wherever the slot has got to by then.
+                Item {
+                    id: jarvisSlot
+                    property real openAmount: (JarvisState.phase === "launch" || JarvisState.orbVisible) ? 1 : 0
+                    Behavior on openAmount { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                    implicitHeight: 20
+                    Layout.preferredWidth: 26 * openAmount
+                    Layout.alignment: Qt.AlignVCenter
+                    JarvisOrb {
+                        anchors.centerIn: parent
+                        headSize: 16
+                        mood: JarvisState.mood
+                        visible: JarvisState.orbVisible
+                    }
+                    // Poking the orb: dismisses a card, or — while she works —
+                    // peeks at what she is doing.
+                    TapHandler { onTapped: JarvisState.orbClicked() }
+                    Component.onCompleted: JarvisState.slot = jarvisSlot
+                }
 
                 // clock  →  {:%a %d %B | %I:%M %p}  →  click: dropdown calendar
                 BarLabel {
@@ -4384,7 +4591,7 @@ Scope {
                     SystemClock { id: clock; precision: SystemClock.Seconds }
                 }
 
-                // mpris  (spotify / cliamp)  →  "[   {status_icon} | {dynamic} ]"
+                // mpris  (spotify / spotifast / spotsie / cliamp)  →  "[   {status_icon} | {dynamic} ]"
                 BarLabel {
                     id: mpris
                     // music players this island is willing to show, matched
@@ -4392,8 +4599,13 @@ Scope {
                     // cliamp advertises identity "Cliamp" on
                     // org.mpris.MediaPlayer2.cliamp — "spotify" only ever
                     // appears in its xesam:url, never in the name, so the old
-                    // spotify-only match never saw it.
-                    readonly property var known: ["spotify", "cliamp"]
+                    // spotify-only match never saw it. Spotifast (a native
+                    // Spotify client) is identity "Spotifast" on
+                    // org.mpris.MediaPlayer2.spotifast, and "spotify" is not a
+                    // substring of that either, so it needs its own entry. Spotsie (another
+                    // native Spotify client) is identity "Spotsie" on
+                    // org.mpris.MediaPlayer2.spotsie — same story.
+                    readonly property var known: ["spotify", "cliamp", "spotifast", "spotsie"]
                     // pick a known player, preferring one that is actually playing
                     property var player: {
                         var ps = Mpris.players.values;
@@ -4438,8 +4650,7 @@ Scope {
             //--------------------------------------------------------------//
             Island {
                 anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.verticalCenterOffset: 22 - bar.zone / 2   // island stays at y 5-39
+                y: 22 - rowH / 2                 // the row stays at y 5-39, however tall the island grows
                 anchors.rightMargin: 5
 
                 //=== voxtype : voice-to-text ==================================
@@ -5681,6 +5892,157 @@ Scope {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    //========================================================================//
+    //  JARVIS: while a card is waiting for an answer (or holds something to   //
+    //  read), a click anywhere else dismisses it and the keyboard answers it  //
+    //========================================================================//
+    // The same full-screen catcher every dropdown here uses, with one
+    // difference that is the reason it is not just another dropdown: the card
+    // lives INSIDE the bar's centre island, on the bar's own surface, and this
+    // window maps after the bar and so sits above it. A catcher covering the
+    // island would take the clicks meant for the card's own buttons, so the
+    // island's rectangle is cut out of the input mask (Intersection.Subtract)
+    // and clicks there fall through to the bar beneath.
+    //
+    // One-liners never raise it: they close on their own after 2 s, and a
+    // card that is about to vanish by itself has no business taking the
+    // keyboard from whatever you were typing into. Nor does a delete that is
+    // waiting on the password box — that box needs the keyboard.
+    PanelWindow {
+        id: jarvisCatch
+        visible: JarvisState.interactive && !JarvisState.awaitingPassword
+        color: "transparent"
+        anchors { top: true; left: true; right: true; bottom: true }
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "quickshell-jarvis"
+        // OnDemand, NOT Exclusive. Hyprland sends every pointer event to a
+        // layer surface holding EXCLUSIVE keyboard focus, whatever its input
+        // region says — measured 2026-10-06 with a mask shrunk to one corner
+        // box, a click on the card still landed here and dismissed it. That is
+        // why hover never reached the island and why the card's own buttons
+        // were unclickable. OnDemand still takes the keys (Esc measured).
+        //
+        // Since EVE became Claude (2026-10-20) the keyboard is taken for two
+        // things: a command waiting on a yes/no, and a FINISHED reply, whose
+        // box takes the cursor so the conversation can go on without
+        // SUPER+SPACE each time (Ahaan, same day: "a promptbox here itself
+        // that automatically gets the cursor after claude replies"). For a
+        // few hours before that a reply took no keys at all, because a
+        // focused reply with only an Enter/Esc handler closed itself 2 s
+        // after landing — most likely a key typed elsewhere. Now a stray key
+        // lands in the box as text, and only Esc or Enter on it does
+        // anything. A reply still streaming takes nothing.
+        readonly property var jc: JarvisState.card
+        readonly property bool replying: !!jc && jc.kind === "reply" && !jc.streaming
+        readonly property bool wantsKeys: visible && !!jc && (jc.kind === "approve" || replying)
+        WlrLayershell.keyboardFocus: wantsKeys ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+        mask: Region {
+            item: jcFull
+            Region { item: jcHole; intersection: Intersection.Subtract }
+        }
+        Item { id: jcFull; anchors.fill: parent }
+        Item {
+            id: jcHole
+            readonly property var isl: JarvisState.island
+            x: isl ? isl.x : 0
+            y: isl ? isl.y : 0
+            width: isl ? isl.width : 0
+            height: isl ? isl.height : 0
+        }
+
+        MouseArea { anchors.fill: parent; onClicked: JarvisState.dismiss() }
+
+        Item {
+            id: jcKeys
+            focus: true
+            Keys.onPressed: event => {
+                const c = JarvisState.card
+                const ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+                // A command waiting on manual mode: Ctrl+Right runs it,
+                // Ctrl+Left (or Esc) does not (Ahaan, 2026-10-20). Enter does
+                // nothing here on purpose — this surface takes the keyboard
+                // when the card appears, so an Enter meant for whatever you
+                // were typing into must not say yes to a command.
+                if (c && c.kind === "approve") {
+                    if (ctrl && event.key === Qt.Key_Right) JarvisState.allow()
+                    else if ((ctrl && event.key === Qt.Key_Left) || event.key === Qt.Key_Escape) JarvisState.deny()
+                    else return
+                }
+                else return
+                event.accepted = true
+            }
+        }
+        // The reply box. Drawn HERE, on the catcher, over the empty strip
+        // JarvisCard leaves at the bottom of a finished reply — not in the
+        // card — because this surface is the one that can hold the keyboard:
+        // it maps the moment the reply finishes, and an OnDemand layer that
+        // maps gets the focus, which is exactly "gets the cursor after claude
+        // replies". The island is cut out of this window's input mask, so a
+        // click on the box falls through to the bar; the focus is already
+        // here, so nothing is lost.
+        Rectangle {
+            id: jcReplyBox
+            readonly property var isl: JarvisState.island
+            readonly property real pad: 16
+            visible: jarvisCatch.replying && !!isl
+            x: isl ? isl.x + pad : 0
+            y: isl ? isl.y + isl.height - pad - height : 0
+            width: isl ? isl.width - pad * 2 : 0
+            height: 38
+            radius: 11
+            // The panel's own surface a shade lighter, with a hairline edge
+            // that stays the same focused or not — the accent edge it had on
+            // focus was "the bright color border" Ahaan asked to lose.
+            color: Qt.tint(Theme.bg, Theme.alpha(Theme.text, 0.055))
+            border.width: 1.5
+            border.color: Theme.hairline
+            opacity: JarvisState.expanded ? 1 : 0
+            TextInput {
+                id: jcReply
+                x: 14
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 28
+                verticalAlignment: TextInput.AlignVCenter
+                font.family: Theme.font
+                font.pixelSize: Theme.fsRow
+                color: Theme.text
+                clip: true
+                selectionColor: Theme.alpha(Theme.accent, 0.45)
+                onAccepted: {
+                    const t = text
+                    text = ""
+                    JarvisState.followUp(t)
+                }
+                Keys.onEscapePressed: JarvisState.dismiss()
+                Text {
+                    anchors.fill: parent
+                    // Clear of the caret, which sits at x 0 and touched the R.
+                    anchors.leftMargin: 6
+                    verticalAlignment: Text.AlignVCenter
+                    visible: jcReply.text.length === 0
+                    text: "Reply…"
+                    font: jcReply.font
+                    color: Theme.dimmer
+                }
+            }
+        }
+
+        // Same retry every exclusive surface here needs: a layer surface is
+        // not reliably focusable on the frame it maps.
+        onWantsKeysChanged: if (wantsKeys) { jcFocus.tries = 0; jcFocus.start() }
+        Timer {
+            id: jcFocus
+            property int tries: 0
+            interval: 40; repeat: true
+            onTriggered: {
+                const want = jarvisCatch.replying ? jcReply : jcKeys
+                want.forceActiveFocus()
+                if (want.activeFocus || ++tries > 12) stop()
             }
         }
     }
@@ -7027,8 +7389,9 @@ Scope {
         Rectangle {
             id: agentPanel
             // Wider than the 300px control dropdowns: this one is a dashboard,
-            // and the model rows carry a name and a token figure on one line.
-            width: 330
+            // and a limit row carries a title, a meter and a reset time on one
+            // line.
+            width: 340
             anchors.top: parent.top
             anchors.right: parent.right
             anchors.topMargin: root.panelTopMargin
@@ -7047,70 +7410,44 @@ Scope {
                 anchors.margins: 14
                 spacing: 12
 
-                // ---------- hero: mark, tool name, the plan it runs on ----------
+                // ---------- header: the module, and when it gets used ----------
+                // Laid out after a reference Ahaan sent on 2026-10-19: the bot,
+                // "Agents", and the weekday that has carried the most tokens
+                // across every agent and account. The per-agent identity moved
+                // down to the section below the tabs, where it labels the
+                // accounts it owns.
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
 
-                    // An agent may ship its own mark at assets/<id>.svg — the
-                    // one place in the module where an agent gets to look like
-                    // itself. Nothing requires it: Image reports Error for a
-                    // file that is not there and the bar glyph takes over, so
-                    // a collector with no artwork still gets a hero.
-                    // Qt.resolvedUrl is relative to THIS file, so it follows
-                    // the shell whether it runs from the repo or ~/.config.
-                    Item {
+                    Text {
+                        text: root.g.robotOn
+                        color: root.ncText
+                        font.family: root.ncFont
+                        font.pixelSize: root.ns(24)
+                        horizontalAlignment: Text.AlignHCenter
                         Layout.preferredWidth: root.ns(26)
-                        Layout.preferredHeight: root.ns(26)
-
-                        Image {
-                            id: agentMark
-                            anchors.fill: parent
-                            source: root.agent ? Qt.resolvedUrl("assets/" + root.agent.id + ".svg") : ""
-                            // SVGs rasterize at sourceSize, so ask for 2x and
-                            // let it scale down — at 1x the mark is mush on a
-                            // HiDPI screen.
-                            sourceSize.width: root.ns(52)
-                            sourceSize.height: root.ns(52)
-                            fillMode: Image.PreserveAspectFit
-                            smooth: true
-                        }
-                        Text {
-                            anchors.centerIn: parent
-                            visible: agentMark.status !== Image.Ready
-                            text: root.g.robotOn
-                            color: root.ncText
-                            font.family: root.ncFont
-                            font.pixelSize: root.ns(24)
-                        }
                     }
                     ColumnLayout {
                         spacing: 1
                         Layout.fillWidth: true
                         Text {
-                            // Reachable for a second or two on a first-ever run:
-                            // the icon appears with the process, the record
-                            // lands when the collector kicked off by
-                            // onAgentRunningChanged comes back.
-                            text: root.agent ? root.agent.name
-                                  : root.agentsBusy ? "Collecting usage…" : "No usage recorded yet"
+                            text: "Agents"
                             color: root.ncText
                             font.family: root.ncFont
                             font.pixelSize: root.ns(15)
                             font.weight: Font.Medium
-                            elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
-                        // The plan, in caps, the way the reference does it —
-                        // "MAX 20X" / "PRO". An auth or endpoint problem
-                        // replaces it, because that matters more than the tier.
                         Text {
-                            text: root.agentHeroMeta(root.agent).toUpperCase()
-                            color: root.agent && root.agent.usageStatusText !== ""
-                                   ? root.colWarning : root.alpha(root.ncText, 0.5)
+                            readonly property string day: root.agentBusiestDay()
+                            visible: day !== ""
+                            text: "BUSIEST DAY: " + day.toUpperCase()
+                            color: root.alpha(root.ncText, 0.5)
                             font.family: root.ncFont
                             font.pixelSize: root.ns(10)
                             font.weight: Font.DemiBold
+                            font.letterSpacing: 1
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
@@ -7127,7 +7464,7 @@ Scope {
 
                 // ---------- subscription switch ----------
                 // Only earns its row when there is a choice to make: with one
-                // agent the hero already names it.
+                // agent the section below already names it.
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
@@ -7144,30 +7481,214 @@ Scope {
                     }
                 }
 
-                // ---------- auth / endpoint trouble ----------
-                // The hero line says something is wrong; this says what to do
-                // about it, and only appears when there is something to say.
-                Rectangle {
+                PanelDivider {}
+
+                // ---------- the agent: mark and name ----------
+                // An agent may ship its own mark at assets/<id>.svg — the
+                // one place in the module where an agent gets to look like
+                // itself. Nothing requires it: Image reports Error for a
+                // file that is not there and the bar glyph takes over, so
+                // a collector with no artwork still gets a heading.
+                // Qt.resolvedUrl is relative to THIS file, so it follows
+                // the shell whether it runs from the repo or ~/.config.
+                RowLayout {
                     Layout.fillWidth: true
-                    visible: root.agent && root.agent.usageStatusText !== ""
-                             && root.agent.authHelpText !== ""
-                    implicitHeight: agentHelp.implicitHeight + 20
-                    radius: 10
-                    color: root.alpha(root.colWarning, 0.10)
-                    border.width: 1.5
-                    border.color: root.alpha(root.colWarning, 0.35)
+                    spacing: 9
+
+                    Item {
+                        visible: root.agent !== null
+                        Layout.preferredWidth: root.ns(18)
+                        Layout.preferredHeight: root.ns(18)
+
+                        Image {
+                            id: agentMark
+                            anchors.fill: parent
+                            source: root.agent ? Qt.resolvedUrl("assets/" + root.agent.id + ".svg") : ""
+                            // SVGs rasterize at sourceSize, so ask for 2x and
+                            // let it scale down — at 1x the mark is mush on a
+                            // HiDPI screen.
+                            sourceSize.width: root.ns(36)
+                            sourceSize.height: root.ns(36)
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: agentMark.status !== Image.Ready
+                            text: root.g.robotOn
+                            color: root.ncText
+                            font.family: root.ncFont
+                            font.pixelSize: root.ns(16)
+                        }
+                    }
                     Text {
-                        id: agentHelp
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 10
-                        text: root.agent ? root.agent.authHelpText : ""
-                        color: root.alpha(root.ncText, 0.75)
+                        // Reachable for a second or two on a first-ever run:
+                        // the icon appears with the process, the record
+                        // lands when the collector kicked off by
+                        // onAgentRunningChanged comes back.
+                        text: root.agent ? root.agent.name
+                              : root.agentsBusy ? "Collecting usage…" : "No usage recorded yet"
+                        color: root.agent ? root.ncText : root.alpha(root.ncText, 0.45)
                         font.family: root.ncFont
-                        font.pixelSize: root.ns(9)
-                        wrapMode: Text.WordWrap
+                        font.pixelSize: root.ns(13)
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                }
+
+                // ---------- one block per account ----------
+                // Name · plan, ACTIVE when a live process of this agent was
+                // started on this account's config dir (agentAccountLive), and
+                // a meter per rate-limit window with the time until it resets.
+                Repeater {
+                    model: root.agent ? root.agent.accounts : []
+                    delegate: ColumnLayout {
+                        id: agentAcct
+                        required property var modelData
+                        required property int index
+                        readonly property bool live: root.agentAccountLive(root.agent ? root.agent.id : "", modelData)
+                        readonly property var rows: root.agentLimitRows(modelData)
+                        Layout.fillWidth: true
+                        Layout.topMargin: index > 0 ? 6 : 0
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Text {
+                                text: agentAcct.modelData.name
+                                color: root.ncText
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(12)
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: root.ns(150)
+                            }
+                            // The plan — or, when the limits could not be read,
+                            // why, because that matters more than the tier.
+                            Text {
+                                readonly property string status: agentAcct.modelData.usageStatusText
+                                visible: text !== ""
+                                text: status !== "" ? "· " + status
+                                      : agentAcct.modelData.tierLabel !== "" ? "· " + agentAcct.modelData.tierLabel : ""
+                                color: status !== "" ? root.colWarning : root.alpha(root.ncText, 0.5)
+                                font.family: root.ncFont
+                                font.pixelSize: root.ns(10)
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Item { Layout.fillWidth: true; visible: !agentAcct.modelData.tierLabel && !agentAcct.modelData.usageStatusText }
+                            // A filled chip rather than tinted text: ncAccent is
+                            // a fill, not a text colour (see the map's theme
+                            // note — on some palettes it is darker than the
+                            // foreground and tinted text reads as disabled).
+                            Rectangle {
+                                visible: agentAcct.live
+                                radius: 6
+                                color: root.ncAccent
+                                implicitWidth: agentActive.implicitWidth + 12
+                                implicitHeight: agentActive.implicitHeight + 4
+                                Text {
+                                    id: agentActive
+                                    anchors.centerIn: parent
+                                    text: "ACTIVE"
+                                    color: root.contrastText(root.ncAccent)
+                                    font.family: root.ncFont
+                                    font.pixelSize: root.ns(9)
+                                    font.weight: Font.DemiBold
+                                    font.letterSpacing: 0.8
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: agentAcct.rows
+                            delegate: RowLayout {
+                                required property var modelData
+                                readonly property bool alarming: modelData.percent >= 0.9
+                                readonly property real remaining: root.agentResetMs(modelData)
+                                readonly property real pace: root.agentLimitPace(modelData)
+                                Layout.fillWidth: true
+                                spacing: 7
+
+                                // Model-scoped windows are titled after the
+                                // model ("Fable Weekly") and run long, so the
+                                // title is what gives way.
+                                Text {
+                                    text: modelData.title
+                                    color: root.alpha(root.ncText, 0.8)
+                                    font.family: root.ncFont
+                                    font.pixelSize: root.ns(11)
+                                    elide: Text.ElideRight
+                                    Layout.preferredWidth: root.ns(52)
+                                }
+
+                                Item {
+                                    Layout.fillWidth: true
+                                    implicitHeight: 10
+
+                                    Rectangle {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width
+                                        height: 5
+                                        radius: 2.5
+                                        color: root.alpha(root.col7, 0.15)
+                                        Rectangle {
+                                            visible: modelData.percent > 0
+                                            width: Math.max(height, parent.width * Math.max(0, Math.min(1, modelData.percent)))
+                                            height: parent.height
+                                            radius: parent.radius
+                                            color: alarming ? root.colCritical : root.ncText
+                                            Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                                        }
+                                    }
+                                    // Where an even spend would have the fill by
+                                    // now. Past it, the window is being spent
+                                    // faster than it refills.
+                                    Rectangle {
+                                        visible: pace >= 0
+                                        x: Math.max(0, Math.min(parent.width - width, Math.round(parent.width * pace) - 1))
+                                        width: 2
+                                        height: parent.height
+                                        radius: 1
+                                        color: root.alpha(root.ncText, 0.6)
+                                    }
+                                }
+
+                                // Red at the same 90% the fill goes red at.
+                                Text {
+                                    text: Math.round(modelData.percent * 100) + "%"
+                                    color: alarming ? root.colCritical : root.ncText
+                                    font.family: root.ncFont
+                                    font.pixelSize: root.ns(10)
+                                    font.weight: Font.DemiBold
+                                    horizontalAlignment: Text.AlignRight
+                                    Layout.preferredWidth: root.ns(30)
+                                }
+                                Text {
+                                    text: remaining > 0 ? root.agentFmtDuration(remaining) : ""
+                                    color: root.alpha(root.ncText, 0.55)
+                                    font.family: root.ncFont
+                                    font.pixelSize: root.ns(10)
+                                    horizontalAlignment: Text.AlignRight
+                                    Layout.preferredWidth: root.ns(46)
+                                }
+                            }
+                        }
+
+                        // What to do about a status on the name line, and only
+                        // when there is one. fillWidth + wrap, both required:
+                        // a Text with neither overflows the card.
+                        Text {
+                            visible: agentAcct.modelData.usageStatusText !== "" && agentAcct.modelData.authHelpText !== ""
+                            text: agentAcct.modelData.authHelpText
+                            color: root.alpha(root.ncText, 0.6)
+                            font.family: root.ncFont
+                            font.pixelSize: root.ns(9)
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
                     }
                 }
 
@@ -7175,8 +7696,8 @@ Scope {
                 // An agent earns a tab by running, not only by having usage
                 // (see agentHasData), so this tab can legitimately have no
                 // numbers in it at all — a fresh install, or one that has not
-                // been signed in to. Say so, rather than leaving a hero over a
-                // stack of empty sections.
+                // been signed in to. Say so, rather than leaving a heading
+                // over nothing.
                 Text {
                     Layout.fillWidth: true
                     visible: root.agent && !root.agentHasData(root.agent)
@@ -7185,168 +7706,6 @@ Scope {
                     font.family: root.ncFont
                     font.pixelSize: root.ns(10)
                     wrapMode: Text.WordWrap
-                }
-
-                // ---------- limits ----------
-                PanelDivider { visible: agentLimits.visible }
-
-                ColumnLayout {
-                    id: agentLimits
-                    Layout.fillWidth: true
-                    spacing: 10
-                    readonly property var rows: root.agentLimitRows(root.agent)
-                    visible: rows.length > 0
-
-                    SectionLabel { text: "LIMITS" }
-
-                    Repeater {
-                        model: agentLimits.rows
-                        delegate: ColumnLayout {
-                            required property var modelData
-                            readonly property bool alarming: modelData.percent >= 0.9
-                            Layout.fillWidth: true
-                            spacing: 5
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-                                Text {
-                                    // Model-scoped windows are titled after the
-                                    // model ("Fable Weekly") and run long, so
-                                    // the title is what gives way, never the
-                                    // percentage.
-                                    text: modelData.title
-                                    color: root.ncText
-                                    font.family: root.ncFont
-                                    font.pixelSize: root.ns(12)
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                }
-                                Text {
-                                    text: Math.round(modelData.percent * 100) + "%"
-                                    color: alarming ? root.colCritical : root.ncText
-                                    font.family: root.ncFont
-                                    font.pixelSize: root.ns(11)
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                implicitHeight: 6
-                                radius: 3
-                                color: root.alpha(root.col7, 0.15)
-                                Rectangle {
-                                    width: parent.width * Math.max(0, Math.min(1, modelData.percent))
-                                    height: parent.height
-                                    radius: parent.radius
-                                    color: alarming ? root.colCritical : root.ncAccent
-                                    Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-                                }
-                            }
-
-                            Text {
-                                readonly property real remaining: root.agentResetMs(modelData)
-                                visible: remaining > 0
-                                text: "Resets in " + root.agentFmtDuration(remaining)
-                                color: root.alpha(root.ncText, 0.5)
-                                font.family: root.ncFont
-                                font.pixelSize: root.ns(9)
-                            }
-                        }
-                    }
-                }
-
-                // ---------- tokens by day ----------
-                PanelDivider { visible: agentDays.visible }
-
-                ColumnLayout {
-                    id: agentDays
-                    Layout.fillWidth: true
-                    spacing: 6
-                    readonly property var rows: root.agent ? (root.agent.recentDays || []) : []
-                    readonly property real peak: root.agentWeekPeak(root.agent)
-                    readonly property string today: root.agentToday()
-                    // A collector reports "no usage this week" as seven days of
-                    // zero, not as an empty array — draw that as nothing at all
-                    // rather than as seven empty bars under a chart heading.
-                    visible: root.agentWeekTotal(root.agent) > 0
-
-                    SectionLabel { text: "TOKENS BY DAY" }
-
-                    Repeater {
-                        model: agentDays.rows
-                        delegate: RowLayout {
-                            required property var modelData
-                            // By date, not by position: a stats-cache fallback
-                            // can hand back a window that stops short of today.
-                            readonly property bool isToday: String(modelData.date || "") === agentDays.today
-                            readonly property real tokens: root.agentNum(modelData.messageCount)
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            // Weekday plus day-of-month. The window is a
-                            // rolling seven days, so it starts on whatever
-                            // weekday it starts on, and a run of quiet days
-                            // ahead of two busy ones reads exactly like a
-                            // sort by size until the dates are on screen.
-                            Text {
-                                text: isToday ? "Today" : root.agentDayLabel(modelData.date)
-                                color: isToday ? root.ncText : root.alpha(root.ncText, 0.5)
-                                font.family: root.ncFont
-                                font.pixelSize: root.ns(10)
-                                font.weight: isToday ? Font.DemiBold : Font.Normal
-                                Layout.preferredWidth: root.ns(46)
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                implicitHeight: 5
-                                radius: 2.5
-                                color: root.alpha(root.col7, 0.15)
-                                Rectangle {
-                                    width: parent.width * Math.max(0, Math.min(1, tokens / agentDays.peak))
-                                    height: parent.height
-                                    radius: parent.radius
-                                    // Scaled to the busiest day of the week, so
-                                    // the peak row is always full and the rest
-                                    // read as a fraction of it.
-                                    color: isToday ? root.ncAccent : root.alpha(root.ncAccent, 0.55)
-                                    Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-                                }
-                            }
-
-                            Text {
-                                text: root.agentFmtTokens(tokens)
-                                color: isToday ? root.ncText : root.alpha(root.ncText, 0.5)
-                                font.family: root.ncFont
-                                font.pixelSize: root.ns(10)
-                                font.weight: Font.DemiBold
-                                horizontalAlignment: Text.AlignRight
-                                Layout.preferredWidth: root.ns(44)
-                            }
-                        }
-                    }
-
-                    // Prompt and session counts only exist for today, so they
-                    // ride along under the week rather than taking a section of
-                    // their own.
-                    // fillWidth + wrap, both required: a Text with neither
-                    // takes its implicit width from the string and a
-                    // ColumnLayout lets it overflow the card rather than
-                    // squeezing it, which is exactly what this line did.
-                    Text {
-                        visible: root.agent && root.agent.todayPrompts > 0
-                        text: root.agent ? (root.agentPlural(root.agent.todayPrompts, "prompt") + ", "
-                                            + root.agentPlural(root.agent.todaySessions, "session") + " today  ·  "
-                                            + root.agentPlural(root.agent.activeDays, "active day")) : ""
-                        color: root.alpha(root.ncText, 0.4)
-                        font.family: root.ncFont
-                        font.pixelSize: root.ns(9)
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                        Layout.topMargin: 2
-                    }
                 }
 
                 // ---------- tokens by model ----------
@@ -7376,12 +7735,26 @@ Scope {
                             // the whole dashboard on one screen. Scaled to the
                             // heaviest model, so the top row is always full —
                             // the same scale-to-peak the week above uses.
+                            //
+                            // Never narrower than two radii. Qt clamps a
+                            // rectangle's radius to half its width, so a share
+                            // under 16px (Sonnet at ~0.014 of Opus) drew as a
+                            // thin sliver whose corners no longer matched the
+                            // row's, sticking out past them (reported
+                            // 2026-10-20). Clipping it square at the share
+                            // fixed that but gave every fill an abrupt
+                            // vertical end, which Ahaan rejected the same day.
+                            // At two radii the fill's left corners are exactly
+                            // the row's, so it can never leave the row, and
+                            // its right end is always round. A tiny share
+                            // overstates itself by at most 16px.
                             Rectangle {
                                 anchors.left: parent.left
                                 height: parent.height
                                 radius: parent.radius
-                                width: parent.width * Math.max(0, Math.min(1,
-                                    modelData.total / Math.max(1, agentModels.rows[0].total)))
+                                visible: modelData.total > 0
+                                width: Math.max(parent.radius * 2, parent.width * Math.max(0, Math.min(1,
+                                    modelData.total / Math.max(1, agentModels.rows[0].total))))
                                 color: root.alpha(root.ncAccent, 0.22)
                                 Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                             }

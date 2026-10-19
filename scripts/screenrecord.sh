@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # screenrecord.sh  {start|stop|toggle} [--target=full|region|window] [--audio=none|desktop|both]
+#                  [--geometry="X,Y WxH"]
+#
+# --geometry skips the picker for region/window and records that rectangle
+# (logical, slurp's own format). It is how jarvis records a window it found by
+# name ("record discord with sound") with no click.
 #
 # Screen recording, via gpu-screen-recorder.  Bound to SUPER+Print (toggle) and
 # reachable from Settings -> Tools -> Capture -> Screenrecord, which is where
@@ -86,6 +91,7 @@ OUT_DIR="${SCREENRECORD_DIR:-$HOME/Videos/Screencasts}"
 
 TARGET=full
 AUDIO=none
+GEOMETRY=""
 ACTION="${1:-toggle}"
 shift 2>/dev/null || true
 
@@ -93,6 +99,7 @@ for arg in "$@"; do
     case "$arg" in
         --target=*) TARGET="${arg#*=}" ;;
         --audio=*)  AUDIO="${arg#*=}"  ;;
+        --geometry=*) GEOMETRY="${arg#*=}" ;;
         *) printf '%s: unknown option %s\n' "${0##*/}" "$arg" >&2; exit 2 ;;
     esac
 done
@@ -201,6 +208,16 @@ select_region() {
 # keeps filming the patch of screen the window used to be on.  The notification
 # on start says so, because a user who does not know that will only find out
 # after the take.
+# The same even-rounding as select_region, for a rectangle handed in rather
+# than picked.
+geometry_arg() {
+    [[ $1 =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$ ]] || return 1
+    local w=$(( BASH_REMATCH[3] - BASH_REMATCH[3] % 2 ))
+    local h=$(( BASH_REMATCH[4] - BASH_REMATCH[4] % 2 ))
+    [ "$w" -ge 2 ] && [ "$h" -ge 2 ] || return 1
+    printf '%dx%d+%d+%d' "$w" "$h" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
 select_window() {
     local sel
     sel=$(hyprctl clients -j | jq -r --arg ws "$(hyprctl monitors -j | jq -r '.[] | select(.focused == true) | .activeWorkspace.id')" \
@@ -243,8 +260,9 @@ start_recording() {
     local w_arg
     case "$TARGET" in
         full)   w_arg=$(focused_monitor) ;;
-        region) w_arg=$(select_region) || exit 0 ;;   # cancelled: say nothing
-        window) w_arg=$(select_window) || exit 0 ;;
+        region|window) [ -n "$GEOMETRY" ] && { w_arg=$(geometry_arg "$GEOMETRY") || exit 1; } ;;&
+        region) [ -n "$GEOMETRY" ] || w_arg=$(select_region) || exit 0 ;;   # cancelled: say nothing
+        window) [ -n "$GEOMETRY" ] || w_arg=$(select_window) || exit 0 ;;
     esac
     [ -n "$w_arg" ] || { note -u critical "Nothing to record"; exit 1; }
 

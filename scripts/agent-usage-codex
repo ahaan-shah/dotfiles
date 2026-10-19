@@ -100,6 +100,7 @@ today = now.strftime("%Y-%m-%d")
 recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
 recent = {day: {"date": day, "messageCount": 0} for day in recent_dates}
 today_tokens_by_model = {}
+daily_tokens = {}
 model_usage = {}
 today_sessions = set()
 active_days = set()
@@ -128,6 +129,8 @@ def add_usage(day, session_key, model, input_tokens, output_tokens, cache_read, 
   bucket["outputTokens"] += output_tokens
   bucket["cacheReadInputTokens"] += cache_read
   bucket["cacheCreationInputTokens"] += cache_write
+
+  daily_tokens[day] = daily_tokens.get(day, 0) + total
 
   if day in recent:
     recent[day]["messageCount"] += total
@@ -425,6 +428,8 @@ def local_stats():
     "todayTotalTokens": today_total_tokens,
     "todayTokensByModel": today_tokens_by_model,
     "recentDays": [recent[day] for day in recent_dates],
+    # Every day on record, for the panel's all-history "busiest day".
+    "dailyTokens": daily_tokens,
     "totalPrompts": total_prompts,
     "totalSessions": len(total_sessions),
     # Days with any recorded usage, for the all-time "N days" summary. The
@@ -572,6 +577,11 @@ def fetch_codex_rpc():
     limits = (limits_msg.get("result") or {}).get("rateLimits") or {}
     plan = limits.get("planType") or account.get("planType") or account.get("type") or ""
     result["tierLabel"] = str(plan) if plan else ""
+    # The panel names each account. Only the part before the @ travels, the
+    # same restraint as the claude collector's display name.
+    email = str(account.get("email") or "")
+    if "@" in email:
+      result["accountName"] = email.split("@", 1)[0]
 
     for window in (limits.get("primary"), limits.get("secondary")):
       entry = limit_window(window)

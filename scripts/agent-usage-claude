@@ -132,6 +132,7 @@ def scan_projects(projects_path: Path) -> dict[str, Any]:
   active_days: set[str] = set()
   today_sessions: set[str] = set()
   today_tokens: dict[str, int] = {}
+  daily: dict[str, int] = {}
   usage_by_model: dict[str, dict[str, int]] = {}
   prompts = 0
   today_prompt_count = 0
@@ -187,6 +188,8 @@ def scan_projects(projects_path: Path) -> dict[str, Any]:
           bucket["cacheReadInputTokens"] += cache_read
           bucket["cacheCreationInputTokens"] += cache_write
 
+          daily[day] = daily.get(day, 0) + total
+
           if day in recent:
             # recentDays.messageCount is actually a token total, despite the
             # legacy name shared with synced snapshots.
@@ -206,6 +209,10 @@ def scan_projects(projects_path: Path) -> dict[str, Any]:
     "todayTotalTokens": today_token_total,
     "todayTokensByModel": today_tokens,
     "recentDays": [recent[day] for day in recent_dates],
+    # Every day on record, not just the week: the panel's "busiest day" is a
+    # weekday summed over all of history, and seven days is one sample of
+    # each.
+    "dailyTokens": daily,
     "modelUsage": usage_by_model,
     "totalPrompts": prompts,
     "totalSessions": len(sessions),
@@ -570,6 +577,11 @@ def merge_stats(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
         by_date[date] = by_date.get(date, 0) + number((day or {}).get("messageCount"))
   merged["recentDays"] = [{"date": date, "messageCount": by_date[date]} for date in sorted(by_date)]
 
+  daily = dict(base.get("dailyTokens") or {})
+  for date, count in (extra.get("dailyTokens") or {}).items():
+    daily[date] = number(daily.get(date)) + number(count)
+  merged["dailyTokens"] = daily
+
   # Sources overlap in time, so union dates rather than summing counts. A
   # fallback that only knows a count still bounds the answer from below.
   dates = set(base.get("activeDates") or []) | set(extra.get("activeDates") or [])
@@ -795,13 +807,15 @@ def usable_cached_limits(cached: dict[str, Any]) -> list[dict[str, Any]]:
   return [entry for entry in entries if isinstance(entry, dict) and limit_window_open(entry, now)]
 
 
-def collect_limits(access_token: str, expires_at_ms: int, force: bool) -> dict[str, Any]:
+def collect_limits(claude_dir: Path, access_token: str, expires_at_ms: int, force: bool) -> dict[str, Any]:
   result = {"limits": [], "usageStatusText": "", "authHelpText": AUTH_HELP}
 
   # A panel that is opened and shut repeatedly must not turn into a request
   # per flick, so recent probe results are reused for a short window — and
   # kept as the answer of record when a later probe fails.
-  probe_cache = cache_root() / "claude-limits.json"
+  # Keyed by account: two logins share this cache directory, and an unkeyed
+  # file would hand one account the other's percentages for 15 seconds.
+  probe_cache = cache_root() / f"claude-limits-{hashlib.sha1(str(claude_dir).encode('utf-8')).hexdigest()[:16]}.json"
   cached = read_fresh_json(probe_cache, float("inf")) or {}
   fallback = usable_cached_limits(cached)
 
@@ -850,20 +864,57 @@ def collect_limits(access_token: str, expires_at_ms: int, force: bool) -> dict[s
   return result
 
 
-# -------------------------------------------------------------------- record
+# ----------------------------------------------------------------- accounts
+#
+# Claude Code has no notion of several logins; CLAUDE_CONFIG_DIR relocates the
+# whole profile, and a second account is just a second directory (this
+# machine's ~/.zshrc: `alias claude-avi='CLAUDE_CONFIG_DIR=$HOME/.claude-avi
+# claude'`). So an account IS a config dir, and they are discovered rather than
+# listed: ~/.claude, every ~/.claude-* directory that holds a login, and
+# whatever CLAUDE_CONFIG_DIR this collector was itself started under.
 
 
-def main() -> int:
-  parser = argparse.ArgumentParser()
-  parser.add_argument("--force", action="store_true", help="rescan transcripts and re-probe limits, ignoring caches")
-  parser.add_argument("--limits-only", action="store_true", help="reuse any recent transcript scan; only the limits probe must be fresh")
-  parser.add_argument("--cache-seconds", type=float, default=20)
-  args = parser.parse_args()
+def default_config_dir() -> Path:
+  return expand_path("~/.claude")
 
-  claude_dir = config_dir()
-  scan_age = 0 if args.force else (900 if args.limits_only else args.cache_seconds)
+
+def discover_accounts() -> list[Path]:
+  found = [default_config_dir(), config_dir()]
+  for candidate in sorted(Path.home().glob(".claude-*")):
+    # ~/.claude-credentials.json.backup-* sits beside the dirs; only a
+    # directory carrying a credential file is a login.
+    if candidate.is_dir() and (candidate / ".credentials.json").exists():
+      found.append(candidate.resolve())
+  unique: list[Path] = []
+  for path in found:
+    if path not in unique:
+      unique.append(path)
+  return unique
+
+
+# The account's own profile, which is NOT inside the default dir: Claude Code
+# keeps ~/.claude.json beside ~/.claude when CLAUDE_CONFIG_DIR is unset, and
+# <dir>/.claude.json when it is set. Only a display name leaves this function
+# — the email and org stay in the profile, the same way only the plan label
+# leaves oauth_login().
+def account_name(claude_dir: Path) -> str:
+  profile = Path.home() / ".claude.json" if claude_dir == default_config_dir() else claude_dir / ".claude.json"
+  try:
+    login = json.loads(profile.read_text(encoding="utf-8")).get("oauthAccount") or {}
+  except Exception:
+    login = {}
+  name = str(login.get("displayName") or "").strip()
+  if name:
+    return name
+  email = str(login.get("emailAddress") or "")
+  if "@" in email:
+    return email.split("@", 1)[0]
+  suffix = claude_dir.name.removeprefix(".claude").lstrip("-_.")
+  return suffix.capitalize() if suffix else "Default"
+
+
+def account_stats(claude_dir: Path, scan_age: float) -> dict[str, Any]:
   stats = cached_scan(claude_dir / "projects", scan_age)
-
   if number(stats.get("totalPrompts")) <= 0:
     fallback = stats_cache_fallback(claude_dir)
     if fallback is not None:
@@ -874,6 +925,47 @@ def main() -> int:
       today_prompts, today_sessions = today_prompts_from_history(claude_dir)
       if today_prompts or today_sessions:
         stats = dict(stats, todayPrompts=today_prompts, todaySessions=today_sessions)
+  return stats
+
+
+# -------------------------------------------------------------------- record
+
+
+def main() -> int:
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--force", action="store_true", help="rescan transcripts and re-probe limits, ignoring caches")
+  parser.add_argument("--limits-only", action="store_true", help="reuse any recent transcript scan; only the limits probe must be fresh")
+  parser.add_argument("--cache-seconds", type=float, default=20)
+  args = parser.parse_args()
+
+  scan_age = 0 if args.force else (900 if args.limits_only else args.cache_seconds)
+
+  # Usage is summed across accounts — the panel's model breakdown and busiest
+  # day are per agent — while plan and limits stay per account, because those
+  # are what actually differ between two logins.
+  stats: dict[str, Any] | None = None
+  accounts = []
+  for claude_dir in discover_accounts():
+    one = account_stats(claude_dir, scan_age)
+    stats = one if stats is None else merge_stats(stats, one)
+    access_token, expires_at_ms, plan = oauth_login(claude_dir)
+    limits = collect_limits(claude_dir, access_token, expires_at_ms, args.force)
+    account = {
+      "id": hashlib.sha1(str(claude_dir).encode("utf-8")).hexdigest()[:12],
+      "name": account_name(claude_dir),
+      # Matched against the CLAUDE_CONFIG_DIR of each live claude process —
+      # that is how the panel knows which account a running session is on.
+      "home": str(claude_dir),
+      "isDefault": claude_dir == default_config_dir(),
+      "tierLabel": plan,
+      "usageStatusText": limits["usageStatusText"],
+      "authHelpText": limits["authHelpText"],
+      "limits": limits["limits"],
+    }
+    if limits.get("retryAdvised"):
+      account["retryAdvised"] = True
+    accounts.append(account)
+  stats = stats or {}
 
   pi_usage = scan_pi_usage(scan_age)
   if pi_usage is not None:
@@ -883,22 +975,24 @@ def main() -> int:
   if opencode is not None:
     stats = merge_stats(stats, opencode)
 
-  access_token, expires_at_ms, plan = oauth_login(claude_dir)
-  limits = collect_limits(access_token, expires_at_ms, args.force)
-
+  # The top-level plan and limits stay the default account's, so a reader
+  # that predates accounts[] still gets the record it always did.
+  primary = accounts[0]
   record = {
     "schemaVersion": 1,
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-    "ready": number(stats.get("totalPrompts")) > 0 or len(limits["limits"]) > 0,
+    "ready": number(stats.get("totalPrompts")) > 0 or any(a["limits"] for a in accounts),
     "hasLocalStats": True,
-    "tierLabel": plan,
-    "usageStatusText": limits["usageStatusText"],
-    "authHelpText": limits["authHelpText"],
-    "limits": limits["limits"],
+    "tierLabel": primary["tierLabel"],
+    "usageStatusText": primary["usageStatusText"],
+    "authHelpText": primary["authHelpText"],
+    "limits": primary["limits"],
+    "accountEnv": "CLAUDE_CONFIG_DIR",
+    "accounts": accounts,
   }
-  if limits.get("retryAdvised"):
+  if any(a.get("retryAdvised") for a in accounts):
     record["retryAdvised"] = True
   record.update(stats)
   print(json.dumps(record, separators=(",", ":"), sort_keys=True))

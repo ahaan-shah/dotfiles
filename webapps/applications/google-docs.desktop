@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Google Docs
+Exec=chromium --app=https://docs.google.com/
+StartupWMClass=chrome-docs.google.com__-Default
+Icon=/home/USER/.local/share/icons/webapps/google-docs.svg
+Type=Application
+Categories=Network;
+Keywords=google-docs;webapp;

@@ -10,6 +10,9 @@
 #       DEFAULT_TERMINAL  DEFAULT_EDITOR  DEFAULT_PDF
 #       DOCK_AUTOHIDE (overlap|always)  DOCK_POSITION (bottom|left|right)
 #       SWITCHER_SPECIAL (on|off)
+#       AI_ENABLED       (on|off)  — Settings -> AI; off disables EVE entirely
+#       AI_MODEL         (sonnet|haiku|opus) — Settings -> AI -> Model; which
+#                        Claude EVE talks to
 #
 # ── Why a plain file, and why this one ────────────────────────────────────
 # Six different things need to agree on these values: the four Quickshell
@@ -41,7 +44,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/ui.conf"
 
 die() { echo "ui-prefs: $*" >&2; exit 1; }
 
-VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP DEFAULT_PDF DOCK_AUTOHIDE DOCK_POSITION SWITCHER_SPECIAL"
+VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP DEFAULT_PDF DOCK_AUTOHIDE DOCK_POSITION SWITCHER_SPECIAL AI_ENABLED AI_MODEL"
 
 # ── store ────────────────────────────────────────────────────────────────
 
@@ -446,6 +449,10 @@ case "$cmd" in
             DOCK_*) die "bad value for $key: $val" ;;
             SWITCHER_SPECIAL=on|SWITCHER_SPECIAL=off) ;;
             SWITCHER_SPECIAL=*) die "bad value for $key: $val" ;;
+            AI_ENABLED=on|AI_ENABLED=off) ;;
+            AI_ENABLED=*) die "bad value for $key: $val" ;;
+            AI_MODEL=sonnet|AI_MODEL=haiku|AI_MODEL=opus) ;;
+            AI_MODEL=*) die "bad value for $key: $val" ;;
         esac
         pref_set "$key" "$val"
         case "$key" in

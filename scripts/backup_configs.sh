@@ -49,6 +49,16 @@ EXCLUDES=(
     --exclude '*.log'
     --exclude '.git'
     --exclude 'config.toml.bak-*'
+    # Python's compiled caches: build output, and they embed the absolute
+    # path of the source they came from. jarvis/ is the first Python tree
+    # mirrored (2026-10-20), and its __pycache__ carried /home/<user> in
+    # every .pyc.
+    --exclude '__pycache__/'
+    # A handoff is a working write-up of THIS machine — hardware, power
+    # states, measured timings, what is deployed where. Ahaan, 2026-10-20:
+    # "exclude handoff.md cuz it has system info". It stays in the source
+    # repo, which is never mirrored.
+    --exclude 'HANDOFF.md'
 )
 
 sync() {
@@ -80,6 +90,13 @@ sync "$HOME/.config/hypr"        "$DOTDIR/hypr"
 # directory it is no longer asked about.
 sync "$HOME/.config/shell"       "$DOTDIR/shell"
 sync "$HOME/.config/lockscreen"  "$DOTDIR/lockscreen"
+# EVE's back end (since 2026-10-20): chat.py, which the shell's Settings -> AI
+# pill runs, plus the old local planner it borrows its file opener from.
+# Without it a fresh machine gets EVE's pill and nothing behind it. It holds
+# no account data: chat.py runs the `claude` CLI, which reads whoever is
+# logged in on THAT machine from its own ~/.claude — never mirrored. Checked
+# for tokens, emails and session ids before it was added here.
+sync "$HOME/.config/jarvis"      "$DOTDIR/jarvis"
 sync "$HOME/.config/kitty"       "$DOTDIR/kitty"
 sync "$HOME/.config/cava"        "$DOTDIR/cava"
 sync "$HOME/.config/fastfetch"   "$DOTDIR/fastfetch"

@@ -54,6 +54,14 @@ QtObject {
     // always had. "on": it lists them, and choosing one moves it to the
     // current workspace rather than following it into the special one.
     property string switcherSpecial: "off"
+    // The AI assistant's master switch (Settings -> AI, 2026-10-06). "on" is
+    // the default so a machine with no ui.conf behaves as before; "off" makes
+    // JarvisState refuse to open and close any open pill. Since 2026-10-20 it
+    // is only that: EVE is Claude, so there is no local model to load.
+    property string aiEnabled: "on"
+    // Which Claude EVE talks to (Settings -> AI -> Model, 2026-10-20):
+    // "sonnet", "haiku" or "opus" — jarvis/chat.py maps them to model ids.
+    property string aiModel: "sonnet"
 
     // What the dock actually uses: anything but the three known edges reads as
     // the bottom, so a hand-edit typo cannot park the dock off every edge.
@@ -140,7 +148,9 @@ QtObject {
             "DEFAULT_EDITOR":   "editor",
             "DOCK_AUTOHIDE":    "dockHide",
             "DOCK_POSITION":    "dockPosition",
-            "SWITCHER_SPECIAL": "switcherSpecial"
+            "SWITCHER_SPECIAL": "switcherSpecial",
+            "AI_ENABLED":       "aiEnabled",
+            "AI_MODEL":         "aiModel"
         }
         const lines = String(raw).split("\n")
         for (let i = 0; i < lines.length; i++) {

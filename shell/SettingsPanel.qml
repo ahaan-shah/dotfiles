@@ -787,6 +787,7 @@ Rectangle {
                         Layout.preferredWidth: Theme.iconSlot
                         Layout.preferredHeight: Theme.iconSlot
                         Text {
+                            id: rowIcon
                             anchors.centerIn: parent
                             text: row.modelData.icon || ""
                             // Dimmer than the label: the icon locates the row,
@@ -812,6 +813,12 @@ Rectangle {
                             // family; an empty string means the usual one.
                             font.family: row.modelData.iconFont ? row.modelData.iconFont : Theme.font
                             font.pixelSize: 17
+                            // Upside down for the glyphs Settings.flippedGlyphs
+                            // names (the dock: its bar belongs at the bottom).
+                            transform: Scale {
+                                origin.y: rowIcon.height / 2
+                                yScale: Settings.glyphFlipped(row.modelData.icon || "") ? -1 : 1
+                            }
                         }
                     }
 

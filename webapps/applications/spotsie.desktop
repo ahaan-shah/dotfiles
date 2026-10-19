@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Spotsie
+GenericName=Music Player
+Comment=A native Spotify client
+Exec=/home/USER/.local/lib/spotsie/spotsie %u
+Terminal=false
+Categories=AudioVideo;Audio;Player;Music;
+Keywords=spotify;music;player;streaming;spotsie;
+Icon=spotsie
+StartupNotify=true
+StartupWMClass=spotsie
+MimeType=x-scheme-handler/spotify;

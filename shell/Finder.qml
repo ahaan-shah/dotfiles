@@ -1015,6 +1015,15 @@ Item {
             if (passwordPrompt.flow === "polkit") { root.close(); return }
             const pending = root.pendingVerify
             root.pendingVerify = ""
+            // jarvis's delete: the box was raised from the bar, not from the
+            // settings menu, so there is no menu to go back to and no next box
+            // being raised — close, then hand the verdict over.
+            if (pending.startsWith("jarvis:")) {
+                root.close()
+                if (ok) Settings.verified(pending)
+                else JarvisState.passwordCancelled()
+                return
+            }
             if (ok && pending !== "") {
                 // A verify-only password. Nothing ran; Settings decides what
                 // it unlocked, and that raises whatever box comes next — so
@@ -1042,7 +1051,9 @@ Item {
             // first and then tested the cleared value, so the branch below was
             // dead and a cancelled verify always closed finder.
             const wasVerify = root.pendingVerify !== ""
+            const wasJarvis = root.pendingVerify.startsWith("jarvis:")
             root.pendingVerify = ""
+            if (wasJarvis) { root.close(); JarvisState.passwordCancelled(); return }
             // A cancelled verify goes BACK to the menu rather than closing
             // finder outright: Fingerprints is three pages in, and changing
             // your mind about a password should not cost that walk. The other
@@ -1120,6 +1131,9 @@ Item {
         // Same box again, verifying only — see PasswordPrompt's flow notes.
         function onVerifyRequired(reason, action) {
             root.pendingVerify = action
+            // Every other verify comes from the settings menu, which is already
+            // open; jarvis's comes from the bar with finder closed.
+            if (!root.shown) { root.query = ""; root.shown = true }
             root.mode = "password"
             passwordPrompt.beginVerify(reason)
             inputFocusTimer.start()
