@@ -1,14 +1,14 @@
 # hyprahaan
 
-Hey. Hi. Okay, so, you found my desktop. Sorry about the mess. Actually no, it's not a mess, it's really nice, I've just been up very late with it.
+A whole desktop for Arch and Hyprland: bar, dock, launcher, panels, lock screen and an AI assistant, all matching, all one line away.
 
-This is my Arch + Hyprland setup, and it's yours now if you want it. Take all of it with one line, or poke around and steal the one thing you liked. No hard feelings either way. I'm just your friendly neighborhood dotfiles guy.
+I spent way too many late nights getting this exactly right, so you don't have to. Install the whole thing, or just steal the parts you like. I won't tell anyone.
 
-## Thirty seconds, no commitment
+## Preview
 
-<a href="docs/preview.mp4"><img src="docs/preview.webp" alt="A 30 second tour: switching to Tokyo Night live, terminals in tiling, scrolling and floating layouts, the panels, the centre island, the settings menu and About" width="100%"></a>
+<a href="docs/preview.mp4"><img src="docs/preview.webp" alt="A tour of the shell" width="100%"></a>
 
-*That's the whole shell, no cuts, just sped up a touch. [Here's the sharp 1080p version](docs/preview.mp4), which you can pause when I go too fast. Which I do. People have mentioned it.*
+[Watch it in full quality](docs/preview.mp4)
 
 ## Okay but what is it
 
