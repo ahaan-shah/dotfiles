@@ -2183,8 +2183,14 @@ phase_verify() {
     # Asked of sudo, the thing that decides, and with -n, because the lock screen
     # has nobody to answer a prompt. Absent, the lock still works and USB stays
     # open with no error anywhere, so this is the only place it would show.
-    if sudo -n -l /usr/local/bin/hyprahaan-usb-lock lock >/dev/null 2>&1 && \
-       sudo -n -l /usr/local/bin/hyprahaan-usb-lock unlock >/dev/null 2>&1; then
+    # Read from the rule list, NOT `sudo -n -l <cmd>`: that answers "permitted", and
+    # wheel's password rule permits everything, so it passed for /usr/bin/true too
+    # (measured 2026-11-06) and would have passed with this rule missing. Captured
+    # first, then grepped: never producer | grep -q under pipefail.
+    local usb_rules
+    usb_rules=$(sudo -n -l 2>/dev/null) || usb_rules=""
+    if grep -Eq 'NOPASSWD:.*/usr/local/bin/hyprahaan-usb-lock lock(,|$)' <<<"$usb_rules" && \
+       grep -Eq 'NOPASSWD:.*/usr/local/bin/hyprahaan-usb-lock unlock(,|$)' <<<"$usb_rules"; then
         ok "the lock screen can block new USB"
     else
         bad "hyprahaan-usb-lock is not usable without a password — USB stays open while locked"
