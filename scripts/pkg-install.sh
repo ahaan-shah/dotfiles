@@ -108,6 +108,11 @@ _install() {
 
 if [[ ${1:-} == --inner ]]; then shift; _install "$@"; exit; fi
 
+# --query NAME (2026-10-26): the picker opens with NAME already typed. EVE's
+# `system` tool uses it, so Ahaan still sees the list and picks with Enter
+# himself — the name is a search, never an install on its own say-so.
+if [[ ${1:-} == --query && -n ${2:-} ]]; then fzf_args+=(--query "$2"); fi
+
 selected=$(pacman -Slq | fzf "${fzf_args[@]}")
 
 [ -z "$selected" ] && exit 0

@@ -47,19 +47,25 @@ Scope {
         target: "jarvis"
         function open(): void { JarvisState.open(false, false) }
         function fresh(): void { JarvisState.open(false, true) }
-        function voice(): void { JarvisState.open(true, false) }
+        // SUPER+A: JarvisState.listen says what each press does.
+        function voice(): void { JarvisState.listen() }
         function close(): void { JarvisState.prompting ? JarvisState.cancel() : JarvisState.dismiss() }
         function peek(): void { JarvisState.orbClicked() }
+        // SUPER+ALT+E: the selected text into a new conversation.
+        function selection(): void { JarvisState.sendSelection() }
         // For driving it with no keyboard — which is how a repo instance gets
         // exercised before anything is deployed (CLAUDE.md step 2).
         function ask(text: string): void { JarvisState.open(false, false); askTimer.text = text; askTimer.restart() }
         function allow(): void { JarvisState.allow() }
         function deny(): void { JarvisState.deny() }
+        function interrupt(): void { JarvisState.interrupt() }
         function state(): string {
             return JSON.stringify({ phase: JarvisState.phase, prompting: JarvisState.prompting,
                                     mood: JarvisState.mood, queue: JarvisState.queue,
                                     card: JarvisState.card, expanded: JarvisState.expanded,
                                     interactive: JarvisState.interactive,
+                                    hidden: JarvisState.hidden, resting: JarvisState.resting,
+                                    orb: JarvisState.orbVisible,
                                     session: JarvisState.sessionId, title: JarvisState.sessionTitle,
                                     model: JarvisState.model, sessions: JarvisState.sessions.length })
         }
@@ -110,11 +116,16 @@ Scope {
             Item { id: everywhere; anchors.fill: parent }
 
             // ── geometry ────────────────────────────────────────────────
-            readonly property real zone: 44
+            readonly property real zone: 42   // Bar.qml's root.barZone
             readonly property real pillW: Theme.cardWidth
             readonly property real pillH: 26 + Theme.pad * 2
-            readonly property real cx: width / 2
-            readonly property real cy: zone + (height - zone) / 2
+            // Centred in the screen less the bar's zone, on whichever edge
+            // the bar is (UiConfig.barEdge, Settings -> Shell -> Bar).
+            // Always hide reserves nothing: centred on the whole screen then.
+            readonly property string barEdge: UiConfig.barAutohide === "on" ? "none" : UiConfig.barEdge
+            readonly property real cx: barEdge === "left"  ? zone + (width - zone) / 2
+                                     : barEdge === "right" ? (width - zone) / 2 : width / 2
+            readonly property real cy: barEdge === "top" ? zone + (height - zone) / 2 : height / 2
             readonly property real orbInPill: 20               // the orb's size sitting in the pill
             readonly property real orbBall: 30                 // and once the card has folded round it
             readonly property real circle: 46                  // the folded card's diameter
@@ -192,12 +203,37 @@ Scope {
                 visible: opacity > 0.001
                 // A click on the pill takes the keyboard back, to resume typing.
                 MouseArea { anchors.fill: parent; onPressed: input.forceActiveFocus() }
+                // Files dropped on the pill go with the message
+                // (JarvisState.attachments); a dragged link goes in as text.
+                DropArea {
+                    anchors.fill: parent
+                    enabled: win.prompting
+                    onEntered: drag => { drag.accepted = drag.hasUrls || drag.hasText }
+                    onDropped: drop => {
+                        const files = (drop.urls || []).map(String).filter(u => u.startsWith("file://"))
+                        if (files.length) JarvisState.attach(files)
+                        else if (drop.hasUrls && drop.urls.length) input.insert(input.cursorPosition, String(drop.urls[0]))
+                        else if (drop.hasText) input.insert(input.cursorPosition, drop.text)
+                        input.forceActiveFocus()
+                    }
+                }
+                // What is attached, at the pill's right end; the text gives
+                // way to it.
+                EveAttachments {
+                    id: pillAttach
+                    anchors.right: parent.right
+                    anchors.rightMargin: Theme.pad
+                    y: (card.h - height) / 2
+                    maxW: win.pillW * 0.45
+                    maxChips: 2
+                    opacity: input.opacity
+                }
 
                 TextInput {
                     id: input
                     x: Theme.pad + win.orbInPill + 12
                     y: (card.h - height) / 2
-                    width: win.pillW - x - Theme.pad
+                    width: win.pillW - x - Theme.pad - (pillAttach.visible ? pillAttach.width + 10 : 0)
                     height: 26
                     verticalAlignment: TextInput.AlignVCenter
                     font.family: Theme.font
@@ -210,6 +246,14 @@ Scope {
                     // typing it in; see waitVoice below.
                     onAccepted: win.listOpen ? win.pick(win.listSel) : win.send()
                     Keys.onEscapePressed: win.listOpen ? (win.listOpen = false) : JarvisState.cancel()
+                    // Ctrl+V: a copied image or file attaches, text pastes
+                    // (JarvisState.paste). Backspace on empty drops the last.
+                    Keys.onPressed: event => {
+                        if (event.matches(StandardKey.Paste)) { JarvisState.paste(input); event.accepted = true }
+                        else if (event.key === Qt.Key_Backspace && input.text === "" && JarvisState.attachments.length) {
+                            JarvisState.detach(-1); event.accepted = true
+                        }
+                    }
                     Keys.onDownPressed: {
                         if (!win.listOpen) {
                             JarvisState.listSessions()
@@ -231,6 +275,7 @@ Scope {
                         color: Theme.dimmer
                         visible: input.text.length === 0
                         text: !JarvisState.voice ? win.hint
+                            : JarvisState.voxOff ? "Voice typing is off (Settings, Tools)"
                             : JarvisState.voxState === "recording" ? "Listening…"
                             : JarvisState.voxState === "transcribing" ? "Writing it down…"
                             : win.hint
@@ -381,7 +426,10 @@ Scope {
             // A layer surface is not reliably focusable on the frame it maps;
             // the launcher and the reminder prompt both retry, and so does this.
             onPromptingChanged: {
-                if (prompting) { input.text = ""; newHint(); m = 0; f = 0; focusTimer.tries = 0; focusTimer.start() }
+                // A draft is "Continue on the web"'s request, put here to be
+                // read and sent by hand (JarvisState.continueOnWeb).
+                if (prompting) { input.text = JarvisState.draft; JarvisState.draft = ""; input.cursorPosition = input.text.length
+                                 newHint(); m = 0; f = 0; focusTimer.tries = 0; focusTimer.start() }
                 listOpen = false
             }
             Timer {
@@ -393,8 +441,9 @@ Scope {
                     if (input.activeFocus || ++tries > 12) {
                         stop()
                         // voxtype types into whatever holds the keyboard, so it
-                        // only starts once the pill demonstrably does.
-                        if (JarvisState.voice && input.activeFocus) JarvisState.startVoice()
+                        // only starts once the pill demonstrably does. There is
+                        // one of these per screen, and only this screen's counts.
+                        if (JarvisState.voice && win.onThisScreen && input.activeFocus) JarvisState.startVoice()
                     }
                 }
             }
@@ -414,6 +463,11 @@ Scope {
                 target: JarvisState
                 function onVoxStateChanged() {
                     if (win.waitVoice && JarvisState.voxState === "idle") voiceSettle.restart()
+                    // Dictating onto words already in the pill: voxtype would
+                    // type the new ones hard against the last.
+                    if (JarvisState.voice && JarvisState.voxState === "recording" && win.onThisScreen
+                            && input.text !== "" && !/\s$/.test(input.text))
+                        input.insert(input.cursorPosition, " ")
                 }
             }
             Timer {

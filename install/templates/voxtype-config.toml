@@ -14,7 +14,11 @@ modifiers = []
 [audio]
 device = "default"
 sample_rate = 16000
-max_duration_secs = 60
+# voxtype's stock safety limit was 60. SUPER+A dictates whole requests to EVE,
+# so 5 min (2026-11-05, Ahaan). At the limit it transcribes what it has, it does
+# not discard. 5 min of pink noise on Parakeet int8, whole file: 3.3 GB peak and
+# 104 s to transcribe (measured). So a long take waits about that for its text.
+max_duration_secs = 300
 
 [whisper]
 model = "base.en"

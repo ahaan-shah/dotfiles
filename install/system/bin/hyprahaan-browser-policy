@@ -1,0 +1,76 @@
+#!/bin/bash
+# hyprahaan-browser-policy <rrggbb|none> — the privileged half of palette.sh's
+# browser retint. Installed root:root 755 at /usr/local/bin by install.sh's
+# system phase, and run through the NOPASSWD rule in
+# install/system/sudoers.d/hyprahaan-browser-policy.
+#
+# ── Why root writes this, and why it takes only a colour ─────────────────
+# BrowserThemeColor is a MANAGED policy, so it lives under /etc. The first cut
+# (6995d0c) handed the policy file to the user so palette.sh could write it
+# without sudo — which let anything running as the user put ANY Chromium
+# policy in it (force-installed extensions, a proxy), locked so the browser's
+# own settings cannot undo it. Same shape as omarchy's
+# omarchy-theme-set-browser-policy, which this follows: the file stays root's,
+# and the only thing a user process can choose is a colour. The caller never
+# names a path or a key; six hex digits or the word `none` is the whole input.
+#
+# `none` REMOVES the file, leaving the browser in exactly the policy state it
+# ships in. palette.sh never sends it (it always has a background to send);
+# it is the by-hand undo:  sudo hyprahaan-browser-policy none   The hex is
+# passed without its "#" because "#" opens a comment in sudoers, and keeping it
+# out of argv lets the rule spell the argument as a plain glob.
+set -euo pipefail
+
+# sudo's secure_path already does this, but the script must not depend on how
+# it was reached: nothing it calls may resolve out of a user-writable dir. The
+# shebang is /bin/bash for the same reason — `env bash` would look bash up on
+# PATH before this line could pin it. umask so nothing is created group- or
+# world-writable whatever the caller's was.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+umask 022
+
+# Fixed here, never taken from the caller. Edge is deliberately absent
+# (Ahaan, 2026-10-29), and Chrome is not installed on this machine.
+POLICY_DIRS=(
+    /etc/chromium/policies/managed
+    /etc/brave/policies/managed
+)
+
+die() { echo "hyprahaan-browser-policy: $*" >&2; exit 1; }
+
+[ $# -eq 1 ] || die "usage: hyprahaan-browser-policy <rrggbb|none>"
+case "$1" in
+    none) json='' ;;
+    *)
+        [[ $1 =~ ^[0-9a-f]{6}$ ]] || die "expected six lowercase hex digits or 'none', got '$1'"
+        json="{ \"BrowserThemeColor\": \"#$1\" }"
+        ;;
+esac
+[ "$(id -u)" -eq 0 ] || die "must run as root (through sudo)"
+
+staged=""
+trap '[ -z "$staged" ] || rm -f "$staged"' EXIT
+
+failed=0
+for dir in "${POLICY_DIRS[@]}"; do
+    # Only a browser install.sh set up has a directory. Creating one here
+    # would hand a browser a managed-policy root it does not otherwise have.
+    [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    dest="$dir/hyprahaan-theme.json"
+    if [ -z "$json" ]; then
+        # -f on a symlink removes the link, never its target.
+        rm -f -- "$dest" || { echo "hyprahaan-browser-policy: cannot remove $dest" >&2; failed=1; }
+        continue
+    fi
+    staged="$(mktemp)"
+    printf '%s\n' "$json" > "$staged"
+    # A symlink planted at the destination would otherwise be followed.
+    [ -L "$dest" ] && rm -f -- "$dest"
+    # -T: dest is a file, never "into a directory of that name".
+    if ! install -m 0644 -o root -g root -T "$staged" "$dest"; then
+        echo "hyprahaan-browser-policy: cannot write $dest" >&2
+        failed=1
+    fi
+    rm -f "$staged"; staged=""
+done
+exit "$failed"

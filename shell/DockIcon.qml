@@ -17,6 +17,12 @@ Item {
     // to decide which way the toggle goes; nothing about the icon is drawn
     // differently, exactly as on macOS.
     property bool   isPinned:    false
+    // The Downloads stack slot: a click opens its popup instead of launching or
+    // focusing anything, it cannot be pinned or picked up, and `badge` is the
+    // number of files that arrived since it was last opened.
+    property bool   stack:       false
+    property int    badge:       0
+    signal stackRequested()
 
     // Right-click. Handled by the parent Dock, which owns the pin store and the
     // slot order the store is written from.
@@ -264,17 +270,17 @@ Item {
             // pin with an absolute path (the webapps) draws correctly at once.
             readonly property bool _premature: !DesktopEntryCache.ready
                                                && String(source).startsWith("image://icon/")
-            visible: !_premature
+            visible: !_premature && !root.stack
         }
 
         // Fallback coloured tile with initial letter. A sibling of the Image,
         // not its child, since 2026-09-30: it has to show while the Image is
         // hidden, and a child of an invisible item is invisible too.
         Rectangle {
-            visible: iconImg._premature
+            visible: !root.stack && (iconImg._premature
                      || iconImg.status === Image.Error
                      || iconImg.status === Image.Null
-                     || (iconImg.status === Image.Ready && iconImg.paintedWidth <= 0)
+                     || (iconImg.status === Image.Ready && iconImg.paintedWidth <= 0))
             anchors.fill: parent
             radius: parent.width * 0.22
             // Deliberately NOT palette-driven, and so is the letter on it:
@@ -292,7 +298,163 @@ Item {
             }
         }
 
+        // ── The Downloads stack's face: a drawer ──────────────────
+        // At rest, a closed drawer front with a handle. Hovered, the front
+        // drops a touch and the newest three files rise out of it as sheets
+        // standing one behind the other: the newest in front and shortest,
+        // each behind it a step taller, square to the row. A click opens the
+        // popup.
+        //
+        // How it got here, all on 2026-10-29 with Ahaan: Papirus's blue
+        // download-folder icon; an always-on fan of the three MIME icons
+        // ("looks bad"); the same icons quarter-turned (one blur at 34px); a
+        // tilted pile of slips; then "three sheets that stack one behind the
+        // other ... horizontal, no tilt and a little space from the top edge
+        // of the dock". A cleanup pass then took OUT what read as noise when
+        // magnified on a grim capture: a white label tab on each sheet (the
+        // back two were cut in half by the sheet in front — "bubbles"), 1px
+        // highlight lines on every top edge, and a dark inner wall wider than
+        // the sheets that showed as slivers either side of them and as a grey
+        // block above the closed front.
+        //
+        // Geometry is in px of the 34px icon box, not fractions, and every
+        // moving edge is snapped to the half pixel (this panel is 2x), because
+        // fractional edges were rendering soft. The magnification Scale on
+        // iconItem still grows the whole drawer with everything else.
+        //
+        // Colours: the front is Theme.accent — the palette Settings -> Theme
+        // sets — darkening only slightly toward the bottom; it was a
+        // lighter(1.25)->darker(1.30) sweep that swung it into a colour of its
+        // own. A fill is where the accent is safe (see the running bar). Each
+        // sheet is its file type's colour, DownloadsStack.tint, the hues of the
+        // popup's MIME icons.
+        Item {
+            id: drawer
+            visible: root.stack
+            anchors.fill: parent
 
+            // 0 closed, 1 open. Open while the pointer is on this cell.
+            property real open: (root.stack && root._magnFactor > 0.35) ? 1 : 0
+            Behavior on open { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
+
+            readonly property color acc: Theme.accent
+            // The box is baseSize square; everything below is in its px.
+            readonly property real u: width / 34
+            function snap(v) { return Math.round(v * 2) / 2 }
+
+            // Sheets. Clipped 2px above the front's bottom edge, wherever the
+            // front is, so that no sheet ever hangs out under it — which they
+            // did, as an orange and a grey strip.
+            Item {
+                width:  drawer.width
+                height: front.y + front.height - 2 * drawer.u
+                clip: true
+
+                Repeater {
+                    model: root.stack ? DownloadsStack.files.slice(0, 3) : []
+
+                    Rectangle {
+                        id: sheet
+                        required property var modelData
+                        required property int index
+                        // index 0 is the newest: the front, shortest sheet.
+                        // Tops step 4px; the tallest stops 2px into the box,
+                        // which leaves a visible margin under the pill's top
+                        // edge even at full magnification. (Not named `top`:
+                        // Item declares that FINAL in Qt 6.12, and overriding
+                        // it fails the whole shell's load.)
+                        readonly property real openTop: [10, 6, 2][index] * drawer.u
+                        // Closed, the sheets already stand in a staircase, so
+                        // the space above the drawer holds the files rather
+                        // than nothing (Ahaan: "a little empty up here") — but
+                        // packed tighter than open, 2.5px steps against 4
+                        // (Ahaan: "a little closer together" at no hover).
+                        // Hover fans them out to the open steps.
+                        readonly property real restTop: [11, 8.5, 6][index] * drawer.u
+                        z: 3 - index
+                        x: 5 * drawer.u
+                        width:  24 * drawer.u
+                        height: 22 * drawer.u
+                        radius: 3 * drawer.u
+                        y: drawer.snap(sheet.restTop + (sheet.openTop - sheet.restTop) * drawer.open)
+                        antialiasing: true
+                        // A dark slot (last-horizon's color3/color8 are
+                        // #6B5E73/#584e51) sinks into the pill and the sheet
+                        // vanishes, as it did on screen; lifted until it reads.
+                        readonly property color base: DownloadsStack.tint(modelData.icon)
+                        color: Theme.lum(base) < 0.45 ? Qt.lighter(base, 1.6) : base
+                        // A hairline of the pill's own ground round each
+                        // sheet, so neighbours in similar palette tones still
+                        // read as separate sheets — the same cut-out the
+                        // badge uses, and in place of the highlight lines
+                        // the cleanup removed.
+                        border.width: 1
+                        border.color: Theme.bg
+                    }
+                }
+            }
+
+            // The front, over the sheets. It sits low in the box and drops
+            // 1.5px as the drawer opens. Centring it when closed was tried
+            // (2026-10-29) and Ahaan kept it low.
+            Rectangle {
+                id: front
+                z: 10
+                x: 2 * drawer.u
+                width:  30 * drawer.u
+                y: drawer.snap((15 + drawer.open * 1.5) * drawer.u)
+                height: 17 * drawer.u
+                radius: 5 * drawer.u
+                antialiasing: true
+                // Styled as one of this desktop's cards rather than a painted
+                // object: flat, the pill's ground lifted by a wash of the
+                // palette's text colour (opaque, a tint — it has to hide the
+                // sheets behind it), a quiet edge, and the accent only on the
+                // handle, the one small fill. It was an accent-filled
+                // gradient, which Ahaan found too loud: nothing else here is
+                // a block of accent, because the accent marks selection.
+                color: Qt.tint(Theme.bg, Theme.alpha(Theme.text, 0.13))
+                border.width: 1
+                border.color: Theme.alpha(Theme.text, 0.18)
+                // The handle.
+                Rectangle {
+                    x: drawer.snap((parent.width - width) / 2)
+                    y: drawer.snap((parent.height - height) / 2)
+                    width: 10 * drawer.u; height: 3 * drawer.u
+                    radius: height / 2
+                    antialiasing: true
+                    color: drawer.acc
+                }
+            }
+        }
+
+        // Count of new downloads. Inside iconItem so it grows with the icon,
+        // and inside its box — it hung 6px above it, into the pill's top
+        // margin. The palette's text colour, not the accent: the drawer front
+        // IS the accent, and an accent badge on it merged into one blob. A
+        // 2px ring of the pill's own ground cuts it out of whatever it sits
+        // on, which is how a badge stays legible over the sheets.
+        Rectangle {
+            visible: root.badge > 0
+            x: parent.width - width + 2
+            y: -1
+            width:  Math.max(15, badgeText.implicitWidth + 7)
+            height: 15
+            radius: height / 2
+            antialiasing: true
+            color:  Theme.text
+            border.width: 2
+            border.color: Theme.bg
+            Text {
+                id: badgeText
+                anchors.centerIn: parent
+                text: root.badge > 9 ? "9+" : root.badge
+                color: Theme.bg
+                font.family: Theme.font
+                font.pixelSize: 9
+                font.weight: Font.Bold
+            }
+        }
     }
 
     // ── Running indicator ─────────────────────────────────────────
@@ -373,7 +535,7 @@ Item {
         // fire in the middle of some other gesture.
         pressAndHoldInterval: 450
         onPressAndHold: mouse => {
-            if (root.separator || mouse.button !== Qt.LeftButton) return
+            if (root.separator || root.stack || mouse.button !== Qt.LeftButton) return
             // The release that ends a deliberate hold must not also launch the
             // app, whether or not the hold turned into a drag.
             root._suppressClick = true
@@ -410,6 +572,13 @@ Item {
             // The release that ends a drag also produces a click.
             if (root._suppressClick) {
                 root._suppressClick = false
+                return
+            }
+
+            if (root.stack) {
+                // Left opens the popup; middle goes straight to the folder.
+                if (mouse.button === Qt.LeftButton) root.stackRequested()
+                else if (mouse.button === Qt.MiddleButton) DownloadsStack.openFolder()
                 return
             }
 

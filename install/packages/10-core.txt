@@ -15,6 +15,11 @@ hyprsunset                # the taskbar's Display panel IS a hyprsunset front
                           #   there is no error path, because "not running"
                           #   is also the honest answer for "off".
 xdg-desktop-portal-hyprland
+xdg-terminal-exec         # how GLib (nautilus, gio open) finds a terminal for
+                          #   a Terminal=true app like nvim.desktop — its own
+                          #   fallback list has no kitty, so without this a
+                          #   text file double-clicked in nautilus opens
+                          #   nothing. ui-prefs.sh writes its xdg-terminals.list.
 xdg-user-dirs
 quickshell                # taskbar, macshell, finder, lockscreen all run on it
 qt5-wayland

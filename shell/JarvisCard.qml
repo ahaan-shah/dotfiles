@@ -26,6 +26,10 @@ Item {
     id: card
 
     property var r: JarvisState.current
+    // The conversation has read something local (chat.py's header): no
+    // remote image is loaded and no web link is clickable, because either
+    // would send whatever its URL spells out.
+    readonly property bool sealed: !!(r && r.sealed)
     readonly property string kind: r ? r.kind : ""
     property real maxHeight: 400
     readonly property real pad: 16
@@ -34,6 +38,59 @@ Item {
     // that can hold the keyboard).
     readonly property real inputRoom: kind === "reply" && r && !r.streaming ? 38 + 12 : 0
     readonly property real wantHeight: col.implicitHeight + pad * 2 + inputRoom
+
+    // A drop on the island while a finished reply is up: the reply box sits
+    // over this card's bottom strip, but it is drawn by the catcher window,
+    // whose input region has the island cut out — so a drag over the box
+    // arrives HERE, on the bar's surface. Same handling as the catcher's.
+    DropArea {
+        anchors.fill: parent
+        enabled: card.kind === "reply" && card.r && !card.r.streaming
+        onEntered: drag => { drag.accepted = drag.hasUrls || drag.hasText; JarvisState.dragOver = drag.accepted }
+        onExited: JarvisState.dragOver = false
+        onDropped: drop => { JarvisState.dragOver = false; card.dropped(drop) }
+    }
+    signal dropped(var drop)
+
+    // ── copying ─────────────────────────────────────────────────────────
+    // The reply's prose and code are read-only TextEdits, so a drag selects
+    // — but this card is drawn on the BAR's surface, which never holds the
+    // keyboard (the catcher does; Bar.qml jarvisCatch says why). So Ctrl+C
+    // never reached the selection: it went to the reply box, which had
+    // nothing selected, and nothing was copied. Now the catcher's keys copy
+    // JarvisState.selection on Ctrl+C, and a selection starting raises
+    // `selecting` so Bar.qml makes sure the keys are on the catcher at all.
+    //
+    // One selection at a time, across blocks: each block is its own
+    // TextEdit, and a drag in a second one does not clear the first unless
+    // focus moves — which a readOnly one may not take — so the card keeps
+    // the newest and deselects the one before. What is selected goes to
+    // JarvisState.selection, because the catcher cannot reach this card by
+    // id (it is inside the bar's per-screen Variants delegate).
+    property Item selBlock: null
+    signal selecting()
+    function selected(ed) {
+        if (ed.selectedText === "") {
+            if (selBlock === ed) { selBlock = null; JarvisState.selection = "" }
+            return
+        }
+        if (selBlock && selBlock !== ed) selBlock.deselect()
+        selBlock = ed
+        JarvisState.selection = ed.selectedText
+        selecting()
+    }
+    property bool copiedAll: false
+    Timer { id: copiedAllTimer; interval: 1500; onTriggered: card.copiedAll = false }
+    function copy(t, all) {
+        if (!t) return false
+        // wl-copy forks its own server and exits; execDetached is not a
+        // Process pipe, so the SIGPIPE rule does not bite.
+        Quickshell.execDetached(["wl-copy", "--", t])
+        if (all) { copiedAll = true; copiedAllTimer.restart() }
+        return true
+    }
+    // A new reply (or a new card) starts with nothing selected.
+    onRChanged: if (selBlock) { selBlock = null; JarvisState.selection = "" }
 
     Column {
         id: col
@@ -59,17 +116,43 @@ Item {
 
         // ── a reply ─────────────────────────────────────────────────────
         // What was asked, one line, so a reply read later still says what
-        // it answers.
-        Text {
+        // it answers. A finished reply also gets a "copy" at the right of
+        // that line for the whole answer, as Markdown, the way a code
+        // block's strip has one for its code (Ahaan, 2026-11-03: "allow me
+        // to copy text from eve's response"). Not while it streams: half an
+        // answer on the clipboard is a trap.
+        Item {
             id: asked
-            visible: card.kind === "reply" && !!card.r.query
+            readonly property bool hasQuery: card.kind === "reply" && (!!card.r.query || !!(card.r.attached && card.r.attached.length))
+            readonly property bool canCopy: card.kind === "reply" && !card.r.streaming && !!card.r.body
+            visible: hasQuery || canCopy
             width: parent.width
-            text: card.r && card.r.query ? "›  " + card.r.query : ""
-            elide: Text.ElideRight
-            maximumLineCount: 1
-            font.family: Theme.font
-            font.pixelSize: Theme.fsSub + 1
-            color: Theme.dimmer
+            height: askedText.implicitHeight
+            Text {
+                id: askedText
+                visible: asked.hasQuery
+                width: parent.width - (copyAll.visible ? copyAll.width + 12 : 0)
+                // Files sent with it follow the words, after a paperclip.
+                text: card.r ? "›  " + (card.r.query || "")
+                             + (card.r.attached && card.r.attached.length ? "   󰏢 " + card.r.attached.join(", ") : "") : ""
+                elide: Text.ElideRight
+                maximumLineCount: 1
+                font.family: Theme.font
+                font.pixelSize: Theme.fsSub + 1
+                color: Theme.dimmer
+            }
+            Text {
+                id: copyAll
+                visible: asked.canCopy
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: card.copiedAll ? "󰄬  copied" : "󰆏  copy"
+                font.family: Theme.font
+                font.pixelSize: Theme.fsSub
+                color: copyAllHov.hovered || card.copiedAll ? Theme.text : Theme.dimmer
+                HoverHandler { id: copyAllHov; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: card.copy(card.r.body, true) }
+            }
         }
         Flickable {
             id: replyFlick
@@ -77,7 +160,8 @@ Item {
             width: parent.width
             height: visible ? Math.min(replyCol.implicitHeight,
                                        Math.max(60, card.maxHeight - card.pad * 2 - card.inputRoom
-                                                - (asked.visible ? asked.height + col.spacing : 0))) : 0
+                                                - (asked.visible ? asked.height + col.spacing : 0)
+                                                - (webRow.visible ? webRow.height + col.spacing : 0))) : 0
             contentHeight: replyCol.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -111,9 +195,47 @@ Item {
                 color: Theme.alpha(Theme.text, 0.35)
             }
         }
+        // A sealed reply that needs the web ends with `WEB: <request>`
+        // (chat.py strips it into r.web): the request, whole, and a button
+        // that starts a NEW conversation with it in the pill. Shown in full
+        // so what would leave is read before it can be sent.
+        Rectangle {
+            id: webRow
+            visible: card.kind === "reply" && !card.r.streaming && !!card.r.web
+            width: parent.width
+            height: visible ? webCol.implicitHeight + 20 : 0
+            radius: 10
+            color: Qt.tint(Theme.bg, Theme.alpha(Theme.text, 0.055))
+            Column {
+                id: webCol
+                x: 14; y: 10
+                width: parent.width - 28
+                spacing: 8
+                Text {
+                    width: parent.width
+                    text: "󰖟  Needs the web — this conversation has read local files"
+                    font.family: Theme.font; font.pixelSize: Theme.fsSub
+                    color: Theme.dimmer
+                }
+                Text {
+                    width: parent.width
+                    text: card.r && card.r.web ? card.r.web : ""
+                    wrapMode: Text.Wrap
+                    textFormat: Text.PlainText
+                    font.family: Theme.font; font.pixelSize: Theme.fsRow
+                    color: Theme.text
+                }
+                CardButton {
+                    primary: true
+                    text: "Continue in a new conversation"
+                    onClicked: JarvisState.continueOnWeb(card.r.web)
+                }
+            }
+        }
 
         // ── manual mode: a command, yes or no ───────────────────────────
         Text {
+            id: askText
             visible: card.kind === "approve"
             width: parent.width
             text: card.r && card.r.msg ? card.r.msg : ""
@@ -126,6 +248,7 @@ Item {
             color: Theme.text
         }
         Rectangle {
+            id: cmdBox
             visible: card.kind === "approve"
             width: parent.width
             height: visible ? cmd.implicitHeight + 20 : 0
@@ -137,20 +260,85 @@ Item {
                 width: parent.width - 24
                 text: card.r && card.r.command ? card.r.command : ""
                 wrapMode: Text.WrapAnywhere
-                maximumLineCount: 8
+                // A write's diff needs room; a command or a path does not.
+                maximumLineCount: card.r && card.r.what === "write" ? 24 : 8
                 elide: Text.ElideRight
                 font.family: "monospace"
                 font.pixelSize: Theme.fsSub + 1
                 color: Theme.text
             }
         }
+        // A file read waiting on the yes shows what it is a yes TO: the
+        // screenshot that was taken, a PDF's first page, a text file's first
+        // lines (Ahaan, 2026-10-26). broker.py puts these in the ask; Claude
+        // has seen none of it — it gets the file only after the yes. The
+        // picture takes whatever height the card has left, fitted.
+        readonly property real peekRoom: Math.max(120, card.maxHeight - card.pad * 2 - askText.height
+                                                  - cmdBox.height - 30 - spacing * 3)
+        Item {
+            id: peekImg
+            readonly property string src: card.kind === "approve" && card.r && card.r.peekImage
+                                          ? "file://" + card.r.peekImage : ""
+            readonly property real aspect: pk.implicitHeight > 0 ? pk.implicitWidth / pk.implicitHeight : 1.6
+            readonly property real picW: Math.min(width, col.peekRoom * aspect)
+            visible: src !== ""
+            width: parent.width
+            height: visible ? (pk.status === Image.Ready ? picW / aspect : pk.status === Image.Error ? 0 : 140) : 0
+            Image {
+                id: pk
+                x: (parent.width - peekImg.picW) / 2
+                width: peekImg.picW; height: peekImg.picW / peekImg.aspect
+                source: peekImg.src
+                asynchronous: true
+                cache: false            // the same screenshot path never changes, but a PDF page might
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: 1400
+                smooth: true; mipmap: true
+                layer.enabled: true
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: peekMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                }
+            }
+            Rectangle {
+                id: peekMask
+                width: pk.width; height: pk.height
+                radius: 10
+                visible: false
+                layer.enabled: true
+            }
+        }
+        Rectangle {
+            visible: card.kind === "approve" && !!(card.r && card.r.peekText)
+            width: parent.width
+            height: visible ? Math.min(peekTxt.implicitHeight + 20, col.peekRoom) : 0
+            radius: 8
+            clip: true
+            color: Theme.alpha(Theme.text, 0.04)
+            Text {
+                id: peekTxt
+                x: 12; y: 10
+                width: parent.width - 24
+                text: card.r && card.r.peekText ? card.r.peekText : ""
+                wrapMode: Text.WrapAnywhere
+                textFormat: Text.PlainText
+                font.family: "monospace"
+                font.pixelSize: Theme.fsSub + 1
+                color: Theme.dim
+            }
+        }
         Item {
             visible: card.kind === "approve"
             width: parent.width
             height: visible ? 30 : 0
+            // No key hint here (Ahaan, 2026-10-21): the accent on the
+            // picked button is the only cue. Only the queue count is left.
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: (card.r && card.r.more > 0 ? card.r.more + " more waiting   ·   " : "") + "Ctrl+←  no   ·   Ctrl+→  yes"
+                text: card.r && card.r.privileged ? "Password box is open · Esc refuses"
+                    : card.r && card.r.more > 0 ? card.r.more + " more waiting" : ""
                 font.family: Theme.font
                 font.pixelSize: Theme.fsSub
                 color: Theme.dimmer
@@ -158,14 +346,28 @@ Item {
             Row {
                 anchors.right: parent.right
                 spacing: 8
+                visible: !(card.r && card.r.privileged)
+                // The accent marks the keyboard's pick, not a fixed default:
+                // it starts on Yes and follows Left/Right (Bar.qml's catcher).
                 CardButton {
+                    primary: JarvisState.approvePick === 0
                     text: "No"
-                    onClicked: JarvisState.deny()
+                    // A click moves the pick first, so the card fades out
+                    // with the answer given lit, not the keyboard's pick.
+                    onClicked: { JarvisState.approvePick = 0; JarvisState.deny() }
                 }
                 CardButton {
-                    primary: true
-                    text: "Yes, run it"
-                    onClicked: JarvisState.allow()
+                    primary: JarvisState.approvePick === 1
+                    text: card.r && card.r.yes ? card.r.yes : "Yes, run it"
+                    onClicked: { JarvisState.approvePick = 1; JarvisState.allow() }
+                }
+                // A read outside ~/EVE: the rest of that folder too, for this
+                // conversation (broker.may_read).
+                CardButton {
+                    visible: !!(card.r && card.r.always)
+                    primary: JarvisState.approvePick === 2
+                    text: card.r && card.r.always ? card.r.always : ""
+                    onClicked: { JarvisState.approvePick = 2; JarvisState.allow() }
                 }
             }
         }
@@ -212,6 +414,7 @@ Item {
     Component {
         id: proseBlock
         TextEdit {
+            id: prose
             readonly property var b: parent ? parent.modelData : null
             readOnly: true
             selectByMouse: true
@@ -219,12 +422,14 @@ Item {
             textFormat: TextEdit.RichText
             // The reply's files ride along with the colours: EveMarkdown
             // links any it finds in the prose.
-            text: b ? Md.html(b.md, Object.assign({ files: card.r && card.r.files ? card.r.files : {} }, card.colors)) : ""
+            text: b ? Md.html(b.md, Object.assign({ files: card.r && card.r.files ? card.r.files : {},
+                                                    sealed: card.sealed }, card.colors)) : ""
             font.family: Theme.font
             font.pixelSize: Theme.fsRow
             color: Theme.alpha(Theme.text, 0.92)
             selectionColor: Theme.alpha(Theme.accent, 0.45)
             onLinkActivated: link => card.follow(link)
+            onSelectedTextChanged: card.selected(prose)
             HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor }
         }
     }
@@ -246,12 +451,15 @@ Item {
         Item {
             id: ib
             readonly property var b: parent ? parent.modelData : null
-            readonly property string src: b ? card.imageSrc(b.url) : ""
-            readonly property bool local: src.startsWith("file://")
+            readonly property string want: b ? card.imageSrc(b.url) : ""
+            readonly property bool local: want.startsWith("file://")
+            // Sealed: a web image is not fetched at all, only named.
+            readonly property bool held: card.sealed && !local
+            readonly property string src: held ? "" : want
             readonly property real aspect: pic.implicitHeight > 0 ? pic.implicitWidth / pic.implicitHeight : 1.6
             readonly property real picW: Math.min(width, 380 * aspect)
             readonly property real picH: picW / aspect
-            implicitHeight: (pic.status === Image.Ready ? picH : pic.status === Image.Error ? 34 : 140)
+            implicitHeight: (held ? 34 : pic.status === Image.Ready ? picH : pic.status === Image.Error ? 34 : 140)
                             + (cap.visible ? cap.height + 6 : 0)
             height: implicitHeight
             function open() {
@@ -261,7 +469,7 @@ Item {
 
             // Loading: a panel-coloured block the size a picture usually is.
             Rectangle {
-                visible: pic.status === Image.Loading || pic.status === Image.Null
+                visible: !ib.held && (pic.status === Image.Loading || pic.status === Image.Null)
                 width: parent.width; height: 140
                 radius: 10
                 color: Qt.tint(Theme.bg, Theme.alpha(Theme.text, 0.055))
@@ -301,6 +509,16 @@ Item {
                 radius: 10
                 visible: false
                 layer.enabled: true
+            }
+            // Held back by the seal: what it is and where from, no click.
+            Text {
+                visible: ib.held
+                width: parent.width; height: 34
+                verticalAlignment: Text.AlignVCenter
+                text: "󰋩  " + (ib.b && ib.b.alt ? ib.b.alt : "image") + " — not loaded: this conversation has read local files"
+                elide: Text.ElideRight
+                font.family: Theme.font; font.pixelSize: Theme.fsSub + 1
+                color: Theme.dimmer
             }
             // Failed: say so, and keep it one click from the browser.
             Text {
@@ -392,6 +610,7 @@ Item {
                 font.pixelSize: Theme.fsSub + 2
                 color: Theme.text
                 selectionColor: Theme.alpha(Theme.accent, 0.45)
+                onSelectedTextChanged: card.selected(codeText)
             }
         }
     }

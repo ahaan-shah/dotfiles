@@ -86,18 +86,9 @@ sudo_prime() {
 # sudo_refresh — make sure the ticket is good RIGHT NOW, and if it is not, ask
 # here rather than letting the next command ask from inside its own output.
 #
-# Written after a VM install died like this, nine minutes into a 6.7 GB
-# download, in the middle of makepkg's output:
-#
-#   sudo: timed out reading password
-#   sudo: a password is required
-#   ==> WARNING: Failed to install built package(s).
-#   ✗ yay bootstrap failed
-#
-# makepkg -si runs `sudo pacman -U` itself, so the prompt appeared where
-# nobody was looking for it, waited out its own timeout, and took the whole
-# run down at phase 2 of 15. Call this before anything long that shells out
-# to a sudo this script does not own.
+# Call this before anything long that shells out to a sudo this script does not
+# own. Note what it cannot help with: `makepkg -si`, whose `sudo -k` ignores the
+# ticket and always prompts. See bootstrap_yay.
 sudo_refresh() {
     [ "$DRY_RUN" = 1 ] && return 0
     [ "$NO_ROOT" = 1 ] && return 0
@@ -116,7 +107,12 @@ ok()     { printf '  %s✓%s %s\n' "$C_GRN" "$C_RST" "$*"; _log_raw "OK    $*"; 
 warn()   { printf '  %s!%s %s\n' "$C_YLW" "$C_RST" "$*"; _log_raw "WARN  $*"; }
 err()    { printf '  %s✗%s %s\n' "$C_RED" "$C_RST" "$*" >&2; _log_raw "ERR   $*"; }
 skip()   { printf '  %s·%s %s\n' "$C_DIM" "$C_RST" "$*"; _log_raw "SKIP  $*"; }
-die()    { err "$*"; printf '\n%sInstall aborted.%s Log: %s\n' "$C_RED" "$C_RST" "$LOGFILE" >&2; exit 1; }
+die()    {
+    err "$*"
+    # Inside an isolated phase this ends the phase, not the install (run_phase).
+    [ -n "${IN_SUBSHELL_PHASE:-}" ] || printf '\n%sInstall aborted.%s Log: %s\n' "$C_RED" "$C_RST" "$LOGFILE" >&2
+    exit 1
+}
 
 # ── Dry run ───────────────────────────────────────────────────────────────
 # run  — a command with side effects. Printed but not executed under --dry-run.

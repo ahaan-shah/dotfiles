@@ -1,0 +1,7 @@
+# Lets palette.sh retint Chromium and Brave on a palette change without a
+# password prompt — it runs from the settings panel, with no terminal to ask in.
+# The grant is exactly one root-owned helper with exactly one argument shape:
+# six lowercase hex digits, or `none`. Anything else falls through to the
+# normal %wheel rule and asks for a password. See the helper for why the
+# policy file stays root's rather than the user's.
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/hyprahaan-browser-policy [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f], /usr/local/bin/hyprahaan-browser-policy none

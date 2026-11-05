@@ -1,11 +1,10 @@
-# AUR — the short list, built with yay (which the installer bootstraps).
+# AUR, built with yay (which the installer bootstraps), one at a time so a
+# package that fails to build costs that package and not the rest. Failures are
+# listed at the end of the run and in verify.
 #
-# Only what the desktop itself needs or the user explicitly wants on every
-# machine. Everything else that happens to be installed here (browsers,
-# spotify, editors, TUI toys) is deliberately NOT auto-installed: an AUR build
-# is slow, can fail, and is a personal choice. Install those afterwards with
-#     ~/.config/scripts/pkg-aur-install.sh
-# which is a fuzzy AUR search-and-install, themed from pywal.
+# Was deliberately four packages until 2026-11-05, when Ahaan asked for the new
+# machine to have "all the packages that I use", browsers included. The one
+# exception is 55-aur-heavy.txt.
 #
 # The "aur:" prefix is what read_manifest keys on, so one parser handles every
 # manifest in this directory.
@@ -16,3 +15,11 @@ aur:voxtype-bin           # CTRL+. push-to-talk dictation. -bin: prebuilt
                           # the source package rebuilt whisper.cpp on every update
 aur:localsend-bin         # the firewall phase opens TCP+UDP 53317 for it
 aur:neofetch              # dropped from the repos; ~/.config/neofetch is deployed
+aur:brave-bin             # youtube.desktop launches it
+aur:zen-browser-bin       # mimeapps.list: http, https, text/html
+aur:vscodium-bin
+aur:rstudio-desktop-bin
+aur:fum-bin               # ~/.config/fum is deployed
+aur:cliamp
+aur:clock-tui
+aur:nomacs

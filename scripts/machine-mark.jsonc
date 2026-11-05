@@ -1,0 +1,9 @@
+// Read by machine-mark.sh: the fastfetch modules the About sigil draws.
+// No "driverSpecific" on gpu — that reads through NVML and wakes the dGPU;
+// see the GPU note at the top of machine-mark.sh.
+{
+  "modules": [
+    "cpu", "gpu", "memory", { "type": "disk", "folders": "/" },
+    "display", "packages", "os", "kernel", "wm"
+  ]
+}

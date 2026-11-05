@@ -37,6 +37,9 @@ Item {
     // What Settings.verified() should be told once the password box accepts a
     // password in its verify-only flow. Empty for every other flow.
     property string pendingVerify: ""
+    // True while the box is answering EVE (JarvisState.privilegedRequested):
+    // the verdict goes back to EVE instead of to the settings menu.
+    property bool pendingEve: false
     property string query: ""
     property int selectedIndex: 0
     property var displayResults: []   // unified row list, see _rebuild()
@@ -1013,6 +1016,12 @@ Item {
             // polkit's flow answers to the agent, not to Settings: there is no
             // toggle to settle and nothing was run from here.
             if (passwordPrompt.flow === "polkit") { root.close(); return }
+            if (root.pendingEve) {
+                root.pendingEve = false
+                root.close()
+                JarvisState.privilegedDone(ok)
+                return
+            }
             const pending = root.pendingVerify
             root.pendingVerify = ""
             // jarvis's delete: the box was raised from the bar, not from the
@@ -1050,6 +1059,12 @@ Item {
             // Read it BEFORE clearing it — the first version of this cleared
             // first and then tested the cleared value, so the branch below was
             // dead and a cancelled verify always closed finder.
+            if (root.pendingEve) {
+                root.pendingEve = false
+                root.close()
+                JarvisState.privilegedDone(false)
+                return
+            }
             const wasVerify = root.pendingVerify !== ""
             const wasJarvis = root.pendingVerify.startsWith("jarvis:")
             root.pendingVerify = ""
@@ -1142,6 +1157,26 @@ Item {
             root.mode = "fingerprint"
             fingerprintPrompt.begin()
             inputFocusTimer.start()
+        }
+    }
+
+    // EVE's root actions (advanced mode): the same box, raised from the bar
+    // like jarvis's old delete was. The command comes from JarvisState's
+    // fixed table, not from Claude.
+    Connections {
+        target: JarvisState
+        function onPrivilegedRequested(reason, command) {
+            root.pendingVerify = ""
+            root.pendingEve = true
+            if (!root.shown) { root.query = ""; root.shown = true }
+            root.mode = "password"
+            passwordPrompt.begin("", reason, command)
+            inputFocusTimer.start()
+        }
+        function onPrivilegedCancel() {
+            if (!root.pendingEve) return
+            root.pendingEve = false
+            root.close()
         }
     }
 }

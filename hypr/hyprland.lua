@@ -107,6 +107,17 @@ local function wbool(key, fallback)
     return win[key] == "true"
 end
 
+-- The window mode: "floating", "tiling" or "scrolling", from the Window mode
+-- row of the same page and from SUPER+SHIFT+L. It was a bool, WIN_TILING_MODE,
+-- until scrolling became a third mode on 2026-10-29, and a window.conf written
+-- before then still says only that — read here so a tiled desktop stays tiled
+-- across the change. window-rules.sh drops the old key on its first write.
+-- Anything unrecognised is floating, this file's default before either existed.
+local winMode = win.WIN_WINDOW_MODE
+              or (win.WIN_TILING_MODE == "true" and "tiling")
+              or "floating"
+if winMode ~= "tiling" and winMode ~= "scrolling" then winMode = "floating" end
+
 
 ------------------------------------------------------------------
 -- KEYBIND OVERRIDES
@@ -402,8 +413,21 @@ hl.config({
         -- px below apply to the other three edges. A uniform number put the
         -- top gap at zone slack + gaps_out. The Window rules page still offers
         -- one number; window-rules.sh applies it the same way.
-        gaps_out         = { top = 0, right = wnum("WIN_GAPS_OUT", 5),
-                             bottom = wnum("WIN_GAPS_OUT", 5), left = wnum("WIN_GAPS_OUT", 5) },
+        --
+        -- "The top" means the bar's edge, which is a setting since 2026-10-31
+        -- (ui.conf BAR_POSITION: top, left or right; Settings -> Shell ->
+        -- Bar). Whichever edge the bar is on gets the 0; window-rules.sh's
+        -- apply_gaps is the live half of the same rule.
+        gaps_out         = (function()
+            local g = wnum("WIN_GAPS_OUT", 5)
+            local edge = ui.BAR_POSITION
+            -- Always hide reserves no zone: no edge is the bar's.
+            if ui.BAR_AUTOHIDE == "on" then edge = "none" end
+            return { top    = (edge ~= "left" and edge ~= "right" and edge ~= "none") and 0 or g,
+                     right  = edge == "right" and 0 or g,
+                     bottom = g,
+                     left   = edge == "left" and 0 or g }
+        end)(),
         border_size      = wnum("WIN_BORDER_SIZE", 2),
         -- col.active_border in hyprlang becomes a nested col table here.
         col = {
@@ -411,7 +435,10 @@ hl.config({
         },
         resize_on_border = true,
         allow_tearing    = false,
-        layout           = "dwindle",
+        -- Scrolling is Hyprland's built-in strip of columns. Floating keeps
+        -- dwindle too: a window SUPER+W drops out of floating tiles there,
+        -- as it always did. window-rules.sh applies the same mapping live.
+        layout           = (winMode == "scrolling") and "scrolling" or "dwindle",
     },
 
     decoration = {
@@ -563,14 +590,32 @@ hl.bind("ALT + F", hl.dsp.exec_cmd("echo \"open:filesearch\" | socat - UNIX-CONN
 -- EVE (shell/Jarvis.qml), Claude in a pill (since 2026-10-20; it was a local
 -- planner before). SUPER+SPACE starts a new conversation and SUPER+ALT+SPACE
 -- carries on the current one — swapped the same day, Ahaan: "I like super
--- space for new chats". The ALT bind took its key from voice input
--- (`ipc call jarvis voice` still works, unbound). Down in the pill lists the
+-- space for new chats". The ALT bind took its key from voice input, which is
+-- on SUPER+A since 2026-11-05 (below). Down in the pill lists the
 -- conversations to switch between. While she is busy the pill still opens,
 -- and what is sent waits its turn.
 -- desc: Asks EVE (Claude), new conversation
 hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call jarvis fresh"))
 -- desc: Asks EVE (Claude), same conversation
 hl.bind(mainMod .. " + ALT + SPACE", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call jarvis open"))
+-- Talk to EVE: the same pill in a new conversation, with voxtype listening and
+-- typing into it. Enter stops and sends; SUPER+A again stops, so the words can
+-- be read and edited first; Esc drops the lot (2026-11-05, Ahaan: "directly
+-- talk into claude"). The key was free; see the note on SUPER + A further down.
+-- desc: Talks to EVE (voice), new conversation
+hl.bind(mainMod .. " + A", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call jarvis voice"))
+-- Clicking the orb in the bar, from the keyboard (2026-11-05, Ahaan: to see her
+-- response). `peek` is the very function the orb's TapHandler calls, so the two
+-- cannot drift: it brings back a parked or resting reply, shows or hides the
+-- card during a run, and does nothing when there is no orb.
+-- desc: Shows or hides EVE's response
+hl.bind(mainMod .. " + SHIFT + A", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call jarvis peek"))
+-- The text selected anywhere (Wayland's primary selection; the clipboard if
+-- nothing is selected) goes to a new EVE conversation as an attachment, so
+-- "explain this" needs no copy and paste (2026-11-03). SUPER+E is the file
+-- manager; ALT on it was free.
+-- desc: Sends the selected text to EVE
+hl.bind(mainMod .. " + ALT + E", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call jarvis selection"))
 -- desc: Closes the focused window
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 -- desc: Toggles floating on the focused window
@@ -654,14 +699,18 @@ hl.bind("ALT + Alt_L",       hl.dsp.exec_cmd("echo \"confirm\" | socat - UNIX-CO
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
 -- desc: Resizes the window with the mouse
 hl.bind(mainMod .. " + R",         hl.dsp.window.resize(), { mouse = true })
--- SUPER + A removed: it ran ~/.config/scripts/hymission-fix.sh, which does
--- not exist (never written), and the hymission plugin is not loaded either.
--- The key was doing nothing at all. No plugin is loaded now.
+-- SUPER + A's old bind removed: it ran ~/.config/scripts/hymission-fix.sh, which
+-- does not exist (never written), and the hymission plugin is not loaded either.
+-- The key was doing nothing at all. No plugin is loaded now. It is EVE's voice
+-- key since 2026-11-05.
 
--- Toggle Layout (the old plugin:xtd:throwunfocused bind on this same key
--- in the .conf is dead/superseded — SUPER + T is toggle-layout only)
--- desc: Toggles floating and tiling for every window
-hl.bind("SUPER + T", hl.dsp.exec_cmd("~/.config/scripts/toggle-layout.sh"))
+-- Window mode: floating -> tiling -> scrolling -> floating, for every window.
+-- SUPER + SHIFT + L since 2026-10-29, when scrolling made it a three-way
+-- cycle; it was SUPER + T as a floating/tiling flip, and SUPER + T is free now.
+-- (The old plugin:xtd:throwunfocused bind on SUPER + T in the .conf was long
+-- dead.) Same script and same store as the settings menu's Window mode row.
+-- desc: Cycles the window mode: floating, tiling, scrolling
+hl.bind("SUPER + SHIFT + L", hl.dsp.exec_cmd("~/.config/scripts/toggle-layout.sh"))
 
 ------------------------------------------------------------------
 -- Brightness and Volume controls
@@ -685,13 +734,15 @@ hl.bind("F5", hl.dsp.exec_cmd("brightnessctl set +10% && qs -p ~/.config/shell i
 -- desc: Toggles the keyboard backlight
 hl.bind("F7", hl.dsp.exec_cmd("~/.config/scripts/kbdbacklight_toggle.sh"))
 
--- Mic mute (with OSD + keyboard LED sync). bindel = repeating + locked.
+-- Mic mute (with OSD + keyboard LED sync). Repeating, and NOT locked: this was the
+-- one bind that worked on the lock screen, which let anyone at a locked machine
+-- unmute the mic. Ahaan, 2026-11-05: nothing works until the password or fingerprint.
 -- Routed through micmute-led.sh instead of a bare `pactl ... toggle` because
 -- the kernel's own audio-micmute LED trigger drives the keyboard's mic LED
 -- with the opposite polarity (lit = muted) from what's wanted (lit = on) —
 -- see scripts/micmute-led.sh for the full story.
 -- desc: Mutes and unmutes the microphone
-hl.bind("F9", hl.dsp.exec_cmd("~/.config/scripts/micmute-led.sh toggle"), { repeating = true, locked = true })
+hl.bind("F9", hl.dsp.exec_cmd("~/.config/scripts/micmute-led.sh toggle"), { repeating = true })
 
 ------------------------------------------------------------------
 -- Random Tools
@@ -700,14 +751,41 @@ hl.bind("F9", hl.dsp.exec_cmd("~/.config/scripts/micmute-led.sh toggle"), { repe
 -- desc: Opens the emoji picker
 hl.bind("SUPER + period", hl.dsp.exec_cmd("echo \"open:emoji\" | socat - UNIX-CONNECT:/tmp/finder.sock"))
 
--- Reminders (taskbar/, REMINDERS section). Opens the two-step prompt: how many
--- minutes, then what to be reminded of. The list itself lives in the calendar
--- dropdown, so this bind is the only entry point that does not need a mouse.
--- Routed through the taskbar's IPC socket like the OSD binds above rather than
--- a script, because the prompt is a layer surface the shell already owns --
--- anything else would have to spawn a second process to draw a text box.
--- desc: Opens the reminder prompt
-hl.bind("SUPER + SHIFT + R", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call reminder prompt"))
+-- Reminders (shell/Reminders.qml). Grows the bar's centre island down with the
+-- reminders and a box that asks how many minutes, then what -- the old prompt
+-- pill's two steps, which this replaced on 2026-10-21. A toggle, like the todo
+-- list's bind. Routed through the shell's IPC socket rather than a script,
+-- because the panel is a layer surface the shell already owns.
+-- desc: Toggles the reminders
+hl.bind("SUPER + SHIFT + R", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call reminder toggle"))
+
+-- The notification center (shell/Notifications.qml), a centre-island tenant
+-- since 2026-10-26: everything that arrived, newest first, Enter to open one.
+-- It was a dropdown under the bar's arch button, which opens the settings
+-- menu now. A toggle, like the reminders' bind above.
+-- desc: Toggles the notification center
+hl.bind("SUPER + SHIFT + N", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call notifications toggle"))
+
+-- Calendar (shell/Calendar.qml). The month in the centre island -- what a click
+-- on the bar's clock opens, from the keyboard. Arrows move by month and year.
+-- desc: Toggles the calendar
+hl.bind("SUPER + SHIFT + C", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call calendar toggle"))
+
+-- Todo list (shell/Todo.qml). Grows the bar's centre island down with the
+-- tasks and a new-task box that already has the cursor. A toggle: the same
+-- combo closes it, as does Esc or a click anywhere else.
+-- desc: Toggles the todo list
+hl.bind("SUPER + SHIFT + T", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call todo toggle"))
+
+-- Gita reader (shell/Gita.qml). Same island, same toggle semantics as the
+-- todo list above; until now the bar button was its only way in.
+-- desc: Toggles the Gita reader
+hl.bind("SUPER + SHIFT + G", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call gita toggle"))
+
+-- Music player (shell/Music.qml). Same island, same toggle semantics. Inside:
+-- Space play/pause, Ctrl+Left/Right previous/next, S shuffle, R repeat.
+-- desc: Toggles the music player
+hl.bind("SUPER + SHIFT + M", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call music toggle"))
 
 -- Voice-to-text (voxtype). Press once to start recording, press again to stop
 -- and transcribe at the cursor. This was push-to-talk (a press bind for
@@ -891,6 +969,17 @@ hl.window_rule({
 -- that loaded this config, so this global stays reachable — the same
 -- mechanism the official example uses for e.g. `closeWindowBind:set_enabled(false)`.
 -- Verify with `hyprctl repl 'globalFloatRule'` after a reload if it misbehaves.)
+--
+-- Why floating is a RULE and not an hl.layout.register() custom layout —
+-- tried 2026-10-29 in a nested 0.56.2 and dropped. A Lua layout is a TILED
+-- algorithm (CLuaTiledAlgorithm : ITiledAlgorithm) and Lua sees only
+-- recalculate(ctx) and layout_msg; drag, resize and new-window events stay in
+-- C++. Measured: target:set_box() does hold windows at free, overlapping
+-- positions, but `window.resize` on one re-ran recalculate with target.box
+-- unchanged (the delta never reaches Lua, so SUPER+R and border-resize are
+-- lost), `window.move` did nothing at all, and `size`/`move` window rules —
+-- every per-app placement below — are ignored for tiled windows. It cannot
+-- feel the same, so the mode switch stays this rule plus general.layout.
 globalFloatRule = hl.window_rule({
     name   = "global-float",
     match  = { class = ".*" },
@@ -916,11 +1005,12 @@ globalFloatRule = hl.window_rule({
     move   = {"(monitor_w*0.0118)", "(monitor_h*0.0728)"},
 })
 
--- Tiling mode, carried across reloads.
+-- Window mode, carried across reloads.
 --
--- WIN_TILING_MODE is written by scripts/window-rules.sh, from the Tiling Mode
--- switch at the top of the settings menu's Window rules page and from SUPER+T,
--- which goes through the same script. Without this lookup the mode lasted only
+-- WIN_WINDOW_MODE (winMode, near the top) is written by scripts/window-rules.sh,
+-- from the Window mode row at the top of the settings menu's Window rules page
+-- and from SUPER+SHIFT+L, which goes through the same script. Tiling and
+-- scrolling both mean this rule OFF; they differ only in general.layout. Without this lookup the mode lasted only
 -- until the next `hyprctl reload` — a wallpaper change, a monitor hotplug, a
 -- font being picked — because a reload re-parses this file and the rule above
 -- comes back enabled. That happens several times a session, and it put a tiled
@@ -935,7 +1025,7 @@ globalFloatRule = hl.window_rule({
 -- drops every keybind after that point, which is a session you cannot use to
 -- fix it. Losing the restore is a desktop that floats when it should tile.
 -- Losing the binds is a desktop you cannot type into.
-if wbool("WIN_TILING_MODE", false) then
+if winMode ~= "floating" then
     pcall(function() globalFloatRule:set_enabled(false) end)
 end
 
@@ -975,6 +1065,25 @@ hl.window_rule({
     match  = { class = "^(zen)$" },
     size   = {"(monitor_w*0.781)", "(monitor_h*0.79)"},
     move   = {"(monitor_w*0.029)", "(monitor_h*0.105)"},
+})
+
+-- Opentern (~/projects/opentern) opens at SUPER+D's geometry. Ahaan,
+-- 2026-10-22: "set the default window size for opentern to whatever super D
+-- sets to". window-zoom.sh computes that box at runtime from the reserved
+-- insets, gaps_out and border_size; a rule can't run the script, so these are
+-- its output on this panel (`WINDOW_ZOOM_DRY=1`: 1430 x 761 at (5, 44), with
+-- reserved top 42, gap 3, border 2) as fractions, all four round-tripping:
+--   1440*0.99306  = 1430.006 -> 1430   810*0.93951 = 761.00 -> 761
+--   1440*0.003472 = 4.9997   -> 5      810*0.054321 = 44.000 -> 44
+-- (Re-measured 2026-10-31 when the bar's zone went 44 -> 42: 1430 x 761 at
+-- (5, 44); it was 1430 x 759 at (5, 46).)
+-- Proportional elsewhere, so on another panel it lands NEAR the zoomed box,
+-- not exactly on it — the bar's zone and the gaps don't scale with the screen.
+hl.window_rule({
+    name   = "opentern-float",
+    match  = { class = "^(opentern)$" },
+    size   = {"(monitor_w*0.99306)", "(monitor_h*0.93951)"},
+    move   = {"(monitor_w*0.003472)", "(monitor_h*0.054321)"},
 })
 
 -- Kitty-based tools
@@ -1027,6 +1136,19 @@ hl.window_rule({
     match  = { class = "^(kitty)$", title = "^(about)$" },
     center = true,
     size   = {"(monitor_w*0.7361)", "(monitor_h*0.7407)"},
+})
+
+-- The About sigil (shell/About.qml), a Quickshell FloatingWindow since
+-- 2026-10-21 — about-float above is the kitty+fastfetch page it replaced, left
+-- as the way back. Fixed pixels, not monitor fractions: 980x550 is what its
+-- rings were tuned at, and it is only the OPENING size — the window resizes
+-- and tiles like any other (min 720x420, set by the window itself). Without
+-- the rule global-float placed it top-left, measured at (67,122).
+hl.window_rule({
+    name   = "about-sigil",
+    match  = { class = "^(org\\.quickshell)$", title = "^(About)$" },
+    center = true,
+    size   = {"980", "550"},
 })
 
 -- Btop

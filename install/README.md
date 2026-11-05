@@ -1,15 +1,31 @@
 # install/
 
-Rebuilds this Hyprland + Quickshell desktop on a fresh Arch install, starting
-from nothing but a TTY.
+Rebuilds this Hyprland + Quickshell desktop on a new machine.
+
+Install Arch with `archinstall` (profile **minimal**, your user with sudo, any
+network option), reboot, log in on the TTY as that user, and run one line:
 
 ```sh
-git clone https://github.com/ahaan-shah/dotfiles.git ~/.config/dotfiles
-~/.config/dotfiles/install/install.sh
+curl -fsSL https://raw.githubusercontent.com/ahaan-shah/dotfiles/main/install/bootstrap.sh | bash
 ```
 
-Run it as your normal user, not root. It calls `sudo` only in the one phase
-that needs it, and those phases can be skipped with `--no-root`.
+It asks for the sudo password once and needs nothing else from you. Then reboot
+and log in at the greeter. About an hour, most of it AUR builds; ~37 GB on disk.
+
+What only you can do afterwards, because it is yours and does not travel:
+
+| | |
+|---|---|
+| EVE and Claude Code | `claude` in a terminal, log in. EVE needs nothing else. Until then her card says `Not logged in` |
+| Fingerprints | `~/.config/dotfiles/install/install.sh --only fingerprint`, at the sensor |
+| Wifi, browser logins, git identity, SSH keys | Your accounts. Never in the mirror |
+| `magpie`, `opentern`, `spotsie`, `wwrite`, `herdr-app` | Built from your own repos, in no package. Their launcher rows and dock pins are dropped until they exist, and the run names them at the end |
+
+`--with-heavy` adds `freesurfer-bin` (18 GiB): `... | bash -s -- --with-heavy`.
+`--interactive` asks at each decision instead of taking the default.
+
+The mirror has to be published (`bkpdots`, then push) for a new machine to get
+the current desktop: the one line clones whatever is on GitHub.
 
 ## Try it without committing to anything
 
@@ -29,10 +45,12 @@ that needs it, and those phases can be skipped with `--no-root`.
 | Phase | |
 |---|---|
 | `preflight` | Arch check, network check, hardware detection report, confirm |
-| `packages` | Every manifest in `packages/`, GPU userspace matched to the actual vendor, then the four AUR packages (bootstrapping `yay` first) |
+| `packages` | Every manifest in `packages/`, GPU userspace matched to the actual vendor, then the AUR packages (bootstrapping `yay` first). One that fails costs only itself; it is named at the end |
 | `configs` | Deploys config directories into `~/.config`, backing up anything it overwrites. Marks the launchers **and the extensionless agent collectors** executable |
 | `hardware` | Detects this machine and writes `~/.config/scripts/hardware.env` |
 | `nvidia` | Only where there is an NVIDIA dGPU: PRIME offload, or a documented refusal |
+| `tools` | What pacman does not carry: the Claude Code CLI, the Flathub apps, `kaggle`, TinyTeX, herdr |
+| `eve` | Deploys `jarvis/` to `~/.config/jarvis`, makes `~/EVE`, runs the policy selftest |
 | `apps` | voxtype model + config, Spotify Wayland flag, battery cap preference, login shell |
 | `usersystemd` | User units, enables the battery watchdog timer and voxtype |
 | `system` | `/etc` rules, group membership, system services, greetd |
@@ -89,24 +107,19 @@ manifest in `packages/` is installed:
 
 | Manifest | |
 |---|---|
-| `10-core.txt` | The compositor, the four Quickshell apps' runtime deps, the shell |
+| `10-core.txt` | The compositor, the Quickshell apps' runtime deps, the shell |
 | `20-laptop.txt` | Battery, fingerprint, zram — installed only when a battery exists |
-| `30-fonts.txt` | JetBrainsMono Nerd Font and friends |
-| `40-apps.txt` | The applications. Deliberately excludes `r`, `steam`, `discord` |
-| `50-aur.txt` | Exactly four: `bibata-cursor-theme`, `voxtype-bin`, `localsend-bin`, `neofetch` |
+| `30-fonts.txt` | Every font this machine has |
+| `40-apps.txt` | The applications. Rebuilt from `pacman -Qqen` on 2026-11-05 |
+| `50-aur.txt` | The AUR set, browsers included, built one at a time |
+| `55-aur-heavy.txt` | `freesurfer-bin`, only with `--with-heavy` |
 | `60-virt.txt` | QEMU/libvirt — installed only when the CPU reports VT-x/AMD-V |
+| `70-flatpak.txt` | Flathub application ids, for the `tools` phase |
 | `90-nvidia.txt` | `nvidia-open`, `nvidia-utils`, `nvidia-prime` — only when the `nvidia` phase decides the machine fits |
 
-The AUR list is short on purpose: an AUR build is slow and can fail, and which
-browser or music player you want is a personal choice. Everything else — Zen,
-Brave, Spotify, VSCodium, the TUI toys — is one fuzzy search away afterwards:
-
-```sh
-~/.config/scripts/pkg-aur-install.sh
-```
-
-Note `mimeapps.list` points `http`/`https` at `zen.desktop`. Until you install
-Zen, those associations fall through to Chromium, which is in `10-core.txt`.
+Install something new here and it is not on the next machine until it is in one
+of these. `pkglist-*.txt` in the mirror records what was installed at the last
+backup, to diff against.
 
 ## Virtual machines
 
@@ -399,7 +412,24 @@ the previous setup exactly.
   model above, or write any NVIDIA module parameter or unit of its own.
 - Restore documents. It is a desktop installer, not a backup restore.
 
+## Testing it
+
+`tests/vm/` runs all of this in a throwaway QEMU guest: no root, no libvirt, no
+host mounts, user-mode networking, a memory cap, everything under
+`~/.cache/hyprahaan-vmtest`.
+
+```sh
+tests/vm/mirror.sh                # build and serve what the mirror WOULD contain
+tests/vm/vm.py new && tests/vm/vm.py iso   # then archinstall-config.py in the guest
+tests/vm/rerun.sh run.log         # type the one line on the guest's console
+tests/vm/session-checks.sh        # in the guest, inside a logged-in session
+```
+
 ## If something goes wrong
+
+A failure in any phase after `configs` costs that phase only: the run carries on,
+names it at the end and exits non-zero. `install.sh --only <phase>` repairs it.
+
 
 Everything overwritten is copied to `~/.config-backup-<timestamp>/` first, and
 `/etc` files get a `.bak-<timestamp>` sibling. The full log is at

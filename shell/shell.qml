@@ -43,4 +43,17 @@ ShellRoot {
     Launcher {}
     // The pill and the flight to the bar; the orb and its card live in Bar.
     Jarvis {}
+    // The todo list's keyboard surface; the list grows the centre island.
+    Todo {}
+    // The Gita reader's keyboard surface; it too grows the centre island.
+    Gita {}
+    // The calendar and the reminders, the island's last two tenants.
+    Calendar {}
+    Reminders {}
+    // The notification center (SUPER+SHIFT+N), the island's seventh tenant.
+    Notifications {}
+    // The music player's keyboard surface; it too grows the centre island.
+    Music {}
+    // Settings → System → About: the machine as a sigil. Built only while open.
+    About {}
 }

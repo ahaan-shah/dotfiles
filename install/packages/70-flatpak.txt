@@ -1,0 +1,2 @@
+# Flatpak application ids, installed system-wide from Flathub by the tools phase.
+org.jaspstats.JASP

@@ -54,6 +54,16 @@ QtObject {
     // always had. "on": it lists them, and choosing one moves it to the
     // current workspace rather than following it into the special one.
     property string switcherSpecial: "off"
+    // The bar (Settings -> Shell -> Bar, 2026-10-31). Position is top, left
+    // or right; barHidden is a comma list of module ids Bar.qml's modOn()
+    // checks, "none" when every module shows — never "", which _parse below
+    // ignores, so un-hiding the last one would never arrive.
+    property string barPosition: "top"
+    property string barHidden: "none"
+    // "islands" (three pieces) or "full" (one strip, edge to edge), and
+    // "on" to hide the bar until the pointer reaches its edge.
+    property string barStyle: "islands"
+    property string barAutohide: "off"
     // The AI assistant's master switch (Settings -> AI, 2026-10-06). "on" is
     // the default so a machine with no ui.conf behaves as before; "off" makes
     // JarvisState refuse to open and close any open pill. Since 2026-10-20 it
@@ -62,9 +72,31 @@ QtObject {
     // Which Claude EVE talks to (Settings -> AI -> Model, 2026-10-20):
     // "sonnet", "haiku" or "opus" — jarvis/chat.py maps them to model ids.
     property string aiModel: "sonnet"
+    // What EVE may do (Settings -> AI -> EVE's capabilities, 2026-10-26):
+    // "basic" is the chat it was, "advanced" adds jarvis/broker.py's tools.
+    // Basic by default, so a machine with no ui.conf gets the narrower one.
+    property string aiLevel: "basic"
+    // Notifications (Settings -> Setup -> Notifications, 2026-11-02).
+    // Every default is what the daemon did before the page existed: DND off,
+    // silent, the island drop ends by itself after 2.5 s. notifSound is the
+    // on/off switch; notifSoundName is which of NotifState.sounds plays, kept
+    // apart so turning sound off and on again keeps the one chosen.
+    // notifDuration is seconds, as a string ("2.5"), parsed by NotifState.
+    property string notifDnd: "off"
+    property string notifSound: "off"
+    property string notifSoundName: "chime"
+    property string notifAutodismiss: "on"
+    property string notifDuration: "2.5"
 
     // What the dock actually uses: anything but the three known edges reads as
     // the bottom, so a hand-edit typo cannot park the dock off every edge.
+    // As dockEdge: anything but the two sides is the top, so a typo in
+    // ui.conf parks the bar where it always was rather than nowhere.
+    readonly property string barEdge:
+        (barPosition === "left" || barPosition === "right") ? barPosition : "top"
+    readonly property var barHiddenList:
+        barHidden === "none" ? [] : barHidden.split(",").filter(s => s !== "")
+
     readonly property string dockEdge:
         (dockPosition === "left" || dockPosition === "right") ? dockPosition : "bottom"
 
@@ -149,8 +181,18 @@ QtObject {
             "DOCK_AUTOHIDE":    "dockHide",
             "DOCK_POSITION":    "dockPosition",
             "SWITCHER_SPECIAL": "switcherSpecial",
+            "BAR_POSITION":     "barPosition",
+            "BAR_HIDDEN":       "barHidden",
+            "BAR_STYLE":        "barStyle",
+            "BAR_AUTOHIDE":     "barAutohide",
             "AI_ENABLED":       "aiEnabled",
-            "AI_MODEL":         "aiModel"
+            "AI_MODEL":         "aiModel",
+            "AI_LEVEL":         "aiLevel",
+            "NOTIF_DND":        "notifDnd",
+            "NOTIF_SOUND":      "notifSound",
+            "NOTIF_SOUND_NAME": "notifSoundName",
+            "NOTIF_AUTODISMISS": "notifAutodismiss",
+            "NOTIF_DURATION":   "notifDuration"
         }
         const lines = String(raw).split("\n")
         for (let i = 0; i < lines.length; i++) {

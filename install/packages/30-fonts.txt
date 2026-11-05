@@ -10,3 +10,10 @@ noto-fonts-emoji
 ttf-hack-nerd
 ttf-roboto
 ttf-roboto-mono
+otf-codenewroman-nerd     # gnome-text-editor's font here
+otf-font-awesome
+otf-monaspace-nerd
+ttf-ibmplex-mono-nerd
+ttf-terminus-nerd
+ttf-ubuntu-mono-nerd
+ttf-ubuntu-nerd

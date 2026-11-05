@@ -23,6 +23,12 @@ ShellRoot {
             // with nothing listening on the other end. This ordering is
             // the one thing here that must never be gotten backwards.
             lock.locked = false
+            // Lifts the USB block that lockscreen-launch.sh applied. Only here,
+            // so a lock process that crashes leaves USB blocked along with the
+            // compositor locked. execDetached has no pipe to lose (the SIGPIPE
+            // rule) and outlives the Qt.quit below. Failing leaves USB blocked
+            // until the next unlock or a reboot, and never stops the unlock.
+            Quickshell.execDetached(["sudo", "-n", "/usr/local/bin/hyprahaan-usb-lock", "unlock"])
             Qt.quit()
         }
     }

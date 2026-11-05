@@ -12,7 +12,7 @@ import Quickshell.Io
 //   Install  -> Package / AUR / Web app
 //   Remove   -> Package / Web app
 //   Update
-//   Setup    -> Monitors / Keybindings / Window rules / Shell (Dock, App switcher) / AI / Defaults
+//   Setup    -> Monitors / Keybindings / Window rules / Shell (Bar, Dock, App switcher) / AI / Defaults
 //   Fonts    -> every installed family
 //   Icons    -> every installed icon theme
 //   Theme    -> every installed GTK theme
@@ -96,8 +96,10 @@ QtObject {
                 // Above Setup, and the split between them is the point: Setup
                 // changes how the desktop BEHAVES and the change persists;
                 // everything under Tools is a thing you reach for, does its
-                // work now, and leaves no setting behind.
-                { id: "tools",   icon: "󱁤", title: "Tools",   kind: "menu",   sub: "screenshot, screen recording, colour picker, OCR" },
+                // work now, and leaves no setting behind. (Voice typing is the
+                // one exception, and Ahaan put it there: dictation is a tool
+                // you reach for, even though its switch and model persist.)
+                { id: "tools",   icon: "󱁤", title: "Tools",   kind: "menu",   sub: "screenshot, screen recording, colour picker, OCR, voice typing" },
                 { id: "setup",   icon: "󰒓", title: "Setup",   kind: "menu",   sub: "monitors, keys, window rules, shell, AI, defaults" },
                 { id: "theme",   icon: "󰏘", title: "Theme",   kind: "menu",   sub: "palette, wallpaper, GTK theme, icons, fonts" },
                 { id: "security", icon: "󰒃", title: "Security", kind: "menu",  sub: "firewall, fingerprints, password" },
@@ -149,7 +151,43 @@ QtObject {
                 { id: "capture",     icon: "󰄀", title: "Capture",       kind: "menu",
                   sub: "screenshot, screen recording" },
                 { id: "colorpicker", icon: "󰈋", title: "Colour picker", kind: "action" },
-                { id: "ocr",         icon: "󰗊", title: "OCR scan",      kind: "action" }
+                { id: "ocr",         icon: "󰗊", title: "OCR scan",      kind: "action" },
+                { id: "voice",       icon: "󰍬", title: "Voice typing",  kind: "menu",
+                  sub: "dictation on or off, which model" }
+            ]
+        },
+
+        // Added 2026-11-04 on Ahaan's instruction, in the shape of Setup -> AI:
+        // one switch, one door to the models. Everything that happens is in
+        // scripts/voice-typing.sh, whose header has the measurements behind
+        // these four rows and these words. Unlike the capture rows nothing here
+        // draws over the screen, so nothing goes through capture-wait.sh.
+        "tools/voice": {
+            title: "Voice typing", icon: "󰍬",
+            rows: [
+                { id: "enabled", icon: "󰍬", title: "Voice typing", kind: "toggle" },
+                { id: "model",   icon: "󰙴", title: "Model",        kind: "menu", sub: "which model dictation uses" }
+            ]
+        },
+
+        // ids are voxtype's download names, the same ones the script's table
+        // validates against. `size` is what the row's trail says until the
+        // model is on disk: picking one starts a download, so that is the one
+        // thing worth knowing beforehand. Bytes on disk once complete, in decimal MB
+        // (a du during the download first put Parakeet at 611).
+        // The subs are short because the trail shares their line and cuts them
+        // off: "the quickest, and the least accurate" lost its last word.
+        "tools/voice/model": {
+            title: "Model", icon: "󰙴",
+            rows: [
+                { id: "base.en",   icon: "󰍬", title: "Whisper base.en",  kind: "choice", size: "148 MB",
+                  short: "base.en",   sub: "quickest, least accurate" },
+                { id: "small.en",  icon: "󰍬", title: "Whisper small.en", kind: "choice", size: "488 MB",
+                  short: "small.en",  sub: "more accurate, slower" },
+                { id: "moonshine-base", icon: "󰍬", title: "Moonshine base", kind: "choice", size: "251 MB",
+                  short: "Moonshine", sub: "quick, on the CPU" },
+                { id: "parakeet-tdt-0.6b-v2-int8", icon: "󰍬", title: "Parakeet v2", kind: "choice", size: "661 MB",
+                  short: "Parakeet",  sub: "most accurate, on the CPU" }
             ]
         },
 
@@ -232,8 +270,9 @@ QtObject {
                 { id: "monitors",    icon: "󰍹", title: "Monitors",        kind: "action" },
                 { id: "keybindings", icon: "󰌌", title: "Keybindings",     kind: "menu", sub: "every bind, searchable" },
                 { id: "windowrules", icon: "󰖯", title: "Window rules",    kind: "menu", sub: "borders, gaps, rounding, opacity, blur, animation" },
-                { id: "shell",       icon: "󰨇", title: "Shell",           kind: "menu", sub: "dock, app switcher" },
-                { id: "ai",          icon: "󰧑", title: "AI",              kind: "menu", sub: "enable the assistant, pick its model" },
+                { id: "shell",       icon: "󰨇", title: "Shell",           kind: "menu", sub: "bar, dock, app switcher" },
+                { id: "notifications", icon: "󰂚", title: "Notifications", kind: "menu", sub: "do not disturb, sound, auto-dismiss, how long" },
+                { id: "ai",          icon: "󰧑", title: "AI",              kind: "menu", sub: "enable EVE, what it may do, its model" },
                 { id: "defaults",    icon: "󰀻", title: "Defaults",        kind: "menu", sub: "browser, terminal, editor, PDFs" }
             ]
         },
@@ -243,8 +282,62 @@ QtObject {
         "setup/shell": {
             title: "Shell", icon: "󰨇",
             rows: [
+                { id: "bar",      icon: "󰍜", title: "Bar",          kind: "menu", sub: "position, full length, auto-hide, modules" },
                 { id: "dock",     icon: "󰣆", title: "Dock",         kind: "menu", sub: "auto-hide, position" },
                 { id: "switcher", icon: "󰕰", title: "App switcher", kind: "menu", sub: "which windows Alt+Tab lists" }
+            ]
+        },
+
+        // ── Bar ───────────────────────────────────────────────────────────
+        // Added 2026-10-31 on Ahaan's instruction: where the bar sits (top,
+        // left or right), which modules it carries, full length or islands,
+        // and Always hide. ui.conf keys — BAR_POSITION, BAR_HIDDEN,
+        // BAR_STYLE, BAR_AUTOHIDE — that UiConfig reads and Bar.qml acts
+        // on, set the dock's way (setDockPref: optimistic, then ui-prefs.sh).
+        // Position has outside followers the dock's does not: gaps_out and
+        // SUPER+D's box both key off the bar's edge, so ui-prefs.sh re-applies
+        // the gaps and refits zoomed windows when it changes.
+        "setup/shell/bar": {
+            title: "Bar", icon: "󰍜",
+            rows: [
+                { id: "position", icon: "󰹑", title: "Position",    kind: "menu", sub: "top, left or right of the screen" },
+                { id: "full",     icon: "󰕭", title: "Full length", kind: "toggle" },
+                { id: "autohide", icon: "󰈉", title: "Always hide", kind: "toggle" },
+                { id: "modules",  icon: "󰕰", title: "Modules",     kind: "menu", sub: "which modules the bar carries" }
+            ]
+        },
+        "setup/shell/bar/position": {
+            title: "Position", icon: "󰹑",
+            rows: [
+                { id: "top",   icon: "󰁝", title: "Top",   kind: "choice" },
+                { id: "left",  icon: "󰁍", title: "Left",  kind: "choice" },
+                { id: "right", icon: "󰁔", title: "Right", kind: "choice" }
+            ]
+        },
+        // "check" is a checkbox (SettingsPanel draws the box): every row is
+        // independently on or off, which is what a module list is. The ids
+        // are Bar.qml's modOn() ids and ui-prefs.sh's BAR_HIDDEN words. In
+        // the top bar's exact order, left to right (top to bottom on a side
+        // bar). Not listed, at Ahaan's call: voice typing and screen
+        // recording, which only ever appear while they are happening, and
+        // EVE's orb, the reminder chip and Tasks — those are always on. Each icon is the glyph the bar
+        // itself draws for that module (Bar.qml: root.g, or the literal);
+        // the first cut had Tasks wearing the Gita's book.
+        "setup/shell/bar/modules": {
+            title: "Modules", icon: "󰕰",
+            rows: [
+                { id: "settings",   icon: "󰣇", title: "Settings button",  kind: "check", island: "left" },
+                { id: "workspaces", icon: "󰽿", title: "Workspaces",       kind: "check", island: "left" },
+                { id: "apps",       icon: "󰖯", title: "Apps",             kind: "check", island: "left" },
+                { id: "clock",      icon: "󰥔", title: "Clock",            kind: "check", island: "centre" },
+                { id: "media",      icon: "", title: "Media",            kind: "check", island: "centre" },
+                { id: "volume",     icon: "", title: "Volume",           kind: "check", island: "right" },
+                { id: "display",    icon: "󰍹", title: "Display",          kind: "check", island: "right" },
+                { id: "gita",       icon: "󰗚", title: "Gita",             kind: "check", island: "right" },
+                { id: "agents",     icon: "󰚩", title: "Agent panel",      kind: "check", island: "right" },
+                { id: "bluetooth",  icon: "󰂯", title: "Bluetooth",        kind: "check", island: "right" },
+                { id: "network",    icon: "", title: "Network",          kind: "check", island: "right" },
+                { id: "battery",    icon: "󰁹", title: "Battery",          kind: "check", island: "right" }
             ]
         },
 
@@ -296,14 +389,52 @@ QtObject {
             ]
         },
 
+        // ── Notifications ─────────────────────────────────────────────────
+        // Added 2026-11-02 on Ahaan's instruction: Do not disturb, a sound
+        // (a door to an on/off switch and the sounds to pick from), whether
+        // the island drop ends by itself ("on is exactly as it is now … off
+        // means they stay until i click on it"), and how long it shows for.
+        // ui.conf NOTIF_* keys that UiConfig reads and NotifState acts on,
+        // written through NotifState.setPref (optimistic, then ui-prefs.sh).
+        // "Show for" is a cycle row, EVE's capabilities' shape: Left/Right
+        // or the › step through NotifState.durations.
+        "setup/notifications": {
+            title: "Notifications", icon: "󰂚",
+            rows: [
+                { id: "dnd",         icon: "󰂛", title: "Do not disturb", kind: "toggle" },
+                { id: "sound",       icon: "󰕾", title: "Sound",          kind: "menu", sub: "on or off, and which one plays" },
+                { id: "autodismiss", icon: "󰅖", title: "Auto-dismiss",   kind: "toggle" },
+                { id: "duration",    icon: "󰔛", title: "Show for",       kind: "cycle",
+                  options: NotifState.durations, labels: NotifState.durations.map(d => d + " s") }
+            ]
+        },
+        // The switch, then the sounds as "choice" rows ticked from
+        // NotifState.sound. Picking one plays it, so the list can be heard
+        // through without a notification to trigger it; it does not turn
+        // the switch on.
+        "setup/notifications/sound": {
+            title: "Sound", icon: "󰕾",
+            rows: [{ id: "enabled", icon: "󰕾", title: "Sound", kind: "toggle" }]
+                .concat(NotifState.sounds.map(x => ({ id: x.id, icon: "󰎈", title: x.title, kind: "choice" })))
+        },
+
         // Added 2026-10-06 on Ahaan's instruction: one switch that turns the
         // assistant (EVE, jarvis/) on or off completely. ui.conf key AI_ENABLED,
         // read by UiConfig and acted on in JarvisState.
+        //
+        // 2026-10-26: "Enable EVE" (was "Enable AI"), and under it EVE's
+        // capabilities — a "cycle" row, Left/Right step through `options`
+        // (SettingsPanel). ui.conf AI_LEVEL. Basic is the chat EVE was;
+        // Advanced starts jarvis/broker.py's tools. Picking Basic restarts
+        // Claude without the broker, so Advanced is fully off. The Model
+        // icon became a sparkle: the {…} glyph read as "code", not "model".
+        // 2026-11-03: the capabilities row is gone. There is one kit, the
+        // broker's, sandboxed to ~/EVE (jarvis/chat.py's header).
         "setup/ai": {
             title: "AI", icon: "󰧑",
             rows: [
-                { id: "enabled", icon: "󰚩", title: "Enable AI", kind: "toggle" },
-                { id: "model",   icon: "󰘦", title: "Model",     kind: "menu", sub: "which Claude EVE talks to" }
+                { id: "enabled", icon: "󰚩", title: "Enable EVE",         kind: "toggle" },
+                { id: "model",   icon: "󰙴", title: "Model",              kind: "menu", sub: "which Claude EVE talks to" }
             ]
         },
 
@@ -313,7 +444,7 @@ QtObject {
         // Position page's shape. A change applies from the next message, in
         // the same conversation.
         "setup/ai/model": {
-            title: "Model", icon: "󰘦",
+            title: "Model", icon: "󰙴",
             rows: [
                 { id: "sonnet", icon: "󰚩", title: "Sonnet 5.5", kind: "choice", sub: "the everyday one" },
                 { id: "haiku",  icon: "󰚩", title: "Haiku 5.5",  kind: "choice", sub: "fastest, for quick lookups" },
@@ -874,6 +1005,31 @@ QtObject {
             return r
         }
 
+        // The bar page: the same shapes as the dock's below.
+        if (key === "setup/shell/bar/position")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
+                     value: r.id, active: r.id === UiConfig.barEdge }
+        if (key === "setup/shell/bar" && r.id === "position")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
+                     trail: UiConfig.barEdge.charAt(0).toUpperCase() + UiConfig.barEdge.substring(1) }
+        // The two look/behaviour switches (2026-10-31, Ahaan: "a toggle for
+        // bar to be in pieces like this or full length along with auto hide
+        // like dock has"). Bare switches: trail words ("islands", "always
+        // shown") were tried and removed at his call, as was the Modules
+        // row's "all shown" count and each module's island name.
+        if (key === "setup/shell/bar" && r.id === "full") {
+            const on = UiConfig.barStyle === "full"
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub || "",
+                     active: on, pending: false }
+        }
+        if (key === "setup/shell/bar" && r.id === "autohide") {
+            const on = UiConfig.barAutohide === "on"
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub || "",
+                     active: on, pending: false }
+        }
+        if (key === "setup/shell/bar/modules")
+            return Object.assign({}, r, { active: UiConfig.barHiddenList.indexOf(r.id) < 0 })
+
         // The dock page. Position says where it is from one level up, and the
         // switch says in words what its current state does.
         if (key === "setup/shell/dock/position")
@@ -891,6 +1047,29 @@ QtObject {
                      trail: always ? "until pointed at" : "when covered" }
         }
 
+        // The Tools row is left alone: it is a door, and it says nothing until
+        // you are through it. Unknown until the first status read comes back,
+        // which is what `pending` draws.
+        if (key === "tools/voice" && r.id === "enabled")
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: "",
+                     active: root.vtState.ENABLED === "yes",
+                     pending: root.vtState.ENABLED === undefined }
+        if (key === "tools/voice" && r.id === "model") {
+            const vtBusy = String(root.vtState.BUSY || "idle").indexOf("downloading ") === 0
+            const vtPick = root.pages["tools/voice/model"].rows.filter(m => m.id === root.vtState.MODEL)[0]
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
+                     // Off the table (a hand-edited config) still says what it is.
+                     trail: vtBusy ? "downloading" : vtPick ? vtPick.short : (root.vtState.MODEL || "") }
+        }
+        if (key === "tools/voice/model") {
+            const vtInstalled = String(root.vtState.INSTALLED || "").split(",")
+            const vtTrail = root.vtState.BUSY === "downloading " + r.id ? "downloading"
+                          : root.vtState.INSTALLED !== undefined && vtInstalled.indexOf(r.id) < 0 ? r.size
+                          : ""
+            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
+                     value: r.id, active: r.id === root.vtState.MODEL, trail: vtTrail }
+        }
+
         if (key === "setup/ai" && r.id === "enabled")
             return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
                      sub: r.sub || "", active: UiConfig.aiEnabled !== "off", pending: false }
@@ -900,6 +1079,20 @@ QtObject {
         if (key === "setup/ai/model")
             return { id: r.id, icon: r.icon, title: r.title, kind: r.kind, sub: r.sub,
                      value: r.id, active: r.id === root.aiModel }
+
+        // Bare switches, like the bar's; the Sound door says which one plays.
+        if (key === "setup/notifications" && r.id === "dnd")
+            return Object.assign({}, r, { sub: "", active: NotifState.dnd, pending: false })
+        if (key === "setup/notifications" && r.id === "autodismiss")
+            return Object.assign({}, r, { sub: "", active: NotifState.autoDismiss, pending: false })
+        if (key === "setup/notifications" && r.id === "sound")
+            return Object.assign({}, r, { trail: NotifState.soundOn ? NotifState.sound.title : "Off" })
+        if (key === "setup/notifications" && r.id === "duration")
+            return Object.assign({}, r, { value: NotifState.duration })
+        if (key === "setup/notifications/sound" && r.id === "enabled")
+            return Object.assign({}, r, { sub: "", active: NotifState.soundOn, pending: false })
+        if (key === "setup/notifications/sound")
+            return Object.assign({}, r, { value: r.id, active: r.id === NotifState.sound.id })
 
         if (key === "setup/shell/switcher" && r.id === "special") {
             const on = UiConfig.switcherSpecial === "on"
@@ -963,6 +1156,9 @@ QtObject {
                     title: r.title, kind: r.kind,
                     value: r.value, detail: r.detail, active: r.active === true,
                     font: r.font, pageKey: key,
+                    // A cycle hit draws ‹ value › from these; without them it
+                    // showed bare arrows.
+                    options: r.options, labels: r.labels,
                     // The trailing slot is the page a hit lives on — except on
                     // a wallpaper, where the row's own trail is its THEME and
                     // that is the only thing separating one hit from another.
@@ -1059,12 +1255,15 @@ QtObject {
         }
         root._queue = root._queue.concat(deferred)
         root._pump()
+        // Not a listing, but searching from the root reaches these rows too.
+        root.refreshVoice()
     }
 
     function ensure(key) {
         // Entering the firewall page re-reads it, so a change made elsewhere
         // (or by the previous visit) is reflected rather than remembered.
         if (key === "security/firewall") root.refreshFirewall()
+        if (key === "tools/voice" || key === "tools/voice/model") root.refreshVoice()
         if (key === "security" || key === "security/fingerprints") root.refreshFingerprints()
         // Same reason: the battery panel's own switcher and powerprofilesctl
         // from a terminal both move this behind our back, so the page reads it
@@ -1235,17 +1434,24 @@ QtObject {
             if (p.list === "winrules") {
                 // key  label  description  kind  value  unit  min  max  step
                 //
-                // The description stays a SUBTITLE here, against this file's
-                // rule that a subtitle only earns its place on a row that
-                // nests. That rule holds where the label already says what the
-                // row does — "Fonts", "Remove" — and "Blur passes" does not:
-                // the number means nothing without knowing it costs GPU per
-                // pass. This is the one page where the subtitle is the
-                // documentation.
+                // No subtitle, since 2026-10-29 — Ahaan: "remove all this
+                // subtext, it's all fluff". The page had been the one
+                // exception to this file's rule that a subtitle only earns its
+                // place on a row that nests; it no longer is. f[2], the
+                // script's description, is still printed and is still what
+                // search matches on (`detail`), so "costs GPU" finds Blur
+                // passes without it being on screen.
                 const kind = f[3] || "int"
+                // `enum:a|b|c` is a cycle row, the EVE's capabilities shape:
+                // ‹ value › stepped by Left/Right. The options come from the
+                // script's table, so this page still names none of them —
+                // Window mode (floating|tiling|scrolling) is the only one.
+                const opts = kind.indexOf("enum:") === 0 ? kind.slice(5).split("|") : null
                 out.push({
-                    id: f[0], icon: "", title: f[1] || f[0], sub: f[2] || "",
-                    kind: kind === "bool" ? "toggle" : "value",
+                    id: f[0], icon: "", title: f[1] || f[0], sub: "", detail: f[2] || "",
+                    kind: opts ? "cycle" : kind === "bool" ? "toggle" : "value",
+                    options: opts || undefined,
+                    labels: opts ? opts.map(o => o.charAt(0).toUpperCase() + o.slice(1)) : undefined,
                     value: f[4] || "", unit: f[5] || "",
                     min: f[6] || "", max: f[7] || "", step: f[8] || "",
                     // A toggle reads its state from `active`, like every other
@@ -1361,6 +1567,55 @@ QtObject {
     function refreshFirewall() {
         if (fwProc.running) { root._fwAgain = true; return }
         fwProc.running = true
+    }
+
+    // KEY="value" lines from voice-typing.sh status. A model can take minutes
+    // to download, far longer than the press that asked for it, so the script
+    // cannot answer on a pipe (it is detached, see the SIGPIPE rule). It writes
+    // this file instead whenever its state moves, and each write means "read me
+    // again". Flat in $XDG_RUNTIME_DIR for the reason _recFile's comment gives.
+    property var vtState: ({})
+    property bool _vtAgain: false
+    function refreshVoice() {
+        // Queued and not dropped, as with the firewall: the running read may
+        // have started before the change this one is asked to report.
+        if (vtProc.running) { root._vtAgain = true; return }
+        vtProc.running = true
+    }
+    property var _vtProc: Process {
+        id: vtProc
+        command: ["bash", "-c", root._q(root.scriptDir + "/voice-typing.sh") + " status 2>/dev/null"]
+        running: false
+        stdout: StdioCollector {
+            id: vtOut
+            onStreamFinished: {
+                root.vtState = root._parseKv(vtOut.text)
+                if (root._vtAgain) { root._vtAgain = false; vtProc.running = true }
+            }
+        }
+    }
+    property var _vtFile: FileView {
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/voice-typing.state"
+        watchChanges: true
+        // Absent until the first change ever made here, which is ordinary.
+        printErrors: false
+        onFileChanged: root.refreshVoice()
+    }
+    function setVoice(on) {
+        // Optimistic, like setDockPref: the switch moves on the press, and the
+        // read after the script's write settles it either way.
+        root.vtState = Object.assign({}, root.vtState, { ENABLED: on ? "yes" : "no" })
+        root._sh(root._q(root.scriptDir + "/voice-typing.sh") + (on ? " on" : " off"))
+    }
+    function setVoiceModel(id) {
+        // The tick moves on the press only if the model is already here. One
+        // still to download stays unticked, because it is not the default yet
+        // and may never be; its trail says "downloading" instead. Nor while
+        // another change is running: the script refuses, and says so.
+        const here = String(root.vtState.INSTALLED || "").split(",").indexOf(id) >= 0
+        if (here && (root.vtState.BUSY || "idle") === "idle")
+            root.vtState = Object.assign({}, root.vtState, { MODEL: id })
+        root._sh(root._q(root.scriptDir + "/voice-typing.sh") + " set-model " + root._q(id))
     }
 
     // KEY="value" lines from fingerprint.sh status. Every read here is
@@ -1496,10 +1751,38 @@ QtObject {
             return false
         }
 
+        if (row.kind === "choice" && key === "tools/voice/model") {
+            root.setVoiceModel(row.value || row.id)
+            return false
+        }
+
         // Same as above: the value is assigned here so the tick moves on the
         // press, and ui-prefs.sh persists it — the dock follows UiConfig.
         if (row.kind === "choice" && key === "setup/ai/model") {
             root.setDockPref("AI_MODEL", row.value || row.id)
+            return false
+        }
+
+        // A sound: ticked on the press, and played so it can be heard.
+        if (row.kind === "choice" && key === "setup/notifications/sound") {
+            const pick = NotifState.sounds.filter(x => x.id === (row.value || row.id))[0]
+            if (pick) { NotifState.setPref("NOTIF_SOUND_NAME", pick.id); NotifState.play(pick) }
+            return false
+        }
+
+        if (row.kind === "choice" && key === "setup/shell/bar/position") {
+            root.setDockPref("BAR_POSITION", row.value || row.id)
+            return false
+        }
+        // A module checkbox: flip its id in the hidden list. Written in the
+        // Modules page's own order, so the file reads the way the page does.
+        if (row.kind === "check" && key === "setup/shell/bar/modules") {
+            const hid = UiConfig.barHiddenList.slice()
+            const at = hid.indexOf(row.id)
+            if (at >= 0) hid.splice(at, 1); else hid.push(row.id)
+            const order = root.pages["setup/shell/bar/modules"].rows.map(m => m.id)
+            const out = order.filter(id => hid.indexOf(id) >= 0)
+            root.setDockPref("BAR_HIDDEN", out.length ? out.join(",") : "none")
             return false
         }
 
@@ -1538,6 +1821,9 @@ QtObject {
         }
 
         if (row.kind === "toggle") { root._toggle(key, row); return false }
+
+        // Enter or a click on a cycle row steps it forward, as Right does.
+        if (row.kind === "cycle") { root.cycle(key, row, 1); return false }
 
         // A "value" row is EDITED, not activated: Enter opens its box and the
         // panel owns everything after that. Returning here rather than falling
@@ -1676,6 +1962,18 @@ QtObject {
     // Anything but the three known names is Sonnet, so a typo in ui.conf
     // ticks a real row — and is what chat.py falls back to as well.
     readonly property string aiModel: ["sonnet", "haiku", "opus"].indexOf(UiConfig.aiModel) >= 0 ? UiConfig.aiModel : "sonnet"
+    // Anything but "advanced" is Basic: a typo never widens what EVE can do.
+
+    // A "cycle" row: Left/Right (dir -1/+1) step through row.options and
+    // wrap. EVE's capabilities, and the Window rules page's Window mode.
+    function cycle(key, row, dir) {
+        const opts = row.options || []
+        if (!opts.length) return
+        const i = Math.max(0, opts.indexOf(row.value))
+        const next = opts[(i + dir + opts.length) % opts.length]
+        if (key === "setup/notifications" && row.id === "duration") NotifState.setPref("NOTIF_DURATION", next)
+        if (key === root.winKey) root.setWindowRule(row.id, next)
+    }
 
     function setDockPref(key, val) {
         // Optimistic: moves the switch / tick and the dock itself this frame.
@@ -1683,18 +1981,41 @@ QtObject {
         if (key === "DOCK_AUTOHIDE") UiConfig.dockHide     = val
         if (key === "DOCK_POSITION") UiConfig.dockPosition = val
         if (key === "SWITCHER_SPECIAL") UiConfig.switcherSpecial = val
+        if (key === "BAR_POSITION") UiConfig.barPosition = val
+        if (key === "BAR_HIDDEN") UiConfig.barHidden = val
+        if (key === "BAR_STYLE") UiConfig.barStyle = val
+        if (key === "BAR_AUTOHIDE") UiConfig.barAutohide = val
         if (key === "AI_ENABLED") UiConfig.aiEnabled = val
         if (key === "AI_MODEL") UiConfig.aiModel = val
+        if (key === "AI_LEVEL") UiConfig.aiLevel = val
         root._sh(root._q(root.scriptDir + "/ui-prefs.sh") + " set " + key + " " + root._q(val))
     }
 
     function _toggle(key, row) {
+        if (key === "tools/voice" && row.id === "enabled") { root.setVoice(row.active !== true); return }
+        if (key === "setup/notifications" && row.id === "dnd") { NotifState.setDnd(row.active !== true); return }
+        if (key === "setup/notifications" && row.id === "autodismiss") {
+            NotifState.setPref("NOTIF_AUTODISMISS", row.active === true ? "off" : "on")
+            return
+        }
+        if (key === "setup/notifications/sound" && row.id === "enabled") {
+            NotifState.setPref("NOTIF_SOUND", row.active === true ? "off" : "on")
+            return
+        }
         if (key === "setup/ai" && row.id === "enabled") {
             root.setDockPref("AI_ENABLED", row.active === true ? "off" : "on")
             return
         }
         if (key === "setup/shell/switcher" && row.id === "special") {
             root.setDockPref("SWITCHER_SPECIAL", row.active === true ? "off" : "on")
+            return
+        }
+        if (key === "setup/shell/bar" && row.id === "full") {
+            root.setDockPref("BAR_STYLE", row.active === true ? "islands" : "full")
+            return
+        }
+        if (key === "setup/shell/bar" && row.id === "autohide") {
+            root.setDockPref("BAR_AUTOHIDE", row.active === true ? "off" : "on")
             return
         }
         if (key === "setup/shell/dock" && row.id === "autohide") {
@@ -1964,7 +2285,10 @@ QtObject {
         case "remove/pkg":      root._term("pkg-remove",      "pkg-remove.sh",      true);  break
         case "remove/webapp":   root._term("webapp-remove",   "webapp-remove.sh",   false); break
         case "update":          root._term("system-update",   "system-update.sh",   true);  break
-        case "system/about":    root._term("about",           "about-system.sh",    false); break
+        // The sigil (About.qml), not fastfetch in a kitty any more (2026-10-21,
+        // Ahaan's ask). about-system.sh and hyprland.lua's about-float rule
+        // are left in place: nothing calls them now, and they are the way back.
+        case "system/about":    AboutState.open(); break
 
         case "security/passwd":
             root.changePasswordRequested()

@@ -24,6 +24,13 @@
 #     "Transcribed"          + the text   — typed at the cursor
 #     "Copied to clipboard"  + the text   — nothing focused, text was not typed
 #
+# Neither when EVE's pill is up (SUPER+A). A layer surface holding the keyboard
+# is not a window, so on an empty workspace activewindow says `{}` while the
+# text IS being typed, into the pill: that would overwrite the clipboard and
+# report a copy for nothing. The words are on screen there, so no notification
+# either. Asking takes 47 ms (measured); a shell that isn't up answers nothing
+# and everything below carries on as before.
+#
 # Failure is safe in both directions: on any error/timeout voxtype falls back
 # to the original transcript, and the extra clipboard write is harmless.
 set -uo pipefail
@@ -50,6 +57,9 @@ if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
     sig=$(ls -1 "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr" 2>/dev/null | head -1)
     [ -n "$sig" ] && export HYPRLAND_INSTANCE_SIGNATURE="$sig"
 fi
+
+eve=$(qs -p "$HOME/.config/shell" ipc call jarvis state 2>/dev/null)
+case "$eve" in *'"prompting":true'*) exit 0 ;; esac
 
 active=$(hyprctl activewindow -j 2>/dev/null | tr -d '[:space:]')
 

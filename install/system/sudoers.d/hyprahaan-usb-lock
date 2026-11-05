@@ -1,0 +1,6 @@
+# Lets the lock screen block new USB when it locks and lift the block when it
+# unlocks. It has no terminal to ask in, and at lock time nobody is there to answer.
+# The grant is one root-owned helper with exactly these two arguments; anything else
+# falls through to the normal %wheel rule and asks for a password. See the helper
+# for what this does and does not defend against.
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/hyprahaan-usb-lock lock, /usr/local/bin/hyprahaan-usb-lock unlock

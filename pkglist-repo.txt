@@ -1,5 +1,6 @@
 7zip
 apostrophe
+arch-wiki-docs
 asusctl
 base
 base-devel
@@ -40,6 +41,7 @@ ggml-cuda
 ggml-vulkan
 git
 github-cli
+gitleaks
 gnome-calculator
 gnome-calendar
 gnome-clocks
@@ -80,6 +82,7 @@ less
 libpulse
 libqalculate
 libreoffice-still
+librewolf
 libva-utils
 libvirt
 limine
@@ -87,6 +90,8 @@ linux
 linux-firmware
 linux-headers
 llama-cpp
+man-db
+man-pages
 mesa-utils
 meson
 minicom
@@ -165,6 +170,7 @@ wiremix
 wireplumber
 wtype
 xdg-desktop-portal-hyprland
+xdg-terminal-exec
 xdg-user-dirs
 yazi
 zathura

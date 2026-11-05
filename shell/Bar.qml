@@ -91,7 +91,7 @@ Scope {
     //=====================================================================//
     //  PANEL TEXT SIZE  —  change this one number                         //
     //=====================================================================//
-    //  Every font.pixelSize inside the six dropdown panels (control centre,
+    //  Every font.pixelSize inside the six dropdown panels (notification centre,
     //  calendar, battery, wifi, bluetooth, audio) is written as
     //  root.ns(<base>), so this single multiplier scales all of them at once.
     //
@@ -110,7 +110,7 @@ Scope {
     // Gap between the bar and any dropdown beneath it. These windows are layer
     // surfaces whose top already begins below the bar's 44px exclusive zone, so
     // this is the visible gap on top of that — one knob for all six dropdowns
-    // (control center, calendar, battery, wifi, bluetooth, audio) so they stay
+    // (notification center, calendar, battery, wifi, bluetooth, audio) so they stay
     // aligned with each other.
     // 0 is as tight as this can go: these are layer surfaces, and the bar's
     // exclusive zone is a hard floor they cannot cross (a negative margin
@@ -118,55 +118,258 @@ Scope {
     // the gap bottoms out at 5px — the same 5px every window keeps from the
     // bar. See `zone` on the bar window.
     readonly property int panelTopMargin: 0
+    // On a side bar the dropdowns open beside it, against the zone's line as
+    // they hang from it under a top bar (panelTopMargin is then the gap on
+    // the bar's side), and at the BOTTOM of the screen — level with the
+    // status island they open from, whose bottom edge is 5px up. These
+    // windows already start past the bar's zone, so nothing else changes.
+    readonly property int panelBottomMargin: 5
+    // Where a dropdown card sits in its full-screen catcher: hanging from the
+    // bar's line at the top right under a top bar (10 in from the right, as
+    // ever), and beside a side bar at the bottom.
+    // Under Always hide nothing is reserved, so the catcher windows start at
+    // the screen's edge and the card is put past the bar's zone by hand.
+    function panelX(p, w) {
+        const z = root.barReserves ? 0 : root.barZone
+        return root.barPos === "left"  ? z + root.panelTopMargin
+             : root.barPos === "right" ? p.width - w - z - root.panelTopMargin
+             : p.width - w - 10
+    }
+    function panelY(p, h) {
+        return root.barVert ? p.height - h - root.panelBottomMargin
+                            : (root.barReserves ? 0 : root.barZone) + root.panelTopMargin
+    }
 
-    // control center open/closed (toggled by the arch button in the bar)
-    property bool ccVisible: false
+    //========================================================================//
+    //  WHERE THE BAR IS  (Settings -> Shell -> Bar, 2026-10-31)              //
+    //========================================================================//
+    // Ahaan: "select bar position (top, left, right) and also the modules i
+    // wanna keep ... the dropdowns and all should open accordingly." ui.conf
+    // BAR_POSITION / BAR_HIDDEN (and BAR_STYLE / BAR_AUTOHIDE, below), through UiConfig.
+    //
+    // barPos is the edge the bar is DRAWN on, and it is a plain value rather
+    // than a binding on the setting, for the dock's reason (MacShell.qml's
+    // `edge`): a move has to fade the bar out where it is before anything is
+    // re-laid-out for where it is going. barMove fades the islands out
+    // towards their edge, swaps barPos (re-anchoring the surface, so the
+    // compositor moves the reserved zone and the windows reflow), and fades
+    // them in at the new edge. The fade also hides the frames Hyprland spends
+    // stretching a layer surface that changed size (the dock's smeared
+    // icons, in the system map). The first read of ui.conf places the bar
+    // rather than moving it there.
+    //
+    // barVert is the only thing most of the bar asks: a side bar is one
+    // column, and everything that revealed along the row's width reveals
+    // along the column's height instead.
+    readonly property string barWant: UiConfig.barEdge
+    property string barPos: "top"
+    readonly property bool barVert: barPos !== "top"
+    property real barFade: 1
+    // The islands are 34 across on a side bar — the same thickness a top
+    // bar's row is tall — so they sit 5px in from the screen edge and 5px
+    // short of the zone's line, as they do under a top bar.
+    readonly property int barStrip: 34
+    // Every module's length along a side bar's column, so the column is an
+    // even rhythm whatever each module is drawn with (see BarLabel.cellH).
+    readonly property int barPitch: 26
+    // How wide a reminder or notification announcement grows the centre
+    // island beside a side bar's column (on top it takes the clock row's).
+    readonly property int announceW: 380
+    onBarWantChanged: {
+        if (!UiConfig.loaded) { root.barPos = root.barWant; return }
+        if (root.barWant !== root.barPos) barMove.restart()
+    }
+    SequentialAnimation {
+        id: barMove
+        NumberAnimation { target: root; property: "barFade"; to: 0; duration: 140; easing.type: Easing.InQuad }
+        // The dropdowns and the tenants close: laid out for the old edge,
+        // they would be left floating. EVE's card is not dismissed — that
+        // would deny an approval she is waiting on — it is drawn inside the
+        // island, so it simply goes with it.
+        ScriptAction { script: { root.islandOnly("none"); root.barPos = root.barWant } }
+        PauseAnimation { duration: 140 }
+        NumberAnimation { target: root; property: "barFade"; to: 1; duration: 240; easing.type: Easing.OutCubic }
+    }
+    // The module ids are the Modules page's (Settings.qml) and ui-prefs.sh's
+    // BAR_HIDDEN words. Reading barHiddenList makes every binding that asks
+    // re-run when a checkbox changes.
+    function modOn(id) { return UiConfig.barHiddenList.indexOf(id) < 0 }
 
-    // calendar dropdown open/closed (toggled by the clock in the bar), and
-    // which month it's currently showing (independent of "today")
-    property bool calVisible: false
-    property int calYear: new Date().getFullYear()
-    property int calMonth: new Date().getMonth()          // 0 = January
-    readonly property var monthNames: ["January", "February", "March", "April",
-        "May", "June", "July", "August", "September", "October", "November", "December"]
+    // ── the order windows were opened in, for the tasks module ────────
+    // Ahaan: "Dont rearrange the appicons, let them be in order of opened".
+    // hyprctl's client list is NOT that order: raising a window moves it in
+    // the list, so the row reshuffled on every click. Hyprland reports no
+    // open time, so the bar keeps its own: each address gets the next number
+    // the first time it is seen, and the list is sorted by it. Windows that
+    // were already open when the shell started are numbered by pid, which is
+    // launch order for separate apps. A plain object mutated in place, so
+    // numbering a new window does not re-run the bindings that read it.
+    readonly property var _openSeq: ({ n: 0, of: {} })
+    function openOrder(list) {
+        const seq = root._openSeq
+        const fresh = list.filter(w => seq.of[(w.address || "").toLowerCase()] === undefined)
+                          .sort((a, b) => (a.pid || 0) - (b.pid || 0))
+        for (let i = 0; i < fresh.length; i++)
+            seq.of[(fresh[i].address || "").toLowerCase()] = ++seq.n
+        return list.slice().sort((a, b) => seq.of[(a.address || "").toLowerCase()]
+                                         - seq.of[(b.address || "").toLowerCase()])
+    }
 
-    function calDaysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
-    function calFirstWeekday(y, m) { return new Date(y, m, 1).getDay(); }   // 0 = Sunday
-    function calPrevMonth() { if (calMonth === 0) { calMonth = 11; calYear--; } else calMonth--; }
-    function calNextMonth() { if (calMonth === 11) { calMonth = 0; calYear++; } else calMonth++; }
-    // pick black/white text for a filled circle so "today" stays legible
-    // regardless of how light/dark the current wallpaper's accent color is
+    // An axis-aligned outline with its corners rounded, as an SVG path for
+    // PathSvg. pts are [x, y] in a CLOCKWISE (screen) order; each corner
+    // is convex (radius rv) where the outline turns right and concave (rc)
+    // where it turns left. A corner's radius is capped at its share of each
+    // edge it touches — want / (want + the neighbour's want) of the length —
+    // so two corners on a short edge shrink together and meet tangentially
+    // instead of overlapping (the side-bar island's join, Island.sidePaths).
+    // Duplicate and collinear points are dropped first, so a step of zero
+    // is just a straight edge. Open paths keep their two ends sharp.
+    // mirrorW >= 0 reflects the result about x = mirrorW / 2 (x -> W - x,
+    // arcs swept the other way): a right bar is a left bar in a mirror.
+    function roundPath(pts, closed, rv, rc, mirrorW) {
+        const eq = (a, b) => Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01
+        let p = []
+        for (const q of pts) if (!p.length || !eq(q, p[p.length - 1])) p.push(q)
+        if (closed && p.length > 1 && eq(p[0], p[p.length - 1])) p.pop()
+        const cr = (a, b, c) => (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+        for (let changed = true; changed && p.length > 2; ) {
+            changed = false
+            for (let i = closed ? 0 : 1; i < (closed ? p.length : p.length - 1); i++) {
+                const a = p[(i - 1 + p.length) % p.length], c = p[(i + 1) % p.length]
+                if (Math.abs(cr(a, p[i], c)) < 0.01) { p.splice(i, 1); changed = true; break }
+            }
+        }
+        const n = p.length
+        if (n < 2) return ""
+        const mx = x => mirrorW >= 0 ? mirrorW - x : x
+        const f = v => Math.round(v * 1000) / 1000
+        const pt = q => f(mx(q[0])) + " " + f(q[1])
+        const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1])
+        const inner = i => closed || (i > 0 && i < n - 1)
+        const want = [], turn = []
+        for (let i = 0; i < n; i++) {
+            if (!inner(i)) { want.push(0); turn.push(0); continue }
+            const t = cr(p[(i - 1 + n) % n], p[i], p[(i + 1) % n])
+            turn.push(t > 0 ? 1 : 0)
+            want.push(t > 0 ? rv : rc)
+        }
+        const r = []
+        for (let i = 0; i < n; i++) {
+            const w = want[i]
+            if (w <= 0) { r.push(0); continue }
+            const ip = (i - 1 + n) % n, inx = (i + 1) % n
+            const lp = dist(p[ip], p[i]), ln = dist(p[i], p[inx])
+            const wp = inner(ip) ? want[ip] : 0, wn = inner(inx) ? want[inx] : 0
+            r.push(Math.max(0, Math.min(w, lp * w / (w + wp), ln * w / (w + wn))))
+        }
+        // a = where the corner's arc starts, b = where it ends
+        const toward = (from, to, d) => {
+            const L = dist(from, to)
+            return L < 1e-6 ? from : [from[0] + (to[0] - from[0]) * d / L, from[1] + (to[1] - from[1]) * d / L]
+        }
+        const corner = i => {
+            const q = p[i], rr = r[i]
+            if (rr < 0.01) return " L " + pt(q)
+            const a = toward(q, p[(i - 1 + n) % n], rr), b = toward(q, p[(i + 1) % n], rr)
+            const sweep = mirrorW >= 0 ? 1 - turn[i] : turn[i]
+            return " L " + pt(a) + " A " + f(rr) + " " + f(rr) + " 0 0 " + sweep + " " + pt(b)
+        }
+        let s
+        if (closed) {
+            s = "M " + pt(r[0] > 0.01 ? toward(p[0], p[1], r[0]) : p[0])
+            for (let i = 1; i < n; i++) s += corner(i)
+            s += corner(0) + " Z"
+        } else {
+            s = "M " + pt(p[0])
+            for (let i = 1; i < n - 1; i++) s += corner(i)
+            s += " L " + pt(p[n - 1])
+        }
+        return s
+    }
+
+    // ── full length, and always hide (2026-10-31) ─────────────────────
+    // Ahaan: "a toggle for bar to be in pieces like this or full length
+    // along with auto hide like dock has". ui.conf BAR_STYLE / BAR_AUTOHIDE.
+    //
+    // Full length draws one strip under the islands (fullStrip, in `bar`)
+    // and the islands lose their own ground — except the centre one while a
+    // tenant grows it, which fades its ground back in (Island.bgA) so what
+    // opens still comes out of the bar as one shape.
+    //
+    // Always hide is the dock's: the bar reserves no zone, slides off its
+    // edge, and comes back while the pointer is on its edge or on it, for
+    // 1 s after it leaves (barGrace, the dock's grace), and for as long as
+    // anything hangs off it — a dropdown, a tenant, an announcement, EVE's
+    // orb in flight. barHideT is the slide, 0 shown .. 1 hidden.
+    readonly property bool barFull: UiConfig.barStyle === "full"
+    readonly property bool barAuto: UiConfig.barAutohide === "on"
+    // The zone the bar reserves when it reserves one (each bar's `zone`).
+    // Dropdowns need it under Always hide, where the windows they live in
+    // no longer start past it.
+    readonly property int barZone: 42
+    // The bar's ground: 0.9 as tuned (Island has why), opaque when it
+    // overlays windows under Always hide.
+    // (Kept opaque under Always hide even though it reserves its zone while
+    // shown now: it slides in over windows before they have moved out.)
+    readonly property real barGround: barAuto ? 1 : 0.9
+    property bool barHover: false
+    onBarHoverChanged: barHover ? barGrace.stop() : barGrace.restart()
+    Timer { id: barGrace; interval: 1000 }
+    readonly property bool barBusy: root.batVisible || root.netVisible || root.btVisible
+        || root.audVisible || root.agentVisible || root.dispVisible
+        || TodoState.open || GitaState.open || CalendarState.open || RemindersState.open
+        // EVE: her card, and the orb in FLIGHT — not the orb sitting in its
+        // slot. That one can stay for hours now (a reply clicked away rests
+        // there, JarvisState.resting; so does a run hidden while she thinks),
+        // and holding the bar out under Always hide that long is the bar
+        // being in the way. The reply landing expands the card, which brings
+        // the bar back for it.
+        || MusicState.open || NotifState.open || JarvisState.expanded || JarvisState.phase === "launch"
+        || RemindersState.announceAmount > 0.01 || NotifState.announceAmount > 0.01
+    readonly property bool barShown: !barAuto || barHover || barGrace.running || barBusy
+    // Shown, it reserves its zone, so the windows on that side shrink out of
+    // its way and grow back when it hides (Ahaan: "that side of the app
+    // should shrink and expand accordingly"). The compositor reflows tiled
+    // windows and animates them; floating ones SUPER+D sized are refit by
+    // window-zoom.sh, and gaps_out follows (0 on the bar edge only while a
+    // zone is reserved) — the same two calls ui-prefs.sh makes for a
+    // position change. Hidden, it reserves nothing.
+    //
+    // Released 200 ms AFTER it starts to hide, not with it: in the same
+    // frame, the windows grew into the space while the bar was still
+    // sliding out of it (Ahaan: "too quick. Let the bar go away, then the
+    // window expands"). The 260 ms OutCubic slide is ~90% gone by then.
+    // Taken back at once on show, so a window is never under the bar.
+    // A plain value, not a binding: a binding would follow barShown the
+    // first time it hid, before the handler below ever assigned it.
+    property bool barReserves: true
+    readonly property bool barWantsZone: !barAuto || barShown
+    onBarWantsZoneChanged: {
+        if (barWantsZone) { zoneRelease.stop(); barReserves = true }
+        else zoneRelease.restart()
+    }
+    Timer { id: zoneRelease; interval: 200; onTriggered: root.barReserves = root.barWantsZone }
+    onBarReservesChanged: {
+        if (!UiConfig.loaded) return
+        const edge = barReserves ? barPos : "none"
+        root.run(root.shq(root.sideScriptDir + "/window-rules.sh") + " apply-gaps " + edge
+                 + "; " + root.shq(root.sideScriptDir + "/window-zoom.sh") + " refit " + edge)
+    }
+    property real barHideT: barShown ? 0 : 1
+    Behavior on barHideT { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+    // (The notification center that sat here — a 320 px dropdown under the
+    // arch button, ccVisible/ccHeight — became a centre-island tenant on
+    // 2026-10-26: Notifications.qml, NotifState.qml. The arch button opens
+    // the settings menu now.)
+
+    // pick black/white text for an accent fill (toggles, the active button)
+    // so it stays legible however light/dark the wallpaper made the accent
     function contrastText(c) { return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) > 0.6 ? "black" : "white"; }
 
-    // Drives calCells' re-evaluation across midnight. `new Date()` inside a
-    // QML property binding is NOT a dependency the binding engine can see, so
-    // without reading an actual QML property here, calCells only ever
-    // recomputed when calYear/calMonth changed (i.e. month nav) — the "today"
-    // dot would silently go stale for the rest of the day the machine stayed
-    // up. Minutes precision is cheap and gets the day rollover within a
-    // minute of midnight instead of requiring a month-nav round trip.
+    // Minute-precision clock the bar's countdowns read (agentNowMs). It was
+    // the calendar dropdown's, for the day rollover; the calendar keeps its
+    // own now (CalendarState) and this one stayed for the countdowns.
     SystemClock { id: dayClock; precision: SystemClock.Minutes }
-
-    // 6 weeks x 7 days, including muted leading/trailing days from adjacent
-    // months so the grid is always a full rectangle. Recomputes whenever
-    // calYear/calMonth change since it reads them directly, and whenever
-    // dayClock ticks so the "today" highlight follows a real day rollover.
-    readonly property var calCells: {
-        var first = calFirstWeekday(calYear, calMonth);
-        var days = calDaysInMonth(calYear, calMonth);
-        var prevDays = calDaysInMonth(calMonth === 0 ? calYear - 1 : calYear, calMonth === 0 ? 11 : calMonth - 1);
-        var today = dayClock.date;
-        var cells = [];
-        for (var i = 0; i < 42; i++) {
-            var dayNum = i - first + 1;
-            var inMonth = dayNum >= 1 && dayNum <= days;
-            var num = dayNum < 1 ? prevDays + dayNum : (dayNum > days ? dayNum - days : dayNum);
-            var isToday = inMonth && num === today.getDate()
-                          && calMonth === today.getMonth() && calYear === today.getFullYear();
-            cells.push({ num: num, inMonth: inMonth, weekday: i % 7, isToday: isToday });
-        }
-        return cells;
-    }
 
     // battery hard-coded colours (these were literal hex in style.css)
     readonly property color colCharging: "#26A65B"
@@ -492,7 +695,7 @@ Scope {
 
     //========================================================================//
     //  PANEL MUTUAL EXCLUSION                                                //
-    //  Every dropdown (control center, calendar, battery, display, wifi,     //
+    //  Every dropdown (notification center, calendar, battery, display, wifi,     //
     //  bluetooth, audio) is its own PanelWindow; only one may be open at a   //
     //  time.                                                                 //
     //========================================================================//
@@ -501,14 +704,75 @@ Scope {
     property bool audVisible: false
     property bool agentVisible: false
 
+    // The todo list (Todo.qml) shares the centre island with jarvis: a jarvis
+    // card arriving closes it (TodoState.show() does the reverse), and opening
+    // it closes any dropdown, since its catcher would sit over one anyway.
+    // The Gita reader (Gita.qml), the calendar (Calendar.qml) and the
+    // reminders (Reminders.qml) are tenants on the same terms: whichever
+    // arrives closes the rest and every dropdown. One island, one thing in it.
+    function islandOnly(keep) {
+        root.closePanels();
+        if (keep !== "todo") TodoState.close();
+        if (keep !== "gita") GitaState.close();
+        if (keep !== "cal") CalendarState.close();
+        if (keep !== "rem") RemindersState.close();
+        if (keep !== "music") MusicState.close();
+        if (keep !== "notif") NotifState.close();
+        // And whatever is being announced goes too. An announcement only
+        // starts when the island is free (NotifState.announce), but nothing
+        // ended one already up when a tenant opened, so the banner stayed
+        // and drew over the calendar (Ahaan's screenshot, a left bar). The
+        // notification itself is kept in the center; only the drop ends.
+        NotifState.announcing = false; RemindersState.announcing = false;
+    }
+    Connections {
+        target: JarvisState
+        function onExpandedChanged() { if (JarvisState.expanded) root.islandOnly("jarvis"); }
+    }
+    Connections {
+        target: TodoState
+        function onOpenChanged() { if (TodoState.open) root.islandOnly("todo"); }
+    }
+    Connections {
+        target: GitaState
+        function onOpenChanged() { if (GitaState.open) root.islandOnly("gita"); }
+    }
+    Connections {
+        target: CalendarState
+        function onOpenChanged() { if (CalendarState.open) root.islandOnly("cal"); }
+    }
+    Connections {
+        target: RemindersState
+        function onOpenChanged() { if (RemindersState.open) root.islandOnly("rem"); }
+    }
+    // The music player (Music.qml) moved here from the notification centre
+    // (2026-10-25). It shows the player the old widget did — the sticky pick,
+    // mprisPlayer — and Tab in the island walks the player list.
+    Connections {
+        target: NotifState
+        function onOpenChanged() { if (NotifState.open) root.islandOnly("notif"); }
+    }
+    Connections {
+        target: MusicState
+        function onOpenChanged() { if (MusicState.open) root.islandOnly("music"); }
+        function onCyclePlayer(dir) { MusicState.cycleDir = dir; root.mprisCycle(dir); }
+    }
+    Binding { target: MusicState; property: "player"; value: root.mprisPlayer }
+    // So a reply landing under an open tenant parks behind the orb rather than
+    // closing it (JarvisState.islandTaken).
+    Binding {
+        target: JarvisState; property: "islandTaken"
+        value: TodoState.open || GitaState.open || CalendarState.open || RemindersState.open || MusicState.open
+               || NotifState.open
+    }
+
     function closePanels() {
-        root.ccVisible = false; root.calVisible = false; root.batVisible = false;
+        root.batVisible = false;
         root.netVisible = false; root.btVisible = false; root.audVisible = false;
         root.agentVisible = false; root.dispVisible = false;
     }
     function panelOpen(which) {
-        return which === "cc"  ? root.ccVisible  : which === "cal" ? root.calVisible
-             : which === "bat" ? root.batVisible : which === "net" ? root.netVisible
+        return which === "bat" ? root.batVisible : which === "net" ? root.netVisible
              : which === "bt"  ? root.btVisible  : which === "aud" ? root.audVisible
              : which === "agent" ? root.agentVisible
              : which === "disp" ? root.dispVisible : false;
@@ -517,9 +781,7 @@ Scope {
         var wasOpen = root.panelOpen(which);
         root.closePanels();
         if (wasOpen) return;
-        if      (which === "cc")  root.ccVisible  = true;
-        else if (which === "cal") root.calVisible = true;
-        else if (which === "bat") root.batVisible = true;
+        if      (which === "bat") root.batVisible = true;
         else if (which === "net") root.netVisible = true;
         else if (which === "bt")  root.btVisible  = true;
         else if (which === "aud") root.audVisible = true;
@@ -1061,6 +1323,7 @@ Scope {
         robotOn:  String.fromCodePoint(0xf06a9),   // md-robot         (agents, live)
         refresh:  String.fromCodePoint(0xf0450),   // md-refresh
         monitor:  String.fromCodePoint(0xf0379),   // md-monitor (external display)
+        book:     String.fromCodePoint(0xf05da),   // md-book_open_page_variant (the Gita)
         check:    String.fromCodePoint(0xf012c),   // md-check   (selected display)
         plus:     String.fromCodePoint(0xf0415)    // md-plus    (add a reminder)
     })
@@ -1530,6 +1793,12 @@ Scope {
     property var agentCollectorIds: []   // ids the installed collectors declare
     property var agents: []              // normalized records that have something to say
     property int agentIndex: 0           // which one the panel is showing
+    // The tab last picked BY HAND (chip, scroll, `agents next`), by id rather
+    // than index so a re-sorted or grown list cannot move it. Persisted, so it
+    // also survives a shell relaunch. Empty until the first pick, which is the
+    // only case agentPreferLive still gets to choose for you.
+    property string agentPickedId: ""
+    readonly property string agentPickPath: StateDir.dir + "/agent-tab"
     property var agentLive: ({})         // id -> true while that CLI has a live process
     // "<id>\t<config dir>" -> true for every live process, where the dir is
     // the value of that agent's accountEnv (resolved), or "" when it is unset
@@ -1753,6 +2022,39 @@ Scope {
         out.sort(function (a, b) { return a.name.localeCompare(b.name); });
         root.agents = out;
         if (root.agentIndex >= out.length) root.agentIndex = 0;
+        root.agentRestorePick();
+    }
+
+    // Every hand-made tab change goes through here, so the choice is recorded.
+    function agentSelect(i) {
+        if (i < 0 || i >= root.agents.length) return;
+        root.agentIndex = i;
+        root.agentPickedId = root.agents[i].id;
+        agentPickWrite.running = false;
+        agentPickWrite.running = true;
+    }
+    // Points agentIndex back at the picked tab; false when it has no record.
+    function agentRestorePick() {
+        if (root.agentPickedId === "") return false;
+        for (var i = 0; i < root.agents.length; i++)
+            if (root.agents[i].id === root.agentPickedId) { root.agentIndex = i; return true; }
+        return false;
+    }
+    // A tiny one-shot, not a FileView: nothing else writes this file, so it
+    // needs no watch, and the mkdir -p covers a fresh machine where the state
+    // dir does not exist yet.
+    Process {
+        id: agentPickWrite
+        command: ["sh", "-c", 'mkdir -p "$(dirname "$1")" && printf %s "$2" > "$1"',
+                  "agent-pick", root.agentPickPath, root.agentPickedId]
+    }
+    FileView {
+        path: root.agentPickPath
+        printErrors: false
+        onLoaded: {
+            var id = text().trim();
+            if (id !== "" && root.agentPickedId === "") { root.agentPickedId = id; root.agentRestorePick(); }
+        }
     }
 
     // One entry per login the agent is signed in with (2026-10-19: two Claude
@@ -1800,7 +2102,14 @@ Scope {
     // running?" with an agent that was not. Moves only when the current tab is
     // not itself live, so a choice made by hand with two agents up survives
     // closing and reopening the panel.
+    //
+    // 2026-10-22: and not at all once a tab has been picked by hand. "Not
+    // itself live" was still too eager — Ahaan closed the panel on Codex with
+    // only Claude running and it reopened on Claude every time. The last pick
+    // now wins whenever that agent still has a record; this only decides for
+    // someone who has never picked.
     function agentPreferLive() {
+        if (root.agentRestorePick()) return;
         if (root.agents.length < 2) return;
         var cur = root.agents[Math.max(0, Math.min(root.agentIndex, root.agents.length - 1))];
         if (cur && root.agentLive[cur.id]) return;
@@ -2118,374 +2427,137 @@ Scope {
         persistenceSupported: true      // notifications stay in the center as history
         inlineReplySupported: true      // config: notification-inline-replies
 
-        // new notification -> show a transient popup (history is kept automatically
-        // in trackedNotifications, mirroring swaync's control center).
+        // A new one is kept (trackedNotifications is the notification
+        // center's list, NotifState.items) and announced in the centre island
+        // — the island drops with its text beside a dot for 2.5 s, as a due
+        // reminder does with its bell (2026-10-26; it was a 2 s card in a
+        // popup stack at the top left). Do Not Disturb skips the announcement,
+        // never the keeping: NotifState.announce checks it.
         onNotification: (notif) => {
-            notif.tracked = true;                       // keep in history
-            if (root.dnd) return;                       // Do Not Disturb: no popup, history only
-            var timeout = notif.urgency === NotificationUrgency.Critical ? root.tCritical
-                        : notif.urgency === NotificationUrgency.Low      ? root.tLow
-                        : root.tNormal;
-            root.pushPopup(notif, timeout);
+            notif.tracked = true;
+            root.stampNotif(notif);
+            NotifState.announce(notif.summary || notif.appName, notif.body);
+            // Played whether or not the island was free to announce it: a
+            // skipped drop is still an arrival. chime() checks DND and the
+            // Sound switch (Settings -> Setup -> Notifications, 2026-11-02).
+            NotifState.chime();
         }
     }
+    // The center's list, newest first, and when each arrived.
+    Binding { target: NotifState; property: "items"; value: notifServer.trackedNotifications.values.slice().reverse() }
+    Binding { target: NotifState; property: "times"; value: root.notifTimes }
 
-    // Do Not Disturb (toggled from the control center)
-    property bool dnd: false
-
-    // per-urgency popup timeouts, in ms (config.json: timeout / -low / -critical, seconds)
-    readonly property int tNormal:   2000
-    readonly property int tLow:      6000
-    readonly property int tCritical: 1000
-
-    // Live popup list (separate from history).
-    //
-    // This used to be a plain JS array, reassigned on every push and drop —
-    // which rebuilds EVERY Repeater delegate (the array-model gotcha in
-    // CLAUDE.md). Two visible consequences whenever more than one popup was
-    // on screen: the entire stack blinked out for a frame and re-ran its
-    // 200ms fade-in every time any one of them expired, and each surviving
-    // card's auto-dismiss Timer restarted from zero, so popups outlived their
-    // own timeout. A ListModel removes one row without touching its
-    // neighbours, so the others neither flicker nor lose their timers.
-    ListModel { id: popupModel; dynamicRoles: true }
-
-    function pushPopup(n, ms) { popupModel.append({ notif: n, ms: ms }); }
-    // Called by a card once its fade-out has finished. Removal is always
-    // initiated by the card itself (close button or timeout), so the model
-    // needs no "closing" role.
-    function removePopup(n) {
-        for (var i = 0; i < popupModel.count; i++)
-            if (popupModel.get(i).notif === n) { popupModel.remove(i); return; }
+    // Arrival time per notification id, for the notification center's timestamps.
+    // Notification carries no time of its own, and a QObject from C++ takes
+    // no new JS properties, so it lives here. Reassigned (not mutated) so the
+    // cards' bindings see it; pruned to the live ids on each arrival so it
+    // cannot grow past the history it describes.
+    property var notifTimes: ({})
+    function stampNotif(n) {
+        var live = notifServer.trackedNotifications.values, t = {};
+        for (var i = 0; i < live.length; i++)
+            if (root.notifTimes[live[i].id] !== undefined) t[live[i].id] = root.notifTimes[live[i].id];
+        t[n.id] = Date.now();
+        root.notifTimes = t;
     }
-
-    function clearAllNotifs() {
-        var list = notifServer.trackedNotifications.values;
-        for (var i = list.length - 1; i >= 0; i--) list[i].dismiss();
-    }
-
     //========================================================================//
-    //  REMINDERS                                                             //
+    //  REMINDERS — the "Reminder set" notice                                 //
     //========================================================================//
-    //  SUPER+SHIFT+R (or the + in the calendar panel) asks for a delay, then
-    //  for a message; at the due time a card appears in the popup stack that
-    //  DOES NOT time out. It sits there until it is clicked. That is the whole
-    //  point of the feature — everything else in that stack self-dismisses
-    //  after a few seconds, and a reminder you can miss by looking away for
-    //  four seconds is not a reminder.
+    //  The reminders themselves (store, sweep, the "in 12m" clock) are
+    //  RemindersState's, and the list and the new-reminder box are an island
+    //  tenant (Reminders.qml, SUPER+SHIFT+R) since 2026-10-21 — they were this
+    //  file's, with a modal pill for the box and a column of the calendar
+    //  dropdown for the list.
     //
-    //  One JSON file is the source of truth for both halves of the UI (the
-    //  popup and the calendar panel's list), stored beside the agents usage
-    //  records under XDG_STATE_HOME:
-    //
-    //      [ { "id": "1789...-42", "at": 1789200000000,
-    //          "text": "drink water", "fired": false } ]
-    //
-    //      at     epoch ms the reminder is due
-    //      fired  set once the card has been shown. The row is DELETED when
-    //             that card is clicked, never merely marked — so "fired but
-    //             still present" means "shown and not yet acknowledged", and
-    //             remSweep() can rebuild the on-screen stack from the file
-    //             alone after a shell restart.
-    //
-    //  Two behaviours fall out of storing `fired` rather than deleting on
-    //  fire, and both are deliberate: a reminder that came due while the
-    //  machine was suspended fires on the next tick instead of being silently
-    //  skipped, and one that was never clicked comes back after SUPER+K.
-    property var reminders: []
-
-    readonly property string remindersPath:
-        (Quickshell.env("XDG_STATE_HOME") || root.homeDir + "/.local/state")
-        + "/hyprahaan/reminders.json"
-
-    // watchChanges is what keeps a repo instance and the live one agreeing on
-    // the same list while both are up (CLAUDE.md step 2 runs them side by
-    // side). printErrors is off because the file legitimately does not exist
-    // until the first reminder is made, and an ENOENT on every startup is
-    // noise, not a fault.
-    FileView {
-        id: remFile
-        path: root.remindersPath
-        watchChanges: true
-        printErrors: false
-        // The store is read by the other instance's watcher, so it must never
-        // be observable half-written.
-        atomicWrites: true
-        // Not root's Component.onCompleted — that one already belongs to
-        // mprisResolve(), and a second handler on the same object replaces it.
-        Component.onCompleted: root.remEnsureDir()
-        onFileChanged: reload()
-        onLoadFailed: root.remApply([])
-        onSaved: root.remSaveRetried = false
-        onSaveFailed: {
-            // In practice this is only ever "the state directory does not
-            // exist yet", which the startup mkdir normally handles — but a
-            // reminder added in the first few ms of a fresh machine's first
-            // session would beat it. Make the directory and write once more; a
-            // second failure is a real one and is logged rather than retried
-            // forever.
-            if (root.remSaveRetried) {
-                console.warn("reminders: could not write", root.remindersPath);
-                return;
-            }
-            root.remSaveRetried = true;
-            root.remEnsureDir();
-            remSaveRetry.restart();
-        }
-        onLoaded: {
-            try {
-                var parsed = JSON.parse(remFile.text() || "[]");
-                root.remApply(Array.isArray(parsed) ? parsed : []);
-            } catch (e) {
-                // A store that will not parse is a bug in the writer, not a
-                // reason to take the panel down — keep what is in memory.
-                console.warn("reminders: ignoring unparseable store", e);
-            }
+    //  A reminder that comes due is the chip in the centre island's row (see
+    //  remChip there) since 2026-10-24. It was a sticky card at the top of the
+    //  popup stack; Ahaan asked for it beside the clock instead ("this
+    //  replaces the notification"). It keeps the card's one rule: no timeout.
+    //  It stays until it is cleared, because a reminder you can miss by
+    //  looking away for four seconds is not a reminder. What is left here is
+    //  the courtesy notice for one made from outside the panel (EVE makes
+    //  them that way): announced like a notification since the popup stack
+    //  went (2026-10-26), and like one it obeys Do Not Disturb. It is not
+    //  kept in the notification center — it owns nothing to come back to.
+    Connections {
+        target: RemindersState
+        function onAdded(text, at, quiet) {
+            if (!quiet) NotifState.announce("Reminder set", text + " · " + Qt.formatDateTime(new Date(at), "hh:mm AP"));
         }
     }
 
-    // Normalizes whatever came off disk before it reaches the UI: a record
-    // with no text or no due time is dropped rather than rendering as a blank
-    // row, and the list is kept sorted by due time so the panel, the dot in
-    // the grid and the sweep can all just walk it in order.
-    function remApply(list) {
-        var out = [];
-        for (var i = 0; i < list.length; i++) {
-            var r = list[i];
-            if (!r || typeof r !== "object") continue;
-            var at = Number(r.at);
-            var text = String(r.text || "").trim();
-            if (!isFinite(at) || at <= 0 || text === "") continue;
-            out.push({ id: String(r.id || (at + "-" + i)), at: at, text: text,
-                       fired: r.fired === true });
-        }
-        out.sort(function (a, b) { return a.at - b.at; });
-        root.reminders = out;
-        root.remSweep();
-    }
-
-    // Saving goes through FileView, which owns an ordered job queue, and NOT
-    // through a Process per save. The Process version — kill the last writer,
-    // set a new command, start it — silently lost writes: two `ipc call
-    // reminder add` a few ms apart left the store holding only the first
-    // reminder, because restarting the writer that fast dropped the second
-    // command on the floor. Measured, twice, before this was rewritten.
-    //
-    // The one thing FileView will not do is create the directory, so that is
-    // handled separately either side of this: once at startup, and again from
-    // onSaveFailed above.
-    property bool remSaveRetried: false
-    function remSave() { remFile.setText(JSON.stringify(root.reminders)); }
-
-    Process { id: remMkdir }
-    function remEnsureDir() {
-        remMkdir.running = false;
-        remMkdir.command = ["sh", "-c", 'mkdir -p "$(dirname "$1")"',
-                            "reminders-mkdir", root.remindersPath];
-        remMkdir.running = true;
-    }
-    Timer {
-        id: remSaveRetry
-        interval: 200; repeat: false
-        onTriggered: root.remSave()
-    }
-
-    function remAdd(minutes, text) {
-        var mins = Number(minutes);
-        text = String(text || "").trim();
-        if (!isFinite(mins) || mins <= 0 || text === "") return false;
-        var list = root.reminders.slice();
-        list.push({ id: Date.now() + "-" + Math.floor(Math.random() * 1000000),
-                    at: Date.now() + Math.round(mins * 60000),
-                    text: text, fired: false });
-        root.remApply(list);          // sorts, and sweeps in case mins rounded to now
-        root.remSave();
-        root.remPopNotice("Reminder set", text + " · "
-                          + Qt.formatDateTime(new Date(Date.now() + Math.round(mins * 60000)),
-                                              "hh:mm AP"));
-        return true;
-    }
-
-    // The single removal path: the popup's click, the panel's trash button and
-    // the IPC verb all land here, so a reminder can never survive in one half
-    // of the UI after being dismissed in the other.
-    function remDelete(id) {
-        var list = [];
-        for (var i = 0; i < root.reminders.length; i++)
-            if (root.reminders[i].id !== id) list.push(root.reminders[i]);
-        root.remPopDrop(id);
-        if (list.length === root.reminders.length) return;
-        root.reminders = list;
-        root.remSave();
-    }
-
-    readonly property bool remPending: {
-        for (var i = 0; i < root.reminders.length; i++)
-            if (!root.reminders[i].fired) return true;
-        return false;
-    }
-
-    // 1s is finer than a minutes-granularity feature needs, but it is what
-    // keeps "in 1 minute" honest, and the timer only runs while something is
-    // actually pending — an empty list costs nothing.
-    Timer {
-        interval: 1000; repeat: true; running: root.remPending
-        onTriggered: root.remSweep()
-    }
-
-    // Marks everything due as fired and makes sure every fired reminder has a
-    // card on screen. Called on every tick AND on every load, which is what
-    // makes this recover rather than merely schedule — see the note on `fired`
-    // above. Safe to call repeatedly: remPopPush ignores a reminder that is
-    // already on screen, and the file is only rewritten when something
-    // actually changed, so a load → sweep → save → load cycle terminates.
-    function remSweep() {
-        var now = Date.now();
-        var changed = false;
-        var out = [];
-        for (var i = 0; i < root.reminders.length; i++) {
-            var r = root.reminders[i];
-            var fired = r.fired || r.at <= now;
-            if (fired !== r.fired) changed = true;
-            var n = { id: r.id, at: r.at, text: r.text, fired: fired };
-            out.push(n);
-            if (fired) root.remPopPush(n);
-        }
-        if (!changed) return;
-        root.reminders = out;
-        root.remSave();
-    }
-
-    // The cards currently on screen. A ListModel rather than a reassigned JS
-    // array for exactly the reason the notification popups use one: removing a
-    // row must not rebuild its neighbours' delegates (see popupModel above).
-    ListModel { id: remPopModel }          // { rid, rtitle, rbody, rsticky }
-
-    function remPopPush(r) {
-        for (var i = 0; i < remPopModel.count; i++)
-            if (remPopModel.get(i).rid === r.id) return;
-        remPopModel.append({ rid: r.id, rtitle: "Reminder", rbody: r.text,
-                             rsticky: true });
-    }
-
-    // The "Reminder set" confirmation. Same card, same timeout an ordinary
-    // notification gets, and it owns no reminder — dismissing it cancels
-    // nothing. Its id cannot collide with a reminder's, which are built from
-    // Date.now().
-    property int remNoticeSeq: 0
-    function remPopNotice(title, body) {
-        if (root.dnd) return;              // a courtesy popup obeys DND; a due
-                                           // reminder deliberately does not
-        root.remNoticeSeq++;
-        remPopModel.append({ rid: "notice-" + root.remNoticeSeq, rtitle: title,
-                             rbody: body, rsticky: false });
-    }
-    function remPopDrop(id) {
-        for (var i = 0; i < remPopModel.count; i++)
-            if (remPopModel.get(i).rid === id) { remPopModel.remove(i); return; }
-    }
-
-    // Ticks only while the calendar panel is open — the "in 12m" countdown
-    // beside each row is the only thing that reads it.
-    property double remNow: Date.now()
-    Timer {
-        interval: 1000; repeat: true; running: root.calVisible; triggeredOnStart: true
-        onTriggered: root.remNow = Date.now()
-    }
-    function remCountdown(at) {
-        var s = Math.round((at - root.remNow) / 1000);
-        if (s <= 0) return "due";
-        if (s < 60) return "in " + s + "s";
-        var m = Math.round(s / 60);
-        if (m < 60) return "in " + m + "m";
-        return "in " + Math.floor(m / 60) + "h " + (m % 60) + "m";
-    }
-
-    // ---- the two-step prompt ------------------------------------------------
-    // The delay is asked FIRST and the message second, because the delay is the
-    // part you already know when you reach for the keybind — the message is
-    // what you are still composing.
-    property bool   remPromptOpen:  false
-    property int    remPromptStage: 0        // 0 = minutes, 1 = message
-    property string remPromptMins:  ""
-    property string remPromptText:  ""
-    property bool   remPromptBad:   false
-
-    function remPromptShow() {
-        root.closePanels();
-        // Fields before stage: the stage change is what reloads the text field
-        // from these, so clearing them afterwards would put the previous
-        // prompt's answer back on screen.
-        root.remPromptMins = "";
-        root.remPromptText = "";
-        root.remPromptBad = false;
-        root.remPromptStage = 0;
-        root.remPromptOpen = true;
-    }
-    function remPromptCancel() { root.remPromptOpen = false; }
-
-    // Read leniently: "10", " 10 ", "10m" and "10 min" all mean the same
-    // thing. Anything else returns -1, which tints the box and keeps the
-    // prompt open rather than throwing away what has been typed.
-    function remParseMinutes(s) {
-        var m = /^\s*(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)?\s*$/i.exec(String(s || ""));
-        if (!m) return -1;
-        var v = parseFloat(m[1]);
-        return (isFinite(v) && v > 0) ? v : -1;
-    }
-
-    function remPromptAccept() {
-        if (root.remPromptStage === 0) {
-            if (root.remParseMinutes(root.remPromptMins) < 0) { root.remPromptBad = true; return; }
-            root.remPromptBad = false;
-            root.remPromptStage = 1;
-            return;
-        }
-        if (root.remPromptText.trim() === "") { root.remPromptBad = true; return; }
-        root.remAdd(root.remParseMinutes(root.remPromptMins), root.remPromptText);
-        root.remPromptOpen = false;
-    }
-
-    // `qs -p <shell> ipc call reminder <fn>` — `prompt` is what SUPER+SHIFT+R
-    // fires. The other three exist for the same reason the display handler's
-    // do: this module is otherwise keyboard- and mouse-only, and a repo-path
-    // instance has to be exercisable without deploying (CLAUDE.md step 2).
-    // `add` and `list` are what verified it before it ever reached ~/.config.
+    // `qs -p <shell> ipc call reminder <fn>` — `toggle` is what SUPER+SHIFT+R
+    // fires. `prompt` is its old name, kept so nothing that still calls it
+    // breaks; it opens the panel. `add` is how jarvis makes one (act.py), and
+    // with `list` is how a repo instance is exercised without deploying.
     IpcHandler {
         target: "reminder"
-        function prompt(): void { root.remPromptShow(); }
+        function toggle(): void { RemindersState.toggleOpen(); }
+        function open(): void { RemindersState.show(); }
+        function close(): void { RemindersState.close(); }
+        function prompt(): void { RemindersState.show(); }
+        // The due chip's right click: the uncleared due ones, in the island.
+        function due(): void { RemindersState.toggleDue(); }
         function add(minutes: string, text: string): string {
-            var m = root.remParseMinutes(minutes);
+            var m = RemindersState.parseMinutes(minutes);
             if (m < 0) return "bad minutes: " + minutes;
-            return root.remAdd(m, text) ? "ok" : "empty text";
+            return RemindersState.add(m, text, false) ? "ok" : "empty text";
         }
         function list(): string {
-            if (root.reminders.length === 0) return "(none)";
+            var it = RemindersState.items;
+            if (it.length === 0) return "(none)";
             var out = [];
-            for (var i = 0; i < root.reminders.length; i++) {
-                var r = root.reminders[i];
+            for (var i = 0; i < it.length; i++) {
+                var r = it[i];
                 out.push(Qt.formatDateTime(new Date(r.at), "yyyy-MM-dd hh:mm:ss")
                          + (r.fired ? "  [fired]  " : "  [pending] ")
                          + r.text + "   (" + r.id + ")");
             }
             return out.join("\n");
         }
-        // Acknowledges one reminder — the same call the card's click makes.
-        // Takes the id printed by list(), or "" for the oldest showing card,
+        // Acknowledges one reminder — the same call the chip's left click
+        // makes. Takes the id printed by list(), or "" for the oldest due one,
         // which is what a keybind would want.
         function dismiss(id: string): string {
             var target = String(id || "");
             if (target === "") {
-                if (remPopModel.count === 0) return "nothing showing";
-                target = remPopModel.get(0).rid;
+                if (RemindersState.fired.length === 0) return "nothing due";
+                target = RemindersState.fired[0].id;
             }
-            root.remDelete(target);
+            RemindersState.remove(target);
             return "dismissed " + target;
         }
         function clear(): void {
-            root.reminders = [];
-            remPopModel.clear();
-            root.remSave();
+            RemindersState.clearAll();
+        }
+        // EVE's edit: new text ("" keeps it) and/or a new due time as epoch
+        // ms ("" or 0 keeps it). By id, from list().
+        function edit(id: string, text: string, at: string): string {
+            return RemindersState.edit(id, text, Number(at) || 0) ? "edited" : "no such reminder";
+        }
+    }
+
+    // `qs -p <shell> ipc call notifications <fn>` — `toggle` is SUPER+SHIFT+N.
+    // `list` and `dnd` are how a repo instance is exercised without a keyboard.
+    IpcHandler {
+        target: "notifications"
+        function toggle(): void { NotifState.toggleOpen(); }
+        function open(): void { NotifState.show(); }
+        function close(): void { NotifState.close(); }
+        function clear(): void { NotifState.clearAll(); }
+        function dnd(on: string): string {
+            const want = (on === "on" || on === "off") ? on === "on" : !NotifState.dnd;
+            NotifState.setDnd(want);
+            return want ? "on" : "off";
+        }
+        function list(): string {
+            var it = NotifState.items;
+            if (it.length === 0) return "(none)";
+            var out = [];
+            for (var i = 0; i < it.length; i++)
+                out.push(NotifState.timeText(NotifState.times[it[i].id]) + "  " + (it[i].appName || "?")
+                         + ": " + NotifState.plain(it[i].summary) + " — " + NotifState.plain(it[i].body));
+            return out.join("\n");
         }
     }
 
@@ -2536,7 +2608,13 @@ Scope {
     // spotify). dir is +1 / -1; a manual pick pins like a play does, so it
     // sticks until something else starts playing or the user swipes again.
     function mprisCycle(dir) {
-        var ps = Mpris.players.values;
+        // Only players with something to show: a browser sits on the bus for
+        // its whole session with no track (zen), and walking onto it would
+        // be a blank card. The current one always stays in the list.
+        var ps = [];
+        var all = Mpris.players.values;
+        for (var j = 0; j < all.length; j++)
+            if (all[j] === root.mprisPlayer || all[j].isPlaying || (all[j].trackTitle || "") !== "") ps.push(all[j]);
         if (ps.length < 2) return;
         var idx = -1;
         for (var i = 0; i < ps.length; i++) if (ps[i] === root.mprisPlayer) { idx = i; break; }
@@ -2570,10 +2648,10 @@ Scope {
     // ---- backlight state for the display panel's slider ----------------------
     // Polled only while that panel is open; written on drag (brightnessctl).
     //
-    // The control center carried a volume and a backlight slider too, until
+    // The notification center carried a volume and a backlight slider too, until
     // 2026-09-30 — Ahaan: "They anyway have keybinds and their own modules in
     // the bar." The volume reading (volRead / volumePercent) and the
-    // control center's 500 ms poll existed only for those sliders and went
+    // notification center's 500 ms poll existed only for those sliders and went
     // with them; the backlight reading stays because the display panel's
     // slider uses it.
     property int brightPercent: 0
@@ -2731,7 +2809,7 @@ Scope {
         // Cycles subscriptions. A no-op with one agent, which is the common case.
         function next(): void {
             if (root.agents.length > 1)
-                root.agentIndex = (root.agentIndex + 1) % root.agents.length;
+                root.agentSelect((root.agentIndex + 1) % root.agents.length);
         }
     }
 
@@ -2754,8 +2832,52 @@ Scope {
 
         font.family: root.fontFamily
         font.pixelSize: root.fontSize
-        verticalAlignment: Text.AlignVCenter
-        leftPadding: 5; rightPadding: 5          // style.css: padding 0 5px
+        Layout.alignment: Qt.AlignCenter
+        // ── a side bar's column: the INK is centred, not the text box ──
+        // Nerd Font glyphs carry uneven side bearings — the wifi glyph's ink
+        // sat ~4 px right of the Arch logo's in a centred box (Ahaan: "not
+        // neatly aligned") — so in a column every single-line label is a
+        // fixed cell and is padded so its tight bounding box lands in the
+        // middle of it, both ways. One-line labels on a top bar, and the
+        // stacked clock, keep the plain box.
+        readonly property bool inkCell: root.barVert && text !== "" && text.indexOf("\n") < 0
+        readonly property real cellW: 26
+        // root.barPitch, which the battery ring takes too: at 28 here
+        // against the ring's and the since-removed drawn agent bot's 20,
+        // the gaps measured 21-23 px around them and 32 between two
+        // labels, so Wi-Fi read as sitting low
+        // (Ahaan: "wifi icon looks little off center").
+        // On a top bar a lone glyph is centred on its ink the same way (Ahaan:
+        // "at the same height"), in 20 px: the height the battery ring claims,
+        // and what keeps the island on its 34 px.
+        readonly property real cellH: inkRow ? 20 : root.barPitch
+        TextMetrics { id: ink; font: lbl.font; text: lbl.text }
+        FontMetrics { id: fm; font: lbl.font }
+        // On a top bar a lone GLYPH is sized from its ink too, 5 px either
+        // side: by their boxes the gaps measured bot 22 / bluetooth 31 /
+        // wifi 13 / battery (2x px) — the wifi glyph's wide left bearing put
+        // it against the ring (Ahaan: "wifi is misaligned in top"). Text
+        // ("Sat 31 October", "1 ~") keeps its box: its own spacing is right.
+        // Compared in UTF-16 units: in QML's engine Array.from() splits a code
+        // point above U+FFFF into its two surrogates, so this test used to read
+        // every Material glyph (monitor, book, robot, bluetooth) as two
+        // characters and skip them. That was the row's uneven gaps: measured
+        // 13/10/6/21/8/10.5/10.5 between ink, on a row meant to be all 10.
+        readonly property bool inkRow: !root.barVert && text !== ""
+                                       && String.fromCodePoint(text.codePointAt(0)).length === text.length
+        Layout.preferredWidth: inkCell ? cellW : inkRow ? ink.tightBoundingRect.width + 10 : -1
+        Layout.preferredHeight: inkCell || inkRow ? cellH : -1
+        verticalAlignment: inkCell || inkRow ? Text.AlignTop : Text.AlignVCenter
+        horizontalAlignment: inkCell || inkRow ? Text.AlignLeft : Text.AlignHCenter
+        leftPadding: inkCell ? (cellW - ink.tightBoundingRect.width) / 2 - ink.tightBoundingRect.x
+                   : inkRow ? 5 - ink.tightBoundingRect.x
+                   : root.barVert ? 0 : 5                                   // style.css: padding 0 5px
+        rightPadding: root.barVert ? 0 : 5
+        // tightBoundingRect.y is measured from the baseline (negative is up),
+        // and the baseline sits `ascent` below the top padding.
+        topPadding: inkCell || inkRow ? (cellH - ink.tightBoundingRect.height) / 2 - fm.ascent - ink.tightBoundingRect.y
+                  : root.barVert ? 4 : 0
+        bottomPadding: root.barVert && !inkCell ? 4 : 0
         color: (hoverable && hover.hovered) ? hoverColor : baseColor
         Behavior on color { ColorAnimation { duration: 200; easing.type: Easing.InOutQuad } }
 
@@ -2769,6 +2891,68 @@ Scope {
         }
 
         Tooltip { target: lbl; text: lbl.tip; shown: hover.hovered && lbl.tip !== "" }
+    }
+
+    // One app in the bar's tasks module (the App icons switch): its icon,
+    // a letter tile until the icon index lands, an accent mark when it is
+    // the focused one, and a click that focuses its window.
+    component TaskIcon: Item {
+        id: ti
+        property string cls: ""
+        property string addr: ""
+        property int wsId: 0
+        property bool focused: false
+        // One size and fully opaque for every window (Ahaan: "no
+        // transparency, just the line under it is enough for active app").
+        // A first cut drew the others at 16 and 0.55.
+        readonly property real size: 18
+        implicitWidth: size
+        implicitHeight: size
+        width: implicitWidth; height: implicitHeight
+        Image {
+            id: tiImg
+            anchors.fill: parent
+            source: {
+                void DesktopEntryCache.revision
+                return ti.cls ? IconResolver.resolveForWindow({ class: ti.cls }) : ""
+            }
+            sourceSize.width: 36; sourceSize.height: 36
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            visible: status === Image.Ready && DesktopEntryCache.ready
+        }
+        Rectangle {
+            anchors.fill: parent
+            visible: !tiImg.visible
+            radius: 4
+            color: Theme.alpha(root.col7, 0.25)
+            Text {
+                anchors.centerIn: parent
+                text: ti.cls ? ti.cls.replace(/^.*\./, "").charAt(0).toUpperCase() : "?"
+                color: root.col7
+                font.family: root.fontFamily
+                font.pixelSize: 11
+                font.weight: Font.Bold
+            }
+        }
+        signal picked()
+        // The dock's focus, dispatch for dispatch (DockIcon.qml, focusAddr):
+        // the window's workspace, then the window, then bring_to_top. A bare
+        // focus-the-window was the first cut, and a floating window behind
+        // another came out focused but still underneath (Ahaan: "the app does
+        // not come to top, it stays under").
+        MouseArea {
+            anchors.fill: parent
+            anchors.margins: -3                 // a few px of slack round an 18 px icon
+            enabled: ti.addr !== ""
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                ti.picked()
+                root.run("hyprctl dispatch \"hl.dsp.focus({ workspace = " + ti.wsId + " })\""
+                       + " && hyprctl dispatch \"hl.dsp.focus({ window = 'address:" + ti.addr + "' })\""
+                       + " && hyprctl dispatch \"hl.dsp.window.bring_to_top()\"")
+            }
+        }
     }
 
     // The battery module: a ring, and nothing else.
@@ -2886,442 +3070,6 @@ Scope {
         }
     }
 
-    // The agents module's icon: the little bot, drawn rather than set in a font.
-    //
-    // It replaces the md-robot glyph that stood there until 2026-09-20, from a
-    // reference image Ahaan sent — a round blob with two eyes. The ring of
-    // usage that surrounds it in that reference is deliberately NOT here, at
-    // his ask: a ring around a 14px disc is about 2px of stroke carrying a
-    // percentage that is already one click away in the panel. (Which is the
-    // battery ring's argument run backwards — there the ring IS the reading,
-    // and there is nothing inside it competing for the same pixels.)
-    //
-    // Monochrome, like every other icon on this bar: one fill in col7, hover
-    // to col9 — and the eyes are HOLES rather than dark shapes. A painted eye
-    // needs a colour, and the island's background was colBg at alpha .7 over
-    // the wallpaper, which no opaque copy could match. The island is opaque
-    // Theme.bg since 2026-09-27, so that reason is gone, but holes are still
-    // the one choice that can never disagree with what is behind them.
-    // OddEvenFill punches them.
-    component AgentBot: Item {
-        id: bot
-        property color baseColor: root.col7
-        property color hoverColor: root.col9
-        property string tip: ""
-        signal leftClicked()
-        signal rightClicked()
-        signal scrolledUp()
-        signal scrolledDown()
-
-        // 14, where the battery ring next to it is 16. A SOLID shape at the
-        // same diameter as an outline one out-weighs it — mocked at real size
-        // in four variants (D13 to D15) before any of this was written, and 16
-        // read as a dot on the bar rather than as a face. The item still
-        // claims the 20px a BarLabel occupies, so the island geometry is
-        // exactly what it was when this was a glyph.
-        readonly property real headSize: 14
-        implicitHeight: 20
-        implicitWidth: headSize + 10             // BarLabel's 5px padding, both sides
-
-        // Not readonly: a Behavior cannot attach to a read-only property. Same
-        // 200ms fade BarLabel and BatteryRing use, so the three hover alike.
-        property color liveColor: hover.hovered ? hoverColor : baseColor
-        Behavior on liveColor { ColorAnimation { duration: 200; easing.type: Easing.InOutQuad } }
-
-        // ── The eyes are alive ────────────────────────────────────────────
-        // Ahaan's ask, and the whole character of the thing: they look around
-        // and they dilate. Three properties, all in PIXELS at the head's own
-        // scale, so the arcs below read as geometry rather than as a transform
-        // stack:
-        //
-        //   gazeX/gazeY  where the pair is pointed, both eyes together —
-        //                they are one creature's eyes, not two independent
-        //                ones, and moving them apart reads as a fault
-        //   dilate       a multiplier on both radii
-        //   lid          a multiplier on the VERTICAL radius only, which is
-        //                what a blink is
-        //
-        // Nothing here runs continuously. Each is a Behavior'd property moved
-        // by a timer, so the icon repaints in short bursts and is entirely
-        // static between them.
-        //
-        // What that costs: NOTHING MEASURABLE. Three 20s samples of the
-        // shell's own CPU time with the gaze and blink timers running —
-        // 375 / 363 / 357 ticks — against three with both stopped —
-        // 337 / 366 / 381. The animated mean is inside the static spread, so
-        // this is below the noise floor of the instrument, and the honest
-        // claim is "not distinguishable", not a number. (A single pair of
-        // samples would have read 390 against 337 and been written up as
-        // 2.6 points of a core. It was run three times each because a bar
-        // item that animates for as long as an agent is up is exactly the
-        // kind of thing that deserves more than one reading.)
-        property real gazeX: 0
-        property real gazeY: 0
-        property real dilate: 1
-        property real lid: 1
-
-        // Set by the module below to the panel's own visibility. While it is
-        // true the bot holds still and looks straight out — Ahaan's ask, and
-        // it is the right behaviour for a reason beyond liking it: the panel
-        // is a thing you opened to read, and an icon still wandering above it
-        // is movement in the corner of the eye of someone trying to read
-        // numbers. It keeps blinking, because a face that stops blinking
-        // entirely stops looking alive and starts looking switched off.
-        property bool attentive: false
-        onAttentiveChanged: {
-            if (bot.attentive) {
-                gazeTimer.stop();
-                bot.gazeX = 0; bot.gazeY = 0;      // the Behaviors above turn it forward
-                bot.hold();
-            } else if (bot.visible) {
-                bot.look();                        // straight back to wandering
-                gazeTimer.restart();
-            }
-        }
-
-        // The steady, slightly-wide size it settles to while the panel is up.
-        // 1.15 sits between the idle floor of 1.0 and the click reaction's
-        // 1.32, so attention reads as held rather than as either resting or
-        // startled, and it is reached slowly: this is the tail of a reaction,
-        // not a second one.
-        function hold() {
-            idleSwell.to = 1.15;
-            idleSwell.duration = 520;
-            idleSwell.restart();
-        }
-
-        // 340ms, eased at BOTH ends. This was 170ms OutCubic on the argument
-        // that real eyes saccade — they snap and hold — and that is true of
-        // real eyes and wrong for this face: Ahaan's note is "a chill smooth
-        // turn". A snap at 14px reads as a twitch, because the whole travel
-        // is about two pixels and there is nothing in between to see; the
-        // slower ease is what makes it a turn you can watch happen.
-        Behavior on gazeX { NumberAnimation { duration: 340; easing.type: Easing.InOutQuad } }
-        Behavior on gazeY { NumberAnimation { duration: 340; easing.type: Easing.InOutQuad } }
-        // A pupil is slower than a glance and is not a snap, so this one eases
-        // both ends and takes more than twice as long.
-        //
-        // An explicit animation and NOT a Behavior, unlike the two above, and
-        // the difference is load-bearing. A Behavior cannot be stopped: when
-        // the startle below began while an idle swell was still in flight,
-        // BOTH wrote `dilate` on the same frames — traced, with the two series
-        // interleaved at identical timestamps (1.103/1.181, 1.107/1.259, …)
-        // and the property left creeping toward the stale target long after
-        // the reaction had ended. One animator that can be told to stop is
-        // what makes the pop start from wherever the face actually is.
-        NumberAnimation {
-            id: idleSwell
-            target: bot; property: "dilate"
-            duration: 420; easing.type: Easing.InOutSine
-        }
-
-        // How far the pair may travel. Bounded so the eyes never reach the rim
-        // — at 14px an eye touching the edge stops reading as an eye and turns
-        // the head into a crescent. The margin is the head's radius less the
-        // eye's own offset, its widest dilated radius and 1px of white.
-        // ── How far the pair may travel ───────────────────────────────────
-        // Solved per direction, not picked as a box. The first two versions
-        // used a fixed ellipse sized against the WORST direction, which is
-        // what made the wander look small: the tightest case is sideways,
-        // where an eye already sits 2.7px off centre, and every other
-        // direction was then held to that same 1px because one number had to
-        // cover all of them. Ahaan's note — "the rotation can be more for the
-        // look around part" — is that showing up on the bar.
-        //
-        // So the limit is computed from the geometry instead. For a glance in
-        // direction d, an eye's centre travels from its resting c0 along d,
-        // and it must stay inside a circle of Rmax = head radius less the
-        // widest the eye can dilate to less a hair of margin. |c0 + r·d| =
-        // Rmax is a quadratic in r, and its positive root is exactly how far
-        // that eye may go that way; the smaller of the two eyes' roots wins.
-        //
-        // Evaluated over 720 directions with the numbers below: sideways it
-        // yields 1.62px, up 1.85, straight DOWN 4.75 — the pair sits above
-        // centre, so there was always that much room underneath and one
-        // number for every direction was throwing it away. Capped at 2.2
-        // regardless, because the solved limit is where the eye hits the rim,
-        // not where it stops reading as a glance.
-        //
-        // Sideways was 1.13 until the solver stopped pretending the eye is a
-        // CIRCLE. It is 2.0 x 2.5 at full dilation, and treating it as a
-        // circle of its larger radius charged every sideways glance half a
-        // pixel it was not using — which is most of why Ahaan could report
-        // that "he doesn't look left very often": the sideways travel was two
-        // thirds of the vertical, so a glance left moved less than a glance
-        // anywhere else and read as barely moving.
-        readonly property real eyeDX: 2.7          // resting offset, either side of centre
-        readonly property real eyeDY: 1.6          // resting offset, above centre
-        readonly property real eyeBaseRX: 1.7      // the drawing below reads these too,
-        readonly property real eyeBaseRY: 2.1      // so the solver cannot disagree with it
-        readonly property real dilateMax: 1.25     // the idle ceiling
-        readonly property real rimMargin: 0.35
-        readonly property real travelCap: 2.2
-
-        function gazeLimit(dx, dy) {
-            var rx = bot.eyeBaseRX * bot.dilateMax;
-            var ry = bot.eyeBaseRY * bot.dilateMax;
-            var lim = bot.travelCap;
-            for (var sx = -1; sx <= 1; sx += 2) {
-                var c0x = sx * bot.eyeDX, c0y = -bot.eyeDY;
-                var b = c0x * dx + c0y * dy;
-                var r = 0;
-                // The eye is an ELLIPSE, and how much of the head's radius it
-                // eats depends on which way it lies from the middle — which
-                // depends on r, which is what is being solved for. So: guess
-                // r, take the ellipse's radius in that direction, solve the
-                // quadratic against it, repeat. Three passes is convergence at
-                // this scale, checked against an exhaustive sweep of both
-                // eyes' outlines over 720 glance directions: worst point 6.73
-                // of the 7px radius, so nothing reaches the rim.
-                for (var i = 0; i < 3; i++) {
-                    var cx = c0x + r * dx, cy = c0y + r * dy;
-                    var n = Math.hypot(cx, cy) || 1e-6;
-                    var ex = ry * (cx / n), ey = rx * (cy / n);
-                    var rho = rx * ry / Math.sqrt(ex * ex + ey * ey);
-                    var rmax = bot.headSize / 2 - rho - bot.rimMargin;
-                    var disc = b * b - (c0x * c0x + c0y * c0y - rmax * rmax);
-                    if (disc <= 0) { r = 0; break; }
-                    r = -b + Math.sqrt(disc);
-                }
-                lim = Math.min(lim, Math.max(0, r));
-            }
-            return Math.max(0, lim);
-        }
-
-        function look() {
-            // A point in the unit DISC, not the unit square: sqrt() on the
-            // radius is what keeps the draws uniform over the area instead of
-            // clustering them in the middle, and the corners of a square would
-            // put the extreme diagonal gazes at 1.4x the intended range.
-            //
-            // One glance in three returns to centre. Without it the gaze
-            // wanders forever and never settles, which reads as twitchy rather
-            // than as alive — something looking around comes back to rest.
-            if (Math.random() < 0.34) {
-                bot.gazeX = 0; bot.gazeY = 0;
-            } else {
-                var a = Math.random() * 2 * Math.PI;
-                var dx = Math.cos(a), dy = Math.sin(a);
-                // And he leans LEFT, at Ahaan's ask, by mirroring 45% of the
-                // rightward draws — so roughly seven glances in ten that are
-                // not straight ahead go left. It is a bias and not a
-                // correction: the two directions were already equally likely
-                // and equally far, verified in the solver above. There is a
-                // reason to want it beyond liking it, though. This icon sits
-                // at the LEFT edge of the right island, so everything on the
-                // bar is on that side of it; a glance right is a glance at
-                // the bluetooth glyph six pixels away and the end of the bar
-                // just past it.
-                if (dx > 0 && Math.random() < 0.45) dx = -dx;
-                // sqrt() on the radius keeps the draws uniform over the area
-                // rather than clustered in the middle; 0.45 is a floor, so a
-                // glance is always far enough to be seen as one.
-                var r = (0.45 + 0.55 * Math.sqrt(Math.random())) * bot.gazeLimit(dx, dy);
-                bot.gazeX = dx * r;
-                bot.gazeY = dy * r;
-            }
-            // 1.0 .. 1.3, i.e. the base size is now the FLOOR. It used to run
-            // 0.82 .. 1.25 and Ahaan's verdict was that the big end is the
-            // face and the small end is a squint — so the range keeps the
-            // dilation as a swell rather than as a pair of states, and the
-            // only thing that ever goes smaller than base is a blink.
-            idleSwell.to = 1.0 + Math.random() * (bot.dilateMax - 1.0);
-            idleSwell.duration = 420;              // hold() borrows this animator and slows it
-            idleSwell.restart();
-            // Re-randomised every time rather than a fixed period: a glance on
-            // a metronome is the one thing that cannot look alive.
-            //
-            // Back at 0.9-3.3s, which is where it started. It went to 0.55 and
-            // then 0.4 on "make him look around a little more" — which turned
-            // out to mean the ARC he turns through, not how often: "I meant
-            // the rotation he makes, not the frequency". The rotation is the
-            // solver above; this is just how often, and it was right the first
-            // time.
-            gazeTimer.interval = 900 + Math.random() * 2400;
-        }
-
-        Timer {
-            id: gazeTimer
-            // Only while the icon is on the bar AND not attending. The module
-            // is invisible unless an agent is actually running, and a timer
-            // waking the compositor to move eyes nobody can see — or eyes
-            // that are deliberately holding still — is pure cost.
-            running: bot.visible && !bot.attentive
-            repeat: true
-            interval: 1600
-            onTriggered: bot.look()
-        }
-
-        // The blink is a separate clock on purpose — tied to the gaze it would
-        // land on every glance, which is a tic. It squashes the vertical
-        // radius to a sliver rather than closing the hole outright: at 0 the
-        // arc degenerates and the curve renderer drops it, so the eyes would
-        // vanish for a frame instead of shutting.
-        Timer {
-            id: blinkTimer
-            running: bot.visible
-            repeat: true
-            // 2.2-5.2s, down from 3.8-9.0. Same ask as the gaze: more of it.
-            interval: 2200 + Math.random() * 3000
-            onTriggered: { blink.restart(); interval = 2200 + Math.random() * 3000; }
-        }
-        SequentialAnimation {
-            id: blink
-            NumberAnimation { target: bot; property: "lid"; to: 0.12; duration: 70; easing.type: Easing.InQuad }
-            NumberAnimation { target: bot; property: "lid"; to: 1.0;  duration: 110; easing.type: Easing.OutQuad }
-        }
-
-        // ── Being called ──────────────────────────────────────────────────
-        // Clicking the bot opens the panel, and Ahaan wanted it to notice:
-        // eyes forward, wide, and two big blinks — "like i called it
-        // suddenly". So this is a reaction, not an open animation, which is
-        // why it lives on the icon and fires from its own MouseArea rather
-        // than from togglePanel(): the bot reacting to being poked is true
-        // whatever the click then does.
-        //
-        // The idle clocks are STOPPED for the duration. Left running, a
-        // glance can land mid-reaction and drag the eyes off centre in the
-        // middle of the double blink, which reads as a glitch rather than as
-        // a look — the whole point is that it is pointed at you.
-        //
-        // Sized DOWN twice. It began as a pop to 1.45 with two full blinks,
-        // and Ahaan's verdict was "too big of a blink … also hes double
-        // blinking anyway": the pair of full closes read as a stutter rather
-        // than as a greeting, and against an idle blink that is already
-        // frequent it was not saying anything the face does not say on its
-        // own. So it is one blink, it does not close all the way (0.32, where
-        // an idle blink goes to 0.12), and the widening is 1.32 against the
-        // idle ceiling's 1.25 — just enough to be a different size from
-        // anything the face reaches by itself. OutBack keeps the small
-        // overshoot that makes it read as a reaction and not a fade.
-        SequentialAnimation {
-            id: startle
-            // Every other writer is stopped first, not just the clocks that
-            // schedule them: an idle swell or a blink already in flight goes
-            // on writing the same property this sequence is about to animate.
-            ScriptAction {
-                script: {
-                    gazeTimer.stop(); blinkTimer.stop();
-                    idleSwell.stop(); blink.stop();
-                    bot.gazeX = 0; bot.gazeY = 0;
-                }
-            }
-            NumberAnimation { target: bot; property: "dilate"; to: 1.32; duration: 140; easing.type: Easing.OutBack }
-            NumberAnimation { target: bot; property: "lid"; to: 0.32; duration: 70;  easing.type: Easing.InQuad }
-            NumberAnimation { target: bot; property: "lid"; to: 1.0;  duration: 110; easing.type: Easing.OutQuad }
-            // Held wide for a beat before it goes back to wandering, so the
-            // reaction has an end rather than being cut off by the next
-            // glance.
-            PauseAnimation { duration: 300 }
-            // Where it lands depends on what the click did. Opening the panel
-            // makes `attentive` true before this sequence ends, and resuming
-            // the wander there would undo the thing the click just asked for.
-            ScriptAction {
-                script: {
-                    blinkTimer.start();
-                    if (bot.attentive) { bot.gazeX = 0; bot.gazeY = 0; bot.hold(); }
-                    else { bot.look(); gazeTimer.start(); }
-                }
-            }
-        }
-        function startled() { startle.restart(); }
-
-        Shape {
-            anchors.centerIn: parent
-            width: bot.headSize
-            height: bot.headSize
-            // As the battery ring: analytic antialiasing, because the bar does
-            // not enable scene-wide multisampling and a 14px circle without it
-            // is a visibly stepped edge.
-            preferredRendererType: Shape.CurveRenderer
-
-            ShapePath {
-                id: eyePath
-                fillColor: bot.liveColor
-                strokeColor: "transparent"
-                strokeWidth: 0
-                // Even-odd is a FILL rule, which is the whole mechanism here:
-                // the two eye subpaths sit inside the head subpath, so they
-                // come out as holes. Nothing is stroked, because a stroke would
-                // outline the holes and make them read as spectacles.
-                fillRule: ShapePath.OddEvenFill
-
-                // The head.
-                PathAngleArc {
-                    centerX: bot.headSize / 2; centerY: bot.headSize / 2
-                    radiusX: bot.headSize / 2; radiusY: bot.headSize / 2
-                    startAngle: 0; sweepAngle: 360
-                }
-
-                // Two eyes, taller than wide and above the centre line, which
-                // is what makes a circle read as a face rather than as a
-                // button. Placed at 0.16 of the diameter either side of centre
-                // and 0.11 above it.
-                //
-                // The reference is not symmetric — measured off it, both eyes
-                // sit RIGHT of centre and 0.24 of the diameter up, i.e. a
-                // three-quarter view. At 14px that pose puts one eye almost on
-                // the edge of the disc and reads as a misdraw rather than as a
-                // head turned to look at something, so it is squared up here.
-                // The mock is what decided that: at this size the gap between
-                // "cute" and "a domino tile" is about one pixel, and it is not
-                // a thing to settle by argument.
-                //
-                // 1.7 x 2.1 base radii, grown three times: 1.1 x 1.5 to start,
-                // then 1.5 x 1.9, then 1.6 x 2.0, then this (2026-09-30, "ever
-                // so slightly bigger"), each time because Ahaan asked for
-                // bigger. At the idle ceiling that is a 4.25 x 5.25px eye in a
-                // 14px head; at the click reaction's 1.32 the pair still leaves
-                // 0.9px of head between them (1.2 at 1.6 x 2.0) — nearly 40% of the head is eye, which is the
-                // proportion that makes it a character rather than a symbol.
-                //
-                // Spacing went with them, 2.2 to 2.6 to 2.7 either side of
-                // centre. At 2.2 a fully dilated pair left 0.4px of head
-                // between them and read as one wide band rather than as two
-                // eyes; that was visible only in a strip of frames sampled
-                // 0.55s apart, because it needs the moment the dilation peaks.
-                // Every size here was mocked at real pixel size across the
-                // whole dilation range before it went in — at 14px this is all
-                // one- and two-pixel decisions, which is not a thing to settle
-                // by looking at a big version of it.
-                readonly property real eyeRX: bot.eyeBaseRX * bot.dilate
-                readonly property real eyeRY: bot.eyeBaseRY * bot.dilate * bot.lid
-                readonly property real eyeY: bot.headSize / 2 - bot.eyeDY + bot.gazeY
-
-                PathAngleArc {
-                    moveToStart: true
-                    centerX: bot.headSize / 2 - bot.eyeDX + bot.gazeX; centerY: eyePath.eyeY
-                    radiusX: eyePath.eyeRX; radiusY: eyePath.eyeRY
-                    startAngle: 0; sweepAngle: 360
-                }
-                PathAngleArc {
-                    moveToStart: true
-                    centerX: bot.headSize / 2 + bot.eyeDX + bot.gazeX; centerY: eyePath.eyeY
-                    radiusX: eyePath.eyeRX; radiusY: eyePath.eyeRY
-                    startAngle: 0; sweepAngle: 360
-                }
-            }
-        }
-
-        HoverHandler { id: hover }
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: false
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onClicked: (e) => {
-                if (e.button === Qt.RightButton) { bot.rightClicked(); return; }
-                // Only the click that OPENS gets the reaction. The same click
-                // closes the panel when it is already up, and being startled
-                // by someone leaving is the wrong way round.
-                if (!bot.attentive) bot.startled();
-                bot.leftClicked();
-            }
-            onWheel: (w) => w.angleDelta.y > 0 ? bot.scrolledUp() : bot.scrolledDown()
-        }
-
-        Tooltip { target: bot; text: bot.tip; shown: hover.hovered && bot.tip !== "" }
-    }
-
     // Waybar-style tooltip: separate popup surface, styled like `tooltip{}`.
     component Tooltip: PopupWindow {
         id: ttip
@@ -3330,8 +3078,20 @@ Scope {
         property bool shown: false
 
         anchor.window: target ? target.QsWindow.window : null
-        anchor.rect.x: target ? target.mapToItem(null, 0, 0).x + target.width / 2 - ttip.width / 2 : 0
-        anchor.rect.y: target ? target.height + 6 : 0
+        // Under the target on a top bar; beside it, on the screen's side,
+        // on a side bar — where "under" is the next module down.
+        // `shown` is read so the position is recomputed every time the tip
+        // appears. mapToItem() is not reactive, so without it the position
+        // was the one computed when barPos changed — before the islands had
+        // moved — and a side bar's clock tip showed in the middle of the
+        // screen, where the top bar's clock had been (Ahaan's screenshot).
+        anchor.rect.x: !target || !shown ? 0
+                     : root.barPos === "left"  ? target.mapToItem(null, target.width + 8, 0).x
+                     : root.barPos === "right" ? target.mapToItem(null, 0, 0).x - ttip.width - 8
+                     : target.mapToItem(null, 0, 0).x + target.width / 2 - ttip.width / 2
+        anchor.rect.y: !target || !shown ? 0
+                     : root.barVert ? target.mapToItem(null, 0, target.height / 2).y - ttip.height / 2
+                     : target.height + 6
         visible: shown && text !== ""
         implicitWidth: ttext.implicitWidth + 16
         implicitHeight: ttext.implicitHeight + 10
@@ -3373,6 +3133,45 @@ Scope {
     // tall, and 20 on that is nearly a stadium, where the dock's 20 on 54 and
     // the card's 20 on a panel read as rounded rectangles. 12 keeps the
     // proportion.
+    // The concave curve where a full-length strip meets a grown island
+    // (Ahaan: "curve the edges here where it connects, same as the bottom
+    // edges"). Drawn once, in its own frame: the join J at the origin, the
+    // strip running off along -x with its inner border on y -2..0, the
+    // island's side running down +y with its border on x 0..2. The web
+    // between the arc and that corner is filled with the island's ground
+    // (covering the two straight border pieces it replaces) and the arc is
+    // stroked as the border. Island turns and mirrors it to each join with
+    // a 2x2 matrix (a b / c d) and the join's position (tx, ty).
+    component JoinFillet: Shape {
+        id: jf
+        property real r: Theme.rowRadius
+        property real bw: Theme.cardBorder
+        property color ground: "transparent"
+        property color line: "transparent"
+        property real a: 1; property real b: 0; property real c: 0; property real d: 1
+        property real tx: 0; property real ty: 0
+        width: 1; height: 1
+        preferredRendererType: Shape.CurveRenderer
+        transform: Matrix4x4 { matrix: Qt.matrix4x4(jf.a, jf.b, 0, jf.tx,  jf.c, jf.d, 0, jf.ty,  0, 0, 1, 0,  0, 0, 0, 1) }
+        ShapePath {
+            strokeWidth: -1
+            fillColor: jf.ground
+            startX: 1 - jf.r; startY: -jf.bw
+            PathLine { x: jf.bw; y: -jf.bw }
+            PathLine { x: jf.bw; y: jf.r - 1 }
+            PathLine { x: 1; y: jf.r - 1 }
+            PathArc { x: 1 - jf.r; y: -1; radiusX: jf.r; radiusY: jf.r; direction: PathArc.Counterclockwise }
+        }
+        ShapePath {
+            fillColor: "transparent"
+            strokeColor: jf.line
+            strokeWidth: jf.bw
+            capStyle: ShapePath.FlatCap
+            startX: 1 - jf.r; startY: -1
+            PathArc { x: 1; y: jf.r - 1; radiusX: jf.r; radiusY: jf.r; direction: PathArc.Clockwise }
+        }
+    }
+
     component Island: Rectangle {
         id: isl
         default property alias content: rowInner.data
@@ -3388,243 +3187,261 @@ Scope {
         // The row's own height. The islands are placed by THIS (y = 22 - rowH/2)
         // rather than by their centre, so a taller island grows downward and
         // its row stays on the y 5-39 line every other island sits on.
+        //
+        // On a side bar (root.barVert) the row is a column, `rowH` is its
+        // LENGTH, and the island is barStrip across. Growth turns with it:
+        // extraW is added BESIDE the column, on the screen's side, and
+        // extraH is a floor on the height — the centre island grows out of
+        // the bar sideways, and up and down about its middle (the bar
+        // centres it), instead of down.
+        //
+        // areaX/Y/W/H are the grown part in the bar window's coordinates,
+        // which are the screen's (the bar's surface starts at the screen's
+        // top-left on every edge — see `bar`). The tenants (Calendar.qml,
+        // Todo.qml, ...) draw over exactly this rect, so they follow the
+        // island to any edge without knowing which one it is.
+        readonly property bool vert: root.barVert
         readonly property real rowH: rowInner.implicitHeight + 14
+        // The row's own width, whatever a tenant has widened the island to
+        // (the Apps module measures its room against the centre one's).
+        readonly property real rowW: rowInner.implicitWidth + 14
+        readonly property real stripW: root.barStrip
+        readonly property real areaX: x + below.x
+        readonly property real areaY: y + below.y
+        readonly property real areaW: below.width
+        readonly property real areaH: below.height
+        // An island with every module unchecked would be an empty pill;
+        // the centre one still shows whenever a tenant grows it.
+        visible: rowInner.implicitWidth > 0.5 || extraW > 0.5 || extraH > 0.5
+        // The move between edges: fade out towards the edge it is on, in
+        // from the one it is going to (barMove).
+        opacity: root.barFade
+        // barHideT slides it right off its edge (Always hide): 46 clears
+        // the 5..39 strip and its 2 px edge.
+        transform: Translate {
+            readonly property real d: (1 - root.barFade) * 14 + root.barHideT * 46
+            x: root.barPos === "left" ? -d : root.barPos === "right" ? d : 0
+            y: root.barPos === "top" ? -d : 0
+        }
+        // Its own ground, or none on a full-length bar (fullStrip is the
+        // ground) until a tenant grows it — then it fades back in over the
+        // first 30 px, so the opened island is one shape out of the strip.
+        //
+        // `grown` is how far it reaches past the bar's line (down on top,
+        // out on a side) and `solid` goes 0 -> 1 over the first 4 px of it.
+        // Both the ground's opacity and the full-length fade-in key off
+        // `solid`, not off the tenants' 0..1 amounts: those reach "closed"
+        // while the island is still tens of px tall, and an island already
+        // back at 0.9 over a window let the window show through below the
+        // bar's line and not above it — read as a rectangle flashing on
+        // close (Ahaan; frame 3 of a burst measured 31 against 40 across
+        // that line). Over 4 px it is opaque wherever it covers a window.
+        readonly property real grown: vert ? extraW : extraH
+        readonly property real solid: Math.min(1, grown / 4)
+        // On a full-length bar the island is drawn OVER the strip, so any
+        // in-between opacity stacks the two and the island reads as a darker
+        // rectangle with its own outline — a recording of a calendar close
+        // showed that for ~6 frames (100 ms) at the slow end of the
+        // collapse, with the join curves hanging below it as two bumps. So
+        // here it is all or nothing: fully drawn while it reaches past the
+        // strip at all, gone the moment it does not, and the strip (which
+        // matches its opacity) eases back to 0.9 on its own afterwards.
+        readonly property real bgA: root.barFull ? (grown > 0.5 ? 1 : 0) : 1
         radius: Theme.rowRadius
-        color: Theme.alpha(Theme.bg, 0.9)
-        border.width: Theme.cardBorder
+        // Opaque under Always hide: it is drawn over windows then, and at
+        // 0.9 their text read through it (measured on a revealed strip).
+        // The ground and its edge as a value: on a top bar the island IS this
+        // rectangle; on a side bar it draws nothing itself — the column and
+        // the outward panel are two shapes (sideGround, below), so a tall
+        // panel does not paint over the bar's own column above and below
+        // the clock (Ahaan: "it covers apps weirdly ... the expansion is
+        // outward").
+        property color groundColor: Theme.alpha(Theme.bg, root.barGround * bgA)
+        readonly property color edgeColor: Qt.rgba(Theme.barLine.r, Theme.barLine.g, Theme.barLine.b, Theme.barLine.a * bgA)
+        color: vert ? "transparent" : groundColor
+        border.width: vert ? 0 : Theme.cardBorder
         // Theme.line (0.6) from 2026-09-27, tuned here first and then made
         // the value for every card edge. Theme.barLine since 2026-09-30: the
         // always-on strip needed an edge below the focused window's border —
         // measurements are in Theme.qml.
-        border.color: Theme.barLine
-        implicitWidth: Math.max(rowInner.implicitWidth + 14, extraW)   // padding:7px  (7*2)
-        implicitHeight: rowH + extraH
+        border.color: edgeColor
+        implicitWidth: vert ? stripW + extraW
+                            : Math.max(rowInner.implicitWidth + 14, extraW)   // padding:7px  (7*2)
+        implicitHeight: vert ? Math.max(rowH, extraH) : rowH + extraH
 
-        RowLayout {
+        // One row on a top bar, one column on a side bar: a GridLayout with
+        // no limit along its flow is either, and every module in it keeps
+        // its place in the order.
+        GridLayout {
             id: rowInner
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 7
-            spacing: 0
+            // Above the flush patches below, which are declared after it and
+            // so painted over it: they are joinR (14) wide at each end and the
+            // row's first ink starts 12 in (7 + a label's 5), so while the
+            // island was grown on a full-length bar they shaved ~2 px off the
+            // bell and the M of "AM", which popped back the frame the island
+            // closed (Ahaan, from a recording; frames 8-19 of the close
+            // clipped, 20 whole, nothing moved). The patches are only meant
+            // to hide the island's outline, never what sits in the row.
+            z: 1
+            flow: isl.vert ? GridLayout.TopToBottom : GridLayout.LeftToRight
+            rowSpacing: 0; columnSpacing: 0
+            // The column hugs the bar's side of the island, the row its top.
+            x: isl.vert ? (root.barPos === "right" ? isl.width - isl.stripW : 0) + (isl.stripW - width) / 2
+                        : (isl.width - width) / 2
+            y: isl.vert ? (isl.height - height) / 2 : 7
+        }
+        // ── flush with a full-length strip ──────────────────────────────
+        // Grown on a full-length bar, the island shares the strip's outer
+        // line, but its own rounded corners and side edges drawn INSIDE the
+        // strip made it read as a card laid on the bar (Ahaan: "make it
+        // continuous smooth flush with the full bar, yet the same width").
+        // Two patches of the island's ground cover them, so the strip's
+        // inner line runs straight into the island's sides and what opened
+        // hangs from the strip as one shape. They stop 2 px short of the
+        // strip's inner edge so the island's side meets that line rather
+        // than leaving a notch; the strip's outer line is left alone.
+        readonly property real joinR: radius + border.width
+        Rectangle {   // the leading corner + side: left on top, upper on a side bar
+            color: isl.groundColor; visible: !isl.vert && root.barFull && isl.bgA > 0.01
+            x: isl.vert ? (root.barPos === "right" ? isl.width - isl.stripW : 0) + isl.border.width : 0
+            y: isl.vert ? 0 : isl.border.width
+            width: isl.vert ? isl.stripW - 2 * isl.border.width : isl.joinR
+            height: isl.vert ? isl.joinR : isl.rowH - 2 * isl.border.width
+        }
+        Rectangle {   // the trailing one: right on top, lower on a side bar
+            color: isl.groundColor; visible: !isl.vert && root.barFull && isl.bgA > 0.01
+            x: isl.vert ? (root.barPos === "right" ? isl.width - isl.stripW : 0) + isl.border.width : isl.width - isl.joinR
+            y: isl.vert ? isl.height - isl.joinR : isl.border.width
+            width: isl.vert ? isl.stripW - 2 * isl.border.width : isl.joinR
+            height: isl.vert ? isl.joinR : isl.rowH - 2 * isl.border.width
+        }
+        // The two concave joins, outside the island's own bounds. S is the
+        // strip's inner edge in island coordinates (rowH under a top bar;
+        // the column's far side on a side bar), and each matrix sends the
+        // fillet's "strip" axis along the strip and its "side" axis along
+        // the island's edge.
+        readonly property bool joinsOn: root.barFull && bgA > 0.01
+        readonly property real joinS: !vert ? rowH : root.barPos === "right" ? width - stripW : stripW
+        readonly property color joinLine: Qt.rgba(Theme.barLine.r, Theme.barLine.g, Theme.barLine.b, Theme.barLine.a * bgA)
+        JoinFillet {   // left of a top-bar island; the upper join on a side bar
+            visible: isl.joinsOn && !isl.vert; ground: isl.groundColor; line: isl.joinLine
+            // Never deeper than the island has grown: at full size the
+            // curves hung below a nearly closed island as two bumps.
+            r: Math.min(Theme.rowRadius, isl.grown)
+            a: !isl.vert ? 1 : 0
+            b: !isl.vert ? 0 : root.barPos === "right" ? -1 : 1
+            c: !isl.vert ? 0 : 1
+            d: !isl.vert ? 1 : 0
+            tx: !isl.vert ? 0 : isl.joinS
+            ty: !isl.vert ? isl.joinS : 0
+        }
+        JoinFillet {   // right of a top-bar island; the lower join on a side bar
+            visible: isl.joinsOn && !isl.vert; ground: isl.groundColor; line: isl.joinLine
+            r: Math.min(Theme.rowRadius, isl.grown)
+            a: !isl.vert ? -1 : 0
+            b: !isl.vert ? 0 : root.barPos === "right" ? -1 : 1
+            c: !isl.vert ? 0 : -1
+            d: !isl.vert ? 1 : 0
+            tx: !isl.vert ? isl.width : isl.joinS
+            ty: !isl.vert ? isl.joinS : isl.height
+        }
+        // ── a side bar: the column and the panel, as ONE outline ────────
+        // colY / panelY centre each on the island (which the bar centres on
+        // the screen), so either may be the taller. Until 2026-11-02 this
+        // was two rounded rectangles plus a seam patch, two square-corner
+        // patches and two JoinFillets — and they only met cleanly when the
+        // panel and the column differed in height by more than a corner
+        // plus a curve (12 + 12). Inside that the panel's rounded corner
+        // ate the straight edge the join curve needed, and it read as a
+        // hook or an ear at the join (Ahaan's screenshots: a todo panel ~10
+        // px taller than the column, a music panel a few px off it).
+        //
+        // Now it is one path (root.roundPath): the union's corners, each
+        // rounded convex or concave by which way the outline turns there,
+        // and each radius capped at its share of the two edges either side.
+        // So a small step between panel and column becomes an S-bend of two
+        // smaller arcs that meet tangentially, no step becomes a straight
+        // edge, and a big one is the full corner and the full curve — one
+        // continuous line through every height a tenant animates past.
+        //
+        // Built in the LEFT bar's frame and mirrored for a right bar. Points
+        // sit on the stroke's centre line, half a border in from the shapes'
+        // outer edges, which is where a Rectangle's inside border puts it.
+        readonly property real colY: (height - rowH) / 2
+        readonly property real panelH: vert ? extraH : 0
+        readonly property real panelY: (height - panelH) / 2
+        readonly property bool panelOn: vert && grown > 0.5 && panelH > 0.5
+        readonly property real bw: Theme.cardBorder
+        readonly property var sidePaths: {
+            if (!vert) return { fill: "", line: "" }
+            const h = bw / 2, S = stripW
+            const L = h, J = S - h, R = width - h
+            let cT = colY + h, cB = colY + rowH - h
+            let pT = panelY + h, pB = panelY + panelH - h
+            // A small step reads as a notch, however it is rounded: two arcs
+            // of a few px each (Ahaan's screenshot, a right bar with EVE's
+            // card ~6 px taller than the column: "not a smooth edge ... the
+            // top bar expand ... a straight line ... also fine by me"). So
+            // under 12 px the shorter shape is drawn out to the taller's
+            // edge, one straight line, as on top; from 12 to 24 the step
+            // comes back at twice the rate, so an animating panel never
+            // jumps; past 24 it is the real step with full-size curves.
+            if (panelOn && !root.barFull) {
+                const soft = d => d < 12 ? 0 : d < 24 ? (d - 12) * 2 : d
+                const sT = cT - pT   // > 0: the panel rises above the column
+                if (sT > 0) cT = pT + soft(sT); else pT = cT + soft(-sT)
+                const sB = pB - cB   // > 0: the panel hangs below it
+                if (sB > 0) cB = pB - soft(sB); else pB = cB - soft(-sB)
+            }
+            const rv = Theme.rowRadius - h, rc = Theme.rowRadius
+            const mir = root.barPos === "right" ? width : -1
+            if (!root.barFull) {
+                const pts = panelOn
+                    ? [[L, cT], [J, cT], [J, pT], [R, pT], [R, pB], [J, pB], [J, cB], [L, cB]]
+                    : [[L, cT], [J, cT], [J, cB], [L, cB]]
+                const p = root.roundPath(pts, true, rv, rc, mir)
+                return { fill: p, line: p }
+            }
+            // Full length: the strip is the column, and draws its own line.
+            // The panel's outline leaves the strip's inner line a curve
+            // above it and rejoins it a curve below (open path), and the
+            // fill runs over that stretch of the strip's line (to S - bw)
+            // so the line does not show through where the panel joins.
+            if (!panelOn) return { fill: "", line: "" }
+            const open = [[J, pT - rc], [J, pT], [R, pT], [R, pB], [J, pB], [J, pB + rc]]
+            const line = root.roundPath(open, false, rv, rc, mir)
+            const mx = x => mir >= 0 ? mir - x : x
+            const fill = line + " L " + mx(S - bw) + " " + (pB + rc)
+                              + " L " + mx(S - bw) + " " + (pT - rc) + " Z"
+            return { fill: fill, line: line }
+        }
+        Shape {
+            z: -1   // ground: under the modules, which are declared first
+            visible: isl.vert
+            width: isl.width; height: isl.height
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeWidth: -1
+                fillColor: isl.groundColor
+                PathSvg { path: isl.sidePaths.fill }
+            }
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: isl.edgeColor
+                strokeWidth: isl.bw
+                capStyle: ShapePath.FlatCap
+                joinStyle: ShapePath.RoundJoin
+                PathSvg { path: isl.sidePaths.line }
+            }
         }
         Item {
             id: below
-            y: isl.rowH
-            width: isl.width
-            height: Math.max(0, isl.height - isl.rowH)
+            x: isl.vert && root.barPos === "left" ? isl.stripW : 0
+            y: isl.vert ? isl.panelY : isl.rowH
+            width: isl.vert ? Math.max(0, isl.width - isl.stripW) : isl.width
+            height: isl.vert ? isl.panelH : Math.max(0, isl.height - isl.rowH)
             clip: true
         }
-    }
-
-    // returns an image source for a notification (image, else themed app icon)
-    function iconFor(n) {
-        if (!n) return "";
-        if (n.image && n.image !== "") return n.image;
-        try { if (n.appIcon && n.appIcon !== "") return Quickshell.iconPath(n.appIcon, ""); } catch (e) {}
-        return "";
-    }
-
-    // A notification card — used for both the floating popup and the history list.
-    // Mirrors .notification in your style.css (bg, 1px border, radius 12, padding 10).
-    component NotifCard: Rectangle {
-        id: card
-        property var notif
-        signal closed()
-        signal rightClicked()
-
-        // ---- overrides, so a card can be driven by something that is NOT a
-        //      Notification. Reminders are: both the popup and the calendar
-        //      panel's list are this component with `notif` left null, which
-        //      is the only way to guarantee they match the real thing rather
-        //      than imitating it and drifting. Empty means "read it off notif".
-        property string summaryText: ""
-        property string bodyText: ""
-        property color  bodyColor: root.ncText
-        property int    pad: 10             // .notification-content { padding:10px }
-        property int    textSpacing: 2      // gap between summary and body
-        // Whole card is the dismiss target (a fired reminder), and/or a
-        // right-click dismisses it (the panel's list). Both default off so an
-        // ordinary notification behaves exactly as it always has — in
-        // particular the control center's ListView must keep flicking, which
-        // a MouseArea accepting LeftButton would break.
-        property bool   clickAnywhere: false
-        property bool   rightCloses: false
-
-        readonly property string cardSummary:
-            card.summaryText !== "" ? card.summaryText : (card.notif ? card.notif.summary : "")
-        readonly property string cardBody:
-            card.bodyText !== "" ? card.bodyText : (card.notif ? card.notif.body : "")
-
-        function requestClose() {
-            if (card.notif) card.notif.dismiss();
-            card.closed();
-        }
-
-        implicitHeight: cardRow.implicitHeight + card.pad * 2
-        radius: 12
-        color: root.ncBg
-        border.width: 2
-        border.color: root.ncBorder
-
-        // Declared BEFORE cardRow so the close button, which lives inside it,
-        // stays on top of this.
-        MouseArea {
-            anchors.fill: parent
-            visible: card.clickAnywhere || card.rightCloses
-            enabled: visible
-            acceptedButtons: card.clickAnywhere ? (Qt.LeftButton | Qt.RightButton)
-                                                : Qt.RightButton
-            onClicked: (e) => {
-                if (e.button === Qt.RightButton) card.rightClicked();
-                else card.requestClose();
-            }
-        }
-
-        RowLayout {
-            id: cardRow
-            anchors.fill: parent
-            anchors.margins: card.pad
-            spacing: 10
-
-            Image {
-                source: card.notif ? root.iconFor(card.notif) : ""
-                visible: source != ""
-                Layout.preferredWidth: visible ? 40 : 0    // notification-icon-size 40
-                Layout.preferredHeight: 40
-                Layout.alignment: Qt.AlignTop
-                fillMode: Image.PreserveAspectCrop
-                sourceSize.width: 40; sourceSize.height: 40
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: card.textSpacing
-                Text {
-                    Layout.fillWidth: true
-                    text: card.cardSummary
-                    color: root.ncText
-                    font.family: root.ncFont
-                    font.pixelSize: root.ns(12); font.weight: Font.Medium   // .summary 0.95rem/500
-                    elide: Text.ElideRight
-                }
-                Text {
-                    Layout.fillWidth: true
-                    visible: card.cardBody !== ""
-                    text: card.cardBody
-                    color: card.bodyColor
-                    font.family: root.ncFont
-                    font.pixelSize: root.ns(11)                              // .body 0.85rem
-                    textFormat: Text.StyledText                     // pango-ish markup
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 5
-                    elide: Text.ElideRight
-                }
-            }
-
-            Text {                                                  // .close-button
-                // Centred on the card rather than pinned to its top. Pinned
-                // only ever looked right on a one-line card; on a two-line one
-                // — which is every reminder, and most notifications — it sat
-                // level with the title with nothing beside it.
-                Layout.alignment: Qt.AlignVCenter
-                text: "\u00d7"
-                color: root.ncText
-                font.family: root.ncFont
-                font.pixelSize: root.ns(15)
-                font.weight: Font.Bold          // \u00d7 is a hairline otherwise
-                MouseArea {
-                    anchors.fill: parent; anchors.margins: -4
-                    onClicked: card.requestClose()
-                }
-            }
-        }
-    }
-
-    // A media transport button (white glyph).
-    component MediaBtn: Text {
-        property string glyph
-        signal clicked()
-        text: glyph
-        color: "white"
-        font.family: root.ncFont
-        font.pixelSize: root.ns(17)
-        MouseArea { anchors.fill: parent; anchors.margins: -6; onClicked: parent.clicked() }
-    }
-
-    // Circular album cover that spins while `spinning` is true (freezes when paused).
-    component Vinyl: Item {
-        id: v
-        property string art: ""
-        property bool spinning: false
-
-        Item {
-            id: disc
-            anchors.fill: parent
-
-            // circular album art (masked into a circle)
-            Image {
-                id: vLabel
-                anchors.fill: parent
-                source: v.art
-                visible: false
-                fillMode: Image.PreserveAspectCrop
-                sourceSize.width: 300; sourceSize.height: 300
-            }
-            MultiEffect {
-                anchors.fill: parent
-                source: vLabel
-                maskEnabled: true
-                maskSource: vMask
-                visible: v.art !== ""
-            }
-            Item {
-                id: vMask
-                anchors.fill: parent
-                layer.enabled: true
-                visible: false
-                Rectangle { anchors.fill: parent; radius: width / 2; color: "black" }
-            }
-
-            // fallback when there's no cover art
-            Rectangle {
-                anchors.fill: parent
-                radius: width / 2
-                visible: v.art === ""
-                color: "#3a3a3a"
-                Text {
-                    anchors.centerIn: parent
-                    text: "\uf001"
-                    color: Qt.rgba(1, 1, 1, 0.5)
-                    font.family: root.ncFont
-                    font.pixelSize: parent.width * 0.3
-                }
-            }
-
-            // Keep the animation always running and pause it instead of stopping,
-            // so resuming continues from the current angle (not back to 0).
-            NumberAnimation on rotation {
-                from: 0; to: 360
-                duration: 10000
-                loops: Animation.Infinite
-                running: true
-                paused: !v.spinning
-            }
-        }
-
-        // static rim
-        Rectangle {
-            anchors.fill: parent
-            radius: width / 2
-            color: "transparent"
-            border.color: "white"
-            border.width: 1.5 
-        }
-    }
-
-    // format seconds -> M:SS
-    function fmtTime(s) {
-        if (!s || s < 0) return "0:00";
-        var m = Math.floor(s / 60); var sec = Math.floor(s % 60);
-        return m + ":" + (sec < 10 ? "0" : "") + sec;
     }
 
     // Slider styled like your swaync trough/highlight (accent = @color9).
@@ -3670,26 +3487,6 @@ Scope {
             onPressed: (e) => apply(e.x)
             onPositionChanged: (e) => { if (pressed) apply(e.x); }
         }
-    }
-
-    // Small round nav button for the calendar header (prev/next month/year).
-    component CalNavBtn: Rectangle {
-        id: navBtn
-        signal clicked()
-        property string glyph: ""
-        Layout.preferredWidth: 28
-        Layout.preferredHeight: 28
-        radius: 10
-        color: navHover.hovered ? root.alpha(root.ncAccent, 0.2) : "transparent"
-        HoverHandler { id: navHover }
-        Text {
-            anchors.centerIn: parent
-            text: navBtn.glyph
-            color: root.ncText
-            font.family: root.ncFont
-            font.pixelSize: root.ns(11)
-        }
-        MouseArea { anchors.fill: parent; onClicked: navBtn.clicked() }
     }
 
 
@@ -3807,7 +3604,7 @@ Scope {
     // pixel count.
     //
     // Every panel that has captions uses this and nothing overrides it, the
-    // agents panel included. The control center is untouched by any of it: it
+    // agents panel included. The notification center is untouched by any of it: it
     // has no SectionLabel at all, its headings are plain Text with their own
     // sizes.
     component SectionLabel: Text {
@@ -4345,7 +4142,18 @@ Scope {
             screen: modelData
 
             color: "transparent"                 // window#waybar { all:unset }
-            anchors { top: true; left: true; right: true }
+            // Three edges: the one the bar is on and the two either side of
+            // it, so the zone below is reserved on that edge. A side bar's
+            // surface is the WHOLE screen wide (implicitWidth below) and
+            // masked to its strip, for the top bar's reason (jarvisRoom): the
+            // centre island grows out of it sideways and must not resize the
+            // surface to do so. It also keeps the surface's origin on the
+            // screen's top-left on every edge, which is what lets the island
+            // tenants and the orb's flight treat bar coordinates as screen
+            // coordinates (Island.areaX, Jarvis.qml slotCenter).
+            anchors { top: true; bottom: root.barVert
+                      left: root.barPos !== "right"; right: root.barPos !== "left" }
+            implicitWidth: bar.screen ? bar.screen.width : 1440   // read only on a side bar
             // The bar's reserved strip, and the one number that sets how far
             // every window and dropdown sits below it. The islands are pinned
             // at y 5-39 whatever this is (centre 22, see the offset on each
@@ -4354,12 +4162,20 @@ Scope {
             //   44  5px — the Waybar port's value, and again since 2026-09-27
             //   42  3px — tried the same day to match the 3px side gaps;
             //       Ahaan found it "too close" to the bar
+            //   42  3px again since 2026-10-31, at his ask ("reduce the gap
+            //       here a little bit") — and with the bar able to sit on a
+            //       side, 5 against the other edges' 3 made a SUPER+D window
+            //       look off-centre ("a little more space on the left side").
+            //       Measured: 3 px of wallpaper then the 2 px border on every
+            //       side. 43 (4 px) is the in-between if 3 is too tight.
+            //   It is root.barZone, so dropdowns, Always hide and the
+            //   scripts' BAR_ZONE agree with it.
             //
             // Tiled windows take gaps_out top = 0 (hyprland.lua), so their
             // border starts on this line; SUPER+D (window-zoom.sh) reads it
             // from `reserved`; dropdowns hang from it. Nothing else needs
             // to change when it does.
-            readonly property int zone: 44
+            readonly property int zone: root.barZone
             // The surface is TALLER than the zone it reserves, permanently, and
             // masked down to the 44px strip plus whatever the centre island
             // grows into — see jarvis below. Permanently, because Hyprland
@@ -4373,31 +4189,100 @@ Scope {
             // "expand the island a lot more ... so i can actually read").
             readonly property int jarvisRoom: (bar.screen ? bar.screen.height : 810) - zone - 16
             implicitHeight: zone + jarvisRoom
-            exclusiveZone: zone                  // waybar "exclusive": true
+            // waybar "exclusive": true — except under Always hide, where the
+            // bar overlays the windows as the dock does and reserves nothing.
+            exclusiveZone: root.barReserves ? zone : 0
+            // Hidden (Always hide), only a 2 px line on the edge takes input —
+            // the pointer reaching it is what brings the bar back — and the
+            // centre island is out of the mask: Region measures the item
+            // without its slide, so it would hold an invisible click-eater
+            // where the island had been.
+            readonly property real maskT: root.barShown ? bar.zone : 2
             mask: Region {
-                x: 0; y: 0; width: bar.width; height: bar.zone
-                Region { item: centerIsland }
+                x: root.barPos === "right" ? bar.width - bar.maskT : 0; y: 0
+                width: root.barVert ? bar.maskT : bar.width
+                height: root.barVert ? bar.height : bar.maskT
+                Region { item: root.barShown ? centerIsland : noRegion }
             }
+            Item { id: noRegion; width: 0; height: 0 }
+            // Over any part of the bar, the pointer counts as being on it.
+            // A HoverHandler is passive, so the modules' own clicks and
+            // hovers under it are untouched.
+            Item {
+                anchors.fill: parent
+                HoverHandler { onHoveredChanged: root.barHover = hovered }
+            }
+            // The full-length bar's ground: one strip on the islands' line
+            // (5 px in from every edge), worn exactly as an island is.
+            Rectangle {
+                id: fullStrip
+                visible: root.barFull
+                x: root.barPos === "right" ? bar.width - 5 - root.barStrip : 5
+                y: 5
+                width: root.barVert ? root.barStrip : bar.width - 10
+                height: root.barVert ? bar.height - 10 : root.barStrip
+                radius: Theme.rowRadius
+                // As opaque as the centre island whenever that is more so (a
+                // grown island goes opaque to be read over windows): at 0.9
+                // beside it, the strip read as a lighter band up to the join.
+                // Rises with the island at once (an island opaque over a 0.9
+                // strip would show as a darker patch) and eases back down
+                // after it has gone, so the whole strip settles together.
+                readonly property real wantA: Math.max(root.barGround, centerIsland.groundColor.a)
+                property real groundA: root.barGround
+                onWantAChanged: {
+                    if (wantA >= groundA) { stripEase.stop(); groundA = wantA }
+                    else { stripEase.to = wantA; stripEase.restart() }
+                }
+                NumberAnimation { id: stripEase; target: fullStrip; property: "groundA"; duration: 260; easing.type: Easing.OutCubic }
+                color: Theme.alpha(Theme.bg, groundA)
+                border.width: Theme.cardBorder
+                border.color: Theme.barLine
+                opacity: root.barFade
+                transform: Translate {
+                    readonly property real d: (1 - root.barFade) * 14 + root.barHideT * 46
+                    x: root.barPos === "left" ? -d : root.barPos === "right" ? d : 0
+                    y: root.barPos === "top" ? -d : 0
+                }
+            }
+            // How far a tall tenant may grow: down to 150 px above the
+            // screen's bottom under a top bar (Ahaan's mark on a screenshot,
+            // below); on a side bar, where the island grows about the screen's
+            // middle, to 40 px short of either end.
+            readonly property real reach: root.barVert
+                ? (bar.screen ? bar.screen.height : 810) - 80
+                : (bar.screen ? bar.screen.height : 810) - 150 - centerIsland.y - centerIsland.rowH
 
             //--------------------------------------------------------------//
             //  LEFT ISLAND : custom/notification , hyprland/workspaces      //
             //--------------------------------------------------------------//
             Island {
-                anchors.left: parent.left
-                y: 22 - rowH / 2                 // the row stays at y 5-39, however tall the island grows
-                anchors.leftMargin: 5            // margin:5px
+                id: leftIsland
+                // margin:5px. On a side bar: the top of the column.
+                x: root.barPos === "right" ? bar.width - 5 - width : 5
+                y: root.barVert ? 5 : 22 - rowH / 2   // the row stays at y 5-39, however tall the island grows
 
-                // custom/notification  →  "󰣇"  →  toggles the Quickshell control center
+                // "󰣇" → the settings menu (2026-10-26, Ahaan). It opened the
+                // notification center until that moved into the centre island
+                // (SUPER+SHIFT+N). The launcher owns the menu and listens on
+                // its socket, the same door ALT+S and SUPER+Return use.
                 BarLabel {
+                    id: setLbl
                     text: "󰣇"
-                    onLeftClicked: root.togglePanel("cc")
+                    visible: root.modOn("settings")
+                    onLeftClicked: Quickshell.execDetached(["sh", "-c", "echo open:settings | socat - UNIX-CONNECT:/tmp/finder.sock"])
                 }
 
                 // hyprland/workspaces  (persistent 1..4, click to activate)
-                Row {
+                // A Grid so it is a column on a side bar: one column there,
+                // one row (as many columns as workspaces) on top.
+                Grid {
                     id: wsRow
-                    Layout.alignment: Qt.AlignVCenter
-                    leftPadding: 5; rightPadding: 5     // #workspaces { padding:0 5px }
+                    visible: root.modOn("workspaces")
+                    Layout.alignment: Qt.AlignCenter
+                    columns: root.barVert ? 1 : Math.max(1, ids.length)
+                    leftPadding: root.barVert ? 0 : 5; rightPadding: root.barVert ? 0 : 5   // #workspaces { padding:0 5px }
+                    topPadding: root.barVert ? 3 : 0; bottomPadding: root.barVert ? 3 : 0
 
                     // union of persistent {1,2,3,4} and any live workspace ids
                     property var ids: {
@@ -4420,7 +4305,12 @@ Scope {
                             text: modelData                              // format-icons map number->number
                             font.family: root.fontFamily
                             font.pixelSize: root.fontSize
-                            leftPadding: 6; rightPadding: 6              // button padding-left/right:3px
+                            leftPadding: root.barVert ? 0 : 6; rightPadding: root.barVert ? 0 : 6   // button padding-left/right:3px
+                            topPadding: root.barVert ? 2 : 0; bottomPadding: root.barVert ? 2 : 0
+                            // A fixed width in the column, so "1" and "10"
+                            // centre on the same line.
+                            width: root.barVert ? 24 : implicitWidth
+                            horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
 
                             // active -> @color7 ; empty -> transparent-ish ; else -> @text
@@ -4441,65 +4331,236 @@ Scope {
                     }
                 }
 
-                // focused window (macOS-style) — the currently focused app, e.g. "[ kitty ]"
-                // ToplevelManager.activeToplevel comes from Quickshell.Wayland (already imported).
-                BarLabel {
-                    property var toplevel: ToplevelManager.activeToplevel
-                    property string appName: {
-                        if (!toplevel || !toplevel.appId) return "";
-                        var id = toplevel.appId;
-                        // Chrome/Chromium/Brave webapps (appId like "chrome-claude.ai__new-Default"):
-                        // match the .desktop file by its StartupWMClass and show its Name ("Claude").
-                        // "__" is the tell-tale sign of a browser webapp window, so normal apps
-                        // (kitty, org.gnome.Text-Editor, ...) skip this and keep the cleaned name below.
-                        if (id.indexOf("__") !== -1) return webappName(id);
-                        // Everything else: clean reverse-DNS ids, e.g. org.gnome.Text-Editor -> text-editor
-                        var parts = id.split(".");
-                        return parts[parts.length - 1].toLowerCase();
+                // The focused app's name as "[ kitty ]" sat here until
+                // 2026-10-31; the Apps module below replaced it (commit
+                // c23e803 and before have it, webapp-name lookup included).
+
+                // ── apps: this workspace's windows as icons (2026-10-31) ──
+                // Ahaan: "switch it to the icon of the app (and show icons
+                // of apps in the current workspace below it which should be
+                // clickable to open them)". Every window on the focused
+                // workspace, along the row on a top bar and down the column
+                // on a side one; an accent line under the focused one; a
+                // click focuses and raises it — all of it the dock's logic
+                // (see `rows` and TaskIcon). From WindowTracker's hyprctl
+                // poll, the list the dock and the switcher already read (no
+                // second poll). Icons resolve the way the switcher's do, and
+                // `revision` re-runs a lookup the index had not loaded yet
+                // (AppSwitcher.qml has the checkerboard history); until then
+                // a letter tile stands in.
+                // The Grid is wrapped so the focused line can be ONE item that
+                // slides between apps (Ahaan: the line was "too instant" when
+                // each icon drew and hid its own) — a child of the Grid would
+                // be laid out as a cell.
+                // ── overflow: a "+" and the wheel (2026-11-02) ──────────────
+                // With a dozen windows on one workspace the column ran on down
+                // a side bar and under the centre island (Ahaan's screenshot:
+                // eleven kitty icons, the last ones behind the clock). Ahaan's
+                // design: once they would overlap, a "+" after the last icon
+                // that fits, and the wheel scrolls through the rest. So the
+                // module is a viewport, `shown` whole icons long, measured
+                // against the room left before the centre island's row (10 px
+                // short of it), and the icons slide under it a whole icon per
+                // notch — never a half-cut icon at the edge. The "+" pages on
+                // a click, and the focused app is scrolled into view when
+                // focus moves, so the accent line is never out of sight.
+                // Along the bar on a top bar the same way.
+                Item {
+                    id: tasksBox
+                    visible: root.modOn("apps") && tasks.rows.length > 0
+                    Layout.alignment: Qt.AlignCenter
+                    readonly property bool vert: root.barVert
+                    readonly property int count: tasks.rows.length
+                    readonly property real pitch: 18 + tasks.spacing
+                    readonly property real pads: vert ? tasks.topPadding + tasks.bottomPadding
+                                                      : tasks.leftPadding + tasks.rightPadding
+                    function lenOf(it) {
+                        if (!it.visible) return 0
+                        const p = vert ? it.Layout.preferredHeight : it.Layout.preferredWidth
+                        return p >= 0 ? p : (vert ? it.implicitHeight : it.implicitWidth)
                     }
-                    // heuristicLookup alone showed "com__chart_lcrreits_-default" for TradingView:
-                    // its hand-written StartupWMClass lacked the trailing "_" Chromium puts in the
-                    // real appId ("...__chart_lCRrEItS_-Default"), so the lookup missed and the
-                    // reverse-DNS cleanup below mangled the raw id. So: exact StartupWMClass first,
-                    // then match the host of the entry's own --app=URL (which can't drift from what
-                    // the browser was launched with), then the bare site name — never the raw id.
-                    // Reading applications.values also makes this binding re-run when the entry
-                    // list is (re)loaded; before, a lookup that missed at window-open stayed wrong
-                    // until focus moved away and back.
-                    function webappName(id) {
-                        var entries = DesktopEntries.applications.values;
-                        var m = id.match(/^[a-z]+-(.+?)__/);
-                        var host = m ? m[1].toLowerCase() : "";
-                        var lid = id.toLowerCase();
-                        var hostHit = null;
-                        for (var i = 0; i < entries.length; i++) {
-                            var e = entries[i];
-                            if (!e || !e.name) continue;
-                            if (e.startupClass && e.startupClass.toLowerCase() === lid) return e.name;
-                            var u = (e.execString || "").match(/--app=["']?[a-z]+:\/\/([^\/"'\s?#:]+)/i);
-                            if (!hostHit && host && u && u[1].toLowerCase() === host) hostHit = e;
+                    // Room along the bar from the left island's start (5) and
+                    // its 7 + 7 padding to 10 short of the centre island's row.
+                    readonly property real room: {
+                        const centreStart = vert ? (bar.height - centerIsland.rowH) / 2
+                                                 : (bar.width - centerIsland.rowW) / 2
+                        return centreStart - 10 - 5 - 14 - lenOf(setLbl) - lenOf(wsRow)
+                    }
+                    readonly property real fullLen: count * pitch - tasks.spacing + pads
+                    readonly property bool overflow: fullLen > room
+                    readonly property real plusLen: vert ? plusLbl.Layout.preferredHeight : plusLbl.Layout.preferredWidth
+                    readonly property int shown: !overflow ? count
+                        : Math.max(1, Math.min(count, Math.floor((room - plusLen - pads + tasks.spacing) / pitch)))
+                    readonly property int maxFirst: Math.max(0, count - shown)
+                    property int first: 0
+                    readonly property int firstC: Math.min(first, maxFirst)
+                    function scrollBy(n) { first = Math.max(0, Math.min(maxFirst, firstC + n)) }
+                    // A click on "+" turns one page; past the end, back to the top.
+                    function page() { first = firstC >= maxFirst ? 0 : Math.min(maxFirst, firstC + shown) }
+                    // The focused app stays in view.
+                    readonly property int markAt: taskMark.at
+                    function reveal() {
+                        if (markAt < 0) return
+                        if (markAt < firstC) first = markAt
+                        else if (markAt > firstC + shown - 1) first = markAt - shown + 1
+                    }
+                    onMarkAtChanged: reveal()
+                    onShownChanged: reveal()
+                    readonly property real viewLen: shown * pitch - tasks.spacing + pads
+                    implicitWidth: vert ? tasks.implicitWidth : (overflow ? viewLen : tasks.implicitWidth)
+                    implicitHeight: vert ? (overflow ? viewLen : tasks.implicitHeight) : tasks.implicitHeight
+                    // Clipped along the bar only: the focused line hangs
+                    // below an icon on a top bar, outside the Grid's height.
+                    Item {
+                        id: tasksView
+                        clip: tasksBox.overflow
+                        readonly property real m: 12
+                        x: tasksBox.vert ? -m : 0
+                        y: tasksBox.vert ? 0 : -m
+                        width: tasksBox.width + (tasksBox.vert ? 2 * m : 0)
+                        height: tasksBox.height + (tasksBox.vert ? 0 : 2 * m)
+                    Item {
+                        id: tasksStrip
+                        property real off: tasksBox.firstC * tasksBox.pitch
+                        Behavior on off { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+                        x: tasksBox.vert ? tasksView.m : -off
+                        y: tasksBox.vert ? -off : tasksView.m
+                        width: tasks.implicitWidth; height: tasks.implicitHeight
+                Grid {
+                    id: tasks
+                    columns: root.barVert ? 1 : Math.max(1, rows.length)
+                    // Room for the focused mark under an icon, and air between
+                    // apps (4 read as one cramped strip).
+                    spacing: root.barVert ? 10 : 9
+                    leftPadding: root.barVert ? 0 : 5; rightPadding: root.barVert ? 0 : 5
+                    // 9 below on a side bar: the focused mark hangs 3-5 px
+                    // under its icon, and at 4 it sat on the island's border
+                    // when that icon was the last in the column.
+                    topPadding: root.barVert ? 4 : 0; bottomPadding: root.barVert ? 9 : 0
+                    verticalItemAlignment: Grid.AlignVCenter
+                    horizontalItemAlignment: Grid.AlignHCenter
+
+                    // ── the dock's model, not a focus-first list ──────────
+                    // Every window on the focused workspace in the order it
+                    // was OPENED (root.openOrder), with the accent line on the focused
+                    // one — the dock's shape. The first cut put the focused app
+                    // first and the rest after it, so a click reshuffled the
+                    // row under the pointer (Ahaan: "app icon clicks are
+                    // messed up").
+                    //
+                    // `rows` hangs off a string signature rather than off
+                    // windowList itself: WindowTracker replaces that array on
+                    // every 350 ms poll, and a Repeater handed a new array
+                    // rebuilds every delegate, so a click landing mid-rebuild
+                    // went nowhere. Now the row is rebuilt only when the set
+                    // of windows actually changes.
+                    readonly property int wsId: Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -999
+                    readonly property string sig: root.openOrder(WindowTracker.windowList)
+                        .filter(w => w.workspaceId === tasks.wsId)
+                        .map(w => (w.address || "").toLowerCase() + "|" + (w.class || ""))
+                        .join(",")
+                    readonly property var rows: sig === "" ? [] : sig.split(",").map(e => {
+                        const i = e.indexOf("|")
+                        return { address: e.substring(0, i), cls: e.substring(i + 1) }
+                    })
+                    // The line moves on the click, not on the next 150 ms
+                    // activewindow poll; the poll landing clears the guess.
+                    property string pick: ""
+                    readonly property string act: pick !== "" ? pick : (WindowTracker.activeAddress || "").toLowerCase()
+                    Connections {
+                        target: WindowTracker
+                        function onActiveAddressChanged() { tasks.pick = "" }
+                    }
+
+                    Repeater {
+                        id: taskRep
+                        model: tasks.rows
+                        delegate: TaskIcon {
+                            required property var modelData
+                            cls: modelData.cls
+                            addr: modelData.address
+                            wsId: tasks.wsId
+                            focused: modelData.address === tasks.act
+                            onPicked: tasks.pick = modelData.address
                         }
-                        if (hostHit) return hostHit.name;
-                        var e2 = DesktopEntries.heuristicLookup(id);
-                        if (e2 && e2.name) return e2.name;
-                        // no .desktop at all: "www.tradingview.com" -> "tradingview"
-                        var labels = host.replace(/^www\./, "").split(".");
-                        return labels.length > 1 ? labels[labels.length - 2] : (labels[0] || id);
                     }
-                    hoverable: false
-                    baseColor: root.col7
-                    visible: appName !== ""       // hides when nothing is focused (empty workspace)
-                    text: "[ " + appName + " ]"
+                }
+                // Under the focused app, sliding to the next one on a click.
+                // Hidden when focus is on no window of this workspace.
+                Rectangle {
+                    id: taskMark
+                    readonly property int at: {
+                        void taskRep.count
+                        const r = tasks.rows
+                        for (let k = 0; k < r.length; k++) if (r[k].address === tasks.act) return k
+                        return -1
+                    }
+                    readonly property Item cell: at >= 0 && at < taskRep.count ? taskRep.itemAt(at) : null
+                    width: 10; height: 2; radius: 1
+                    color: Theme.accent
+                    x: cell ? cell.x + (cell.width - width) / 2 : x
+                    y: cell ? cell.y + cell.height + 3 : y
+                    opacity: cell ? 1 : 0
+                    // Slides once it is up; appears in place the first time.
+                    Behavior on x { enabled: taskMark.opacity > 0.5; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+                    Behavior on y { enabled: taskMark.opacity > 0.5; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
+                }
+                    }   // tasksStrip
+                    }   // tasksView
+                    // Over the icons, wheel only: clicks fall through to them.
+                    // Notches add up, so a touchpad's small steps scroll too.
+                    WheelHandler {
+                        enabled: tasksBox.overflow
+                        property real acc: 0
+                        onWheel: (ev) => {
+                            const d = ev.angleDelta.y !== 0 ? ev.angleDelta.y : ev.angleDelta.x
+                            if (acc !== 0 && Math.sign(d) !== Math.sign(acc)) acc = 0
+                            acc += d
+                            while (acc >= 120) { tasksBox.scrollBy(-1); acc -= 120 }
+                            while (acc <= -120) { tasksBox.scrollBy(1); acc += 120 }
+                        }
+                    }
+                }
+                // Shown only while the icons do not all fit.
+                BarLabel {
+                    id: plusLbl
+                    text: "+"
+                    visible: tasksBox.visible && tasksBox.overflow
+                    onLeftClicked: tasksBox.page()
+                    onScrolledUp: tasksBox.scrollBy(-1)
+                    onScrolledDown: tasksBox.scrollBy(1)
                 }
             }
 
             //--------------------------------------------------------------//
-            //  CENTER ISLAND : clock , mpris                                //
+            //  CENTER ISLAND : reminders , orb , clock , mpris              //
             //--------------------------------------------------------------//
             Island {
                 id: centerIsland
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 22 - rowH / 2                 // the row stays at y 5-39, however tall the island grows
+                // Centred along the bar. On a side bar it grows about the
+                // screen's middle, so its column stays put while it opens.
+                x: root.barVert ? (root.barPos === "right" ? bar.width - 5 - width : 5)
+                                : Math.round((bar.width - width) / 2)
+                y: root.barVert ? Math.round((bar.height - height) / 2)
+                                : 22 - rowH / 2  // the row stays at y 5-39, however tall the island grows
+
+                // ── how wide the row may be on a top bar (2026-11-03) ───────
+                // A long track title ("The ULTIMATE iPhone Setup Tutorial -
+                // Settings, App") pushed the row ~10 px under the right
+                // island (Ahaan's screenshot, 2000 px wide). The island stays
+                // centred, so the room is twice the smaller of the two
+                // half-gaps, each kept 10 px clear (tasksBox's gap). The
+                // track title gives way first (mpris below); the left island's
+                // apps already page against this row (tasksBox.room), so the
+                // left side is measured by its FLOOR — settings, workspaces
+                // and one app icon plus its "+" — never by its current width,
+                // which depends on this and would make a loop.
+                readonly property real leftFloor: !leftIsland.visible ? 0
+                    : 5 + 14 + tasksBox.lenOf(setLbl) + tasksBox.lenOf(wsRow)
+                      + (tasksBox.visible ? Math.min(tasksBox.fullLen, tasksBox.pitch - tasks.spacing + tasksBox.pads + tasksBox.plusLen) : 0)
+                readonly property real rightLen: rightIsland.visible ? 5 + rightIsland.width : 0
+                readonly property real rowRoom: 2 * (bar.width / 2 - Math.max(leftFloor, rightLen) - 10)
 
                 // ── jarvis: the island grows down to show what it did ───────
                 // ex is the whole expansion, 0..1, and the only writer of the
@@ -4510,46 +4571,294 @@ Scope {
                 Behavior on ex { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
                 // Opaque while it shows something to read: at the islands'
                 // 0.9, whatever window sat behind it showed through the text
-                // (Ahaan's screenshot of the first web card).
-                color: Theme.alpha(Theme.bg, 0.9 + 0.1 * ex)
+                // (Ahaan's screenshot of the first web card). Keyed to how far
+                // it has actually grown (Island.solid), not the tenants'
+                // amounts — see there for the flash that fixed.
+                groundColor: Theme.alpha(Theme.bg, root.barFull ? bgA : root.barGround + (1 - root.barGround) * solid)
                 property var shownCard: null
+                // A card that is replaced by one of another KIND — the reply
+                // box turning into the thinking words, the thinking words into
+                // the answer — used to swap in one frame, and the island took
+                // the new card's size in the same frame (Ahaan, 2026-10-24:
+                // "abruptly shrinks to the thinking… text", "when it answers it
+                // is super abrupt"). Two things carry it now, the way the
+                // reminders island always moved:
+                //   · the size: jH / jW chase the card's wanted height and
+                //     width instead of being them (see below);
+                //   · the content: it fades out, the card is swapped under
+                //     it, and it fades back in. `fade` is that opacity.
+                // Same-kind updates (a reply streaming in, the status words
+                // changing every 1.1 s) swap at once; they are not a new card.
+                property real fade: 1
+                property bool fadingOut: false
+                property var pendingCard: null
+                // The ANSWER is the exception (Ahaan, same day, after trying
+                // it: "let the reply be instant"). A reply takes its card and
+                // its size in one frame, as it did before any of this; only
+                // the way OUT of it — a follow-up turning it into the thinking
+                // words — glides. `snap` holds the size Behaviors off while
+                // the card shown is a reply; it is set BEFORE the card is
+                // assigned, because the Behavior reads it as the size changes.
+                property bool snap: false
+                function cardIn(c) {
+                    if (c.kind === "reply") {
+                        cardSwap.stop(); fadingOut = false; fade = 1
+                        snap = true; shownCard = c
+                        return
+                    }
+                    if (fadingOut) { pendingCard = c; return }
+                    if (shownCard && shownCard.kind !== c.kind && ex > 0.5) {
+                        pendingCard = c; fadingOut = true; cardSwap.restart(); return
+                    }
+                    snap = false
+                    shownCard = c
+                }
+                SequentialAnimation {
+                    id: cardSwap
+                    NumberAnimation { target: centerIsland; property: "fade"; to: 0; duration: 110; easing.type: Easing.InQuad }
+                    ScriptAction { script: { centerIsland.snap = false; centerIsland.shownCard = centerIsland.pendingCard; centerIsland.fadingOut = false } }
+                    NumberAnimation { target: centerIsland; property: "fade"; to: 1; duration: 220; easing.type: Easing.OutQuad }
+                }
                 Connections {
                     target: JarvisState
-                    function onCardChanged() { if (JarvisState.card) centerIsland.shownCard = JarvisState.card }
+                    function onCardChanged() { if (JarvisState.card) centerIsland.cardIn(JarvisState.card) }
                 }
-                // "Max expand till the calendar dropdown": the dropdown's bottom
-                // edge is 44 + panelTopMargin + its own height from the top of
-                // the screen, and the island grows from its own y.
+                // "Max expand till the calendar dropdown": the dropdown is the
+                // calendar's own island now, so a card grows as far as the
+                // calendar does (it was the dropdown's bottom edge, which sat
+                // within a few px of the same line).
                 // A preview is the exception: it takes nearly the whole height
                 // of the screen and up to 900 wide, so a PDF page is readable.
                 readonly property bool big: !!shownCard && shownCard.kind === "preview"
                 // A Claude reply (2026-10-20) gets the preview's height and a
                 // reading width: a chat answer with a list or a code block in
                 // it was a column of one-word lines at the card's width.
-                readonly property bool reading: !!shownCard && shownCard.kind === "reply"
+                // A read waiting on a yes with a preview of the file (the
+                // screenshot, the page, the first lines) gets the same room.
+                readonly property bool reading: !!shownCard && (shownCard.kind === "reply"
+                    || (shownCard.kind === "approve" && !!(shownCard.peekImage || shownCard.peekText)))
                 // Its floor is 150 px above the screen's bottom: Ahaan marked
                 // the limit on a screenshot ("let the max open be till here"),
                 // ~660 of the 810-point-tall screen, level with the agents
                 // dropdown's lower reach.
                 readonly property real maxExtra: (big || reading)
-                    ? Math.max(80, (bar.screen ? bar.screen.height : 810) - 150 - y - rowH)
-                    : Math.max(80, bar.zone + root.panelTopMargin + calPanel.implicitHeight - y - rowH)
+                    ? Math.max(80, bar.reach)
+                    : Math.max(80, CalendarState.wantHeight)
                 // At least as wide as a settings card's column while open, so a
                 // web result is not read through a slot the width of the clock.
-                extraW: (big ? Math.min(900, bar.width - 160)
-                             : reading ? Math.min(760, bar.width - 160)
-                             : Theme.cardWidth + 30) * ex
-                extraH: Math.min(jcard.wantHeight, maxExtra) * ex
-                Component.onCompleted: JarvisState.island = centerIsland
+                // The todo list (Todo.qml) grows it the same way, at a reply's
+                // reading width. The two never show together — opening either
+                // closes the other — so the larger of the two is the size.
+                // The Gita reader grows to its page (GitaState.wantHeight), so a
+                // short verse is a short island, up to a reply's full reach,
+                // the 150 px floor included; its picker and search take all of
+                // it. Its final size is published, so the page is laid out once
+                // at that size (GitaState.targetWidth has why).
+                Binding { target: GitaState; property: "targetWidth"; value: Math.min(760, bar.width - 160) }
+                Binding {
+                    target: GitaState; property: "reach"
+                    value: Math.max(80, bar.reach)
+                }
+                // The card's size, chased rather than taken. Off while the
+                // island is closed, so a card that opens does so on `ex`
+                // alone, as it always did; on from the first frame it is open,
+                // so a change of card kind or a growing reply glides.
+                // InOut, not Out: measured, an OutCubic shrink covered 70% of
+                // reply -> thinking-words in its first 120 ms and still read as
+                // abrupt; a slow start is what makes it read as a glide.
+                readonly property real jTargetW: big ? Math.min(900, bar.width - 160)
+                                               : reading ? Math.min(760, bar.width - 160)
+                                               : Theme.cardWidth + 30
+                readonly property real jTargetH: Math.min(jcard.wantHeight, maxExtra)
+                property real jW: jTargetW
+                property real jH: jTargetH
+                Behavior on jW { enabled: centerIsland.ex > 0.001 && !centerIsland.snap; NumberAnimation { duration: 420; easing.type: Easing.InOutCubic } }
+                Behavior on jH { enabled: centerIsland.ex > 0.001 && !centerIsland.snap; NumberAnimation { duration: 420; easing.type: Easing.InOutCubic } }
+                extraW: Math.max(jW * ex,
+                                 Math.min(760, bar.width - 160) * TodoState.amount,
+                                 GitaState.targetWidth * GitaState.amount,
+                                 CalendarState.width * CalendarState.amount,
+                                 Math.min(760, bar.width - 160) * RemindersState.amount,
+                                 MusicState.targetWidth * MusicState.amount,
+                                 NotifState.width * NotifState.amount,
+                                 // An announcement drops under the clock on a top bar, as
+                                 // wide as the clock row, so it never needed width here.
+                                 // Beside a side bar's column there IS no row width — it
+                                 // was drawn 0 px wide (Ahaan: notifications did not show
+                                 // on a left or right bar).
+                                 (root.barVert ? root.announceW : 0)
+                                     * Math.max(RemindersState.announceAmount, NotifState.announceAmount))
+                extraH: Math.max(jH * ex,
+                                 TodoState.wantHeight * TodoState.amount,
+                                 Math.min(GitaState.reach, GitaState.wantHeight) * GitaState.amount,
+                                 CalendarState.wantHeight * CalendarState.amount,
+                                 RemindersState.wantHeight * RemindersState.amount,
+                                 RemindersState.announceH * RemindersState.announceAmount,
+                                 MusicState.wantHeight * MusicState.amount,
+                                 NotifState.wantHeight * NotifState.amount,
+                                 NotifState.announceH * NotifState.announceAmount)
+                Component.onCompleted: {
+                    JarvisState.island = centerIsland; TodoState.island = centerIsland; GitaState.island = centerIsland
+                    CalendarState.island = centerIsland; RemindersState.island = centerIsland
+                    MusicState.island = centerIsland; NotifState.island = centerIsland
+                }
                 belowData: [
                     JarvisCard {
+                        visible: centerIsland.ex > 0.001
                         id: jcard
+                        onDropped: drop => jcReplyBox.take(drop)
+                        // A drag-select in the reply: make sure the keys are
+                        // on the catcher, so the Ctrl+C after it lands where
+                        // it is read (JarvisCard's "copying" says why).
+                        onSelecting: jarvisCatch.takeKeys()
                         anchors.fill: parent
                         r: centerIsland.shownCard
                         maxHeight: centerIsland.maxExtra
-                        opacity: Math.max(0, (centerIsland.ex - 0.35) / 0.65)
+                        opacity: Math.max(0, (centerIsland.ex - 0.35) / 0.65) * centerIsland.fade
+                    },
+                    // A reminder coming due, announced (RemindersState.announce
+                    // has why): its text under a bell that wobbles left to
+                    // right, for announceMs, in the room the island grew.
+                    Item {
+                        anchors.fill: parent
+                        visible: RemindersState.announceAmount > 0.001
+                        opacity: Math.max(0, (RemindersState.announceAmount - 0.35) / 0.65)
+                        // A click ends the drop; with Auto-dismiss off nothing
+                        // else does (RemindersState.endAnnounce, 2026-11-02).
+                        TapHandler { enabled: RemindersState.announcing; onTapped: RemindersState.endAnnounce() }
+                        HoverHandler { enabled: RemindersState.announcing; cursorShape: Qt.PointingHandCursor }
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 10
+                            Text {
+                                id: bell
+                                text: "\uf0f3"
+                                color: root.col9
+                                font.family: root.fontFamily
+                                font.pixelSize: root.fontSize + 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                transformOrigin: Item.Top      // a bell swings from its hook
+                                SequentialAnimation on rotation {
+                                    running: RemindersState.announcing
+                                    // Ten swings, ~2.6 s — the old drop's length —
+                                    // not Infinite: with Auto-dismiss off a drop can
+                                    // stay for hours, and an endless swing redraws
+                                    // the bar every frame the whole time.
+                                    loops: 10
+                                    onRunningChanged: if (!running) bell.rotation = 0
+                                    NumberAnimation { from: -16; to: 16; duration: 130; easing.type: Easing.InOutSine }
+                                    NumberAnimation { from: 16; to: -16; duration: 130; easing.type: Easing.InOutSine }
+                                }
+                            }
+                            Text {
+                                text: RemindersState.announceText
+                                color: root.col7
+                                font.family: root.fontFamily
+                                font.pixelSize: root.fontSize
+                                elide: Text.ElideRight
+                                width: Math.min(implicitWidth, centerIsland.width - 90)
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    },
+                    // A notification arriving (NotifState.announce): the same
+                    // drop, with a still dot where the reminder's bell swings,
+                    // so the two read apart at a glance (Ahaan, 2026-10-26).
+                    // Title over one line of body; "+N" when a burst of them
+                    // came inside one announcement.
+                    Item {
+                        anchors.fill: parent
+                        visible: NotifState.announceAmount > 0.001
+                        opacity: Math.max(0, (NotifState.announceAmount - 0.35) / 0.65)
+                        // A click puts it away into the center. With Auto-dismiss
+                        // off (Settings -> Setup -> Notifications) that is the only
+                        // thing that ends a drop (Ahaan, 2026-11-02: "they stay
+                        // until i click on it").
+                        TapHandler { enabled: NotifState.announcing; onTapped: NotifState.endAnnounce() }
+                        HoverHandler { enabled: NotifState.announcing; cursorShape: Qt.PointingHandCursor }
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 12
+                            // Theme.text (color15), sampled off the dot Ahaan sent
+                            // as the reference: (243,197,165) against #ffcead.
+                            Rectangle {
+                                width: 10; height: 10; radius: 5
+                                color: Theme.text
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Column {
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 1
+                                Text {
+                                    text: NotifState.announceTitle + (NotifState.burst > 1 ? "   +" + (NotifState.burst - 1) : "")
+                                    color: root.col7
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.fontSize
+                                    elide: Text.ElideRight
+                                    width: Math.min(implicitWidth, centerIsland.width - 90)
+                                }
+                                Text {
+                                    visible: text !== ""
+                                    text: NotifState.announceBody
+                                    color: root.alpha(root.col7, 0.6)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: root.fontSize - 2
+                                    elide: Text.ElideRight
+                                    width: Math.min(implicitWidth, centerIsland.width - 90)
+                                }
+                            }
+                        }
                     }
                 ]
+
+                // Due reminders, the furthest left (Ahaan, 2026-10-24: "to the
+                // left of the day date and time … left of the eve thing too").
+                // This is what a reminder coming due looks like now; it was a
+                // sticky card in the notification popup stack. It has that
+                // card's one rule — no timeout, it stays until it is cleared —
+                // and it is hidden, zero wide, while nothing is due.
+                //   left click   clears the reminder it is showing
+                //   right click  the due list, in the island (Reminders.qml,
+                //                RemindersState.dueOnly): Up/Down, Enter clears
+                // That way round at Ahaan's call (same day); the first cut had
+                // them the other way, as the spec first read.
+                // It shows the newest due one. No tooltip (Ahaan, same day).
+                // Styled as the island's own text, "<bell> text ~" (Ahaan,
+                // same day — a Theme.warn "[ … +N ]" chip came first and was
+                // too loud), a separator ahead of the clock — a "~" since
+                // Ahaan swapped out the "|" (2026-10-24).
+                BarLabel {
+                    id: remChip
+                    readonly property var due: RemindersState.fired
+                    readonly property var shownR: due.length > 0 ? due[due.length - 1] : null
+                    // The chip waits out the announcement: zero wide while the
+                    // island is down AND while it slides back up (hold), and
+                    // only then grows in from the left (Ahaan: the island
+                    // widened first, because the chip was already there when
+                    // the announcement began). Clearing one runs the same grow
+                    // backwards instead of dropping out — lastR keeps its
+                    // text on screen while it narrows. clip, so the text is
+                    // uncovered rather than squeezed.
+                    readonly property bool hold: RemindersState.announcing || RemindersState.announceAmount > 0.01
+                    property var lastR: null
+                    onShownRChanged: if (shownR) lastR = shownR
+                    visible: reveal > 0.001
+                    clip: true
+                    property real reveal: (shownR && !hold) ? 1 : 0
+                    // Off while holding, so a chip that is already up snaps
+                    // away as the announcement starts rather than shrinking.
+                    Behavior on reveal { enabled: !remChip.hold; NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+                    // Grows along the bar: across on top, down a side bar's
+                    // column, where it is the bell alone (no room for words).
+                    Layout.preferredHeight: root.barVert ? cellH * reveal : -1
+                    Layout.preferredWidth: root.barVert ? cellW : implicitWidth * reveal
+                    opacity: reveal
+                    readonly property var showR: shownR || lastR
+                    text: !showR ? "" : root.barVert ? "\uf0f3"
+                        : "\uf0f3 " + (showR.text.length > 40 ? showR.text.substring(0, 39) + "…" : showR.text) + " ~"
+                    onLeftClicked: if (shownR) RemindersState.remove(shownR.id)
+                    onRightClicked: RemindersState.toggleDue()
+                }
 
                 // The orb's slot, ahead of the clock. Zero wide until jarvis is
                 // working; it opens the moment the pill is sent, so the island
@@ -4560,8 +4869,10 @@ Scope {
                     property real openAmount: (JarvisState.phase === "launch" || JarvisState.orbVisible) ? 1 : 0
                     Behavior on openAmount { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                     implicitHeight: 20
-                    Layout.preferredWidth: 26 * openAmount
-                    Layout.alignment: Qt.AlignVCenter
+                    // Opens along the bar, like everything else in it.
+                    Layout.preferredWidth: root.barVert ? 26 : 26 * openAmount
+                    Layout.preferredHeight: root.barVert ? 26 * openAmount : 20
+                    Layout.alignment: Qt.AlignCenter
                     JarvisOrb {
                         anchors.centerIn: parent
                         headSize: 16
@@ -4569,25 +4880,51 @@ Scope {
                         visible: JarvisState.orbVisible
                     }
                     // Poking the orb: dismisses a card, or — while she works —
-                    // peeks at what she is doing.
+                    // peeks at what she is doing, or brings back a reply that
+                    // was clicked away (it rests here, JarvisState.resting).
+                    // Right click interrupts the turn, like Esc in Claude Code
+                    // (JarvisState.interrupt), and once she has answered it
+                    // clears her from the bar.
                     TapHandler { onTapped: JarvisState.orbClicked() }
+                    TapHandler { acceptedButtons: Qt.RightButton; onTapped: JarvisState.interrupt() }
                     Component.onCompleted: JarvisState.slot = jarvisSlot
+                }
+
+                // ── tasks: the todo list's button (2026-10-31) ──────────────
+                // Ahaan: the Modules page's "Tasks" should be "for the tasks
+                // thing" — the todo list, which had no button on the bar,
+                // only SUPER+SHIFT+T. A checklist and the number of open
+                // tasks; a click opens the list in this island, as the clock
+                // opens the calendar. Down a side bar the number would not
+                // fit beside the glyph, so it is the glyph alone.
+                // Gone, separator and all, with nothing open (Ahaan,
+                // 2026-11-04, from a screenshot of a bare checklist and "~":
+                // "It only shows if there are tasks"). A finished task still
+                // in the list does not count; SUPER+SHIFT+T is the way in
+                // when there is no button.
+                BarLabel {
+                    id: todoLbl
+                    readonly property int openTasks: TodoState.items.filter(x => !x.done).length
+                    visible: openTasks > 0
+                    baseColor: TodoState.open ? root.col9 : root.col7
+                    // " ~" before the clock on a top bar, the reminder chip's
+                    // separator in this same island.
+                    text: root.barVert ? "\uf0ae" : "\uf0ae " + openTasks + " ~"
+                    onLeftClicked: TodoState.toggleOpen()
                 }
 
                 // clock  →  {:%a %d %B | %I:%M %p}  →  click: dropdown calendar
                 BarLabel {
+                    id: clockLbl
                     // %a=ddd  %d=dd  %B=MMMM  %I=hh(12h w/ AP)  %M=mm  %p=AP
-                    text: Qt.formatDateTime(clock.date, "ddd dd MMMM | hh:mm AP")
-                    onLeftClicked: {
-                        if (!root.calVisible) {
-                            // always reopen on the current month, not wherever
-                            // a previous session left month-nav pointed
-                            var d = new Date();
-                            root.calYear = d.getFullYear();
-                            root.calMonth = d.getMonth();
-                        }
-                        root.togglePanel("cal");
-                    }
+                    // Stacked hours over minutes down a side bar's column.
+                    visible: root.modOn("clock")
+                    text: root.barVert ? Qt.formatDateTime(clock.date, "hh\nmm")
+                                       : Qt.formatDateTime(clock.date, "ddd dd MMMM | hh:mm AP")
+                    lineHeight: root.barVert ? 0.9 : 1
+                    // The calendar, in this island (Calendar.qml); it opens
+                    // on this month.
+                    onLeftClicked: CalendarState.toggleOpen()
                     SystemClock { id: clock; precision: SystemClock.Seconds }
                 }
 
@@ -4607,8 +4944,20 @@ Scope {
                     // org.mpris.MediaPlayer2.spotsie — same story.
                     readonly property var known: ["spotify", "cliamp", "spotifast", "spotsie"]
                     // pick a known player, preferring one that is actually playing
+                    //
+                    // Anything that is PLAYING shows here, known or not
+                    // (youtube in a browser used to be invisible on the bar,
+                    // Ahaan: "let the bar show the currently playing one
+                    // too"). With several playing, the one the music panel
+                    // is on wins — mprisPlayer, which cycling in the panel
+                    // pins — so closing the panel on youtube leaves youtube
+                    // on the bar. Nothing playing: the known players as before.
                     property var player: {
                         var ps = Mpris.players.values;
+                        var cur = root.mprisPlayer;
+                        if (cur && cur.isPlaying) return cur;
+                        for (var j = 0; j < ps.length; j++)
+                            if (ps[j].isPlaying) return ps[j];
                         var idle = null;
                         for (var i = 0; i < ps.length; i++) {
                             var name = ((ps[i].identity || "") + " " + (ps[i].dbusName || "")).toLowerCase();
@@ -4625,14 +4974,251 @@ Scope {
                     // status-icons from your config: playing=\uf04c paused=\uf04b stopped=\uf04d
                     property string statusIcon: st === MprisPlaybackState.Playing ? "\uf04c"
                                               : st === MprisPlaybackState.Paused  ? "\uf04b" : "\uf04d"
-                    property string title: player ? (player.trackTitle || "").substring(0, 50) : ""
+                    property string title: player ? (player.trackTitle || "") : ""
+                    // ── a title that gives way (2026-11-03) ─────────────────
+                    // On a top bar the label is three pieces drawn by mRow
+                    // below — "[ \uf001  <status>", " | <title>", " ]" — and the
+                    // title alone is squeezable. It takes whatever the centre
+                    // row has left under centerIsland.rowRoom after everything
+                    // else in it (the reminder chip, the orb's slot, tasks,
+                    // the clock), so the whole row narrows to make way for the
+                    // side islands instead of sliding under them (Ahaan's
+                    // screenshot). Cut short, it ends in "…" and hovering it
+                    // scrolls the rest past; under ~8 characters of room it is
+                    // dropped, separator and all, and "[ \uf001  <status> ]"
+                    // stays. The old 50-character cut is now a width: about
+                    // 48 characters at most, so a free bar is what it was.
+                    function lenOf(it) {
+                        if (!it.visible) return 0
+                        return it.Layout.preferredWidth >= 0 ? it.Layout.preferredWidth : it.implicitWidth
+                    }
+                    TextMetrics { id: mMax; font: mpris.font; text: "M".repeat(48) }
+                    TextMetrics { id: mMin; font: mpris.font; text: "M".repeat(8) }
+                    readonly property real chrome: 10 + mPre.implicitWidth + mPost.implicitWidth   // 10 = BarLabel's 5 + 5 padding
+                    readonly property real titleCap: centerIsland.rowRoom - 14 - chrome - mSep.implicitWidth
+                        - lenOf(remChip) - lenOf(jarvisSlot) - lenOf(todoLbl) - lenOf(clockLbl)
+                    readonly property bool showTitle: title !== "" && titleCap >= mMin.advanceWidth
+                    // Continuous, to the pixel: the title is cut by a soft
+                    // fade at mBox's edge, not by "…". Elision cuts at whole
+                    // characters, so the slot settled up to a character
+                    // short of the room and eased that last step on its own
+                    // AFTER the side island stopped (Ahaan: "it shrinks all
+                    // the way smoothly, and then there is a slight abrupt
+                    // shrink"). With a fade, titleW meets hardW exactly when
+                    // the room binds, so there is nothing left to settle.
+                    readonly property real titleW: showTitle ? Math.min(mTitle.implicitWidth, titleCap, mMax.advanceWidth) : 0
+                    // The slot chases the text's width instead of being it: a
+                    // longer title used to widen the island in one frame (Ahaan,
+                    // from a recording). clip, so the text is uncovered as the
+                    // slot grows rather than squeezed.
+                    clip: true
+                    property real shownW: chrome + (showTitle ? mSep.implicitWidth + titleW : 0)
+                    Behavior on shownW { NumberAnimation { duration: 320; easing.type: Easing.InOutCubic } }
+                    // shownW is the eased width; slotW is it held under the
+                    // room as it is NOW. Easing alone lagged: a right island
+                    // that widened in one frame sat over the title for the
+                    // 320 ms the shrink took (Ahaan: "the side thing overlaps,
+                    // then the center one shrinks"). So the room is a hard
+                    // wall that follows the side islands frame by frame, and
+                    // the ease is left only for growing and for a new title.
+                    readonly property real hardW: chrome + (showTitle ? mSep.implicitWidth + Math.max(0, titleCap) : 0)
+                    readonly property real slotW: Math.min(shownW, hardW)
+                    Layout.preferredWidth: root.barVert ? cellW : slotW
 
                     // hidden when no player / stopped  (format-stopped / -disconnected = "")
-                    visible: player !== null && st !== MprisPlaybackState.Stopped
+                    visible: player !== null && st !== MprisPlaybackState.Stopped && root.modOn("media")
                     // format: "[ \uf001  {status_icon} | {dynamic} ]"  (\uf001 = music note)
-                    text: "[ \uf001  " + statusIcon + " | " + title + " ]"
-                    // left-click = play/pause (waybar mpris default), right-click = next
-                    onLeftClicked: if (player) player.isPlaying = !player.isPlaying
+                    // No tooltip for the title: Ahaan wants none on the bar
+                    // (2026-10-31). A side bar had room for the note alone;
+                    // since 2026-11-02 it is the waveform below instead.
+                    // The label's own text is empty either way: mRow draws it.
+                    text: ""
+                    Layout.preferredHeight: root.barVert ? cellH : mPre.implicitHeight
+
+                    HoverHandler { id: mHover }
+                    Row {
+                        id: mRow
+                        visible: !root.barVert
+                        x: 5
+                        anchors.verticalCenter: parent.verticalCenter
+                        Text {
+                            id: mPre
+                            font: mpris.font; color: mpris.color
+                            text: "[ \uf001  " + mpris.statusIcon
+                        }
+                        Text {
+                            id: mSep
+                            font: mpris.font; color: mpris.color
+                            text: " | "
+                            // On while the title is, or still folding away.
+                            visible: mpris.showTitle || mBox.width > 0.5
+                        }
+                        // The title's window: as wide as the animated slot
+                        // leaves it, so it narrows WITH the island rather
+                        // than jumping to its new width first.
+                        Item {
+                            id: mBox
+                            height: mTitle.implicitHeight
+                            width: Math.max(0, Math.min(mTitle.implicitWidth,
+                                mpris.slotW - mpris.chrome - mSep.implicitWidth))
+                            readonly property real over: mTitle.implicitWidth - width
+                            // Hovered and cut short: the full title glides
+                            // left to its end, rests, and comes back.
+                            readonly property bool marquee: mHover.hovered && over > 1 && mpris.showTitle
+                            onMarqueeChanged: if (!marquee) mTitle.x = 0
+                            // The title is drawn through a mask that fades
+                            // it out over its last 22 px where it is cut,
+                            // and over its first 22 px while the marquee has
+                            // scrolled it left. Each fade is as wide as what
+                            // is hidden on that side, up to 22, so it eases
+                            // in from nothing as the cut begins rather than
+                            // appearing whole. maskThresholdMin 0.5 with
+                            // spread 1 is the setting that turns the mask's
+                            // alpha into a smooth ramp (measured offline:
+                            // 241 -> 12 across the band; 0/0 was a hard step).
+                            readonly property real fadeL: Math.min(22, Math.max(0, -mTitle.x))
+                            readonly property real fadeR: Math.min(22, Math.max(0, over + mTitle.x))
+                            Item {
+                                id: mSrc
+                                anchors.fill: parent
+                                clip: true
+                                visible: false
+                                layer.enabled: true
+                                Text {
+                                    id: mTitle
+                                    font: mpris.font; color: mpris.color
+                                    text: mpris.title
+                                }
+                            }
+                            Rectangle {
+                                id: mMask
+                                anchors.fill: parent
+                                visible: false
+                                layer.enabled: true
+                                readonly property real w: Math.max(1, width)
+                                gradient: Gradient {
+                                    orientation: Gradient.Horizontal
+                                    GradientStop { position: 0; color: mBox.fadeL > 0.5 ? "#00ffffff" : "#ffffffff" }
+                                    GradientStop { position: Math.min(0.5, mBox.fadeL / mMask.w); color: "#ffffffff" }
+                                    GradientStop { position: Math.max(0.5, 1 - mBox.fadeR / mMask.w); color: "#ffffffff" }
+                                    GradientStop { position: 1; color: mBox.fadeR > 0.5 ? "#00ffffff" : "#ffffffff" }
+                                }
+                            }
+                            MultiEffect {
+                                anchors.fill: parent
+                                source: mSrc
+                                maskEnabled: true
+                                maskSource: mMask
+                                maskThresholdMin: 0.5
+                                maskSpreadAtMin: 1.0
+                            }
+                            SequentialAnimation {
+                                running: mBox.marquee
+                                loops: Animation.Infinite
+                                PauseAnimation { duration: 450 }
+                                NumberAnimation {
+                                    target: mTitle; property: "x"; to: -mBox.over
+                                    duration: Math.max(600, mBox.over / 55 * 1000)   // ~55 px/s, readable
+                                    easing.type: Easing.InOutSine
+                                }
+                                PauseAnimation { duration: 1400 }
+                                NumberAnimation {
+                                    target: mTitle; property: "x"; to: 0
+                                    duration: Math.max(400, mBox.over / 160 * 1000)
+                                    easing.type: Easing.InOutCubic
+                                }
+                                PauseAnimation { duration: 900 }
+                            }
+                        }
+                        Text {
+                            id: mPost
+                            font: mpris.font; color: mpris.color
+                            text: " ]"
+                        }
+                    }
+
+                    // \u2500\u2500 a side bar: a live waveform, not a note \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+                    // Ahaan: "instead of this icon \u2026 show a moving waveform
+                    // like in the iphone dynamic island \u2026 that moves to the
+                    // music/audio". Five rounded bars driven by cava
+                    // (cava-bar.conf: 5 levels 0..100 at 30 fps, pipewire's
+                    // default monitor, so it is whatever is actually heard).
+                    // cava runs only while this shows on a side bar AND the
+                    // player is playing; paused, the bars settle to dots, as
+                    // the iPhone's do. If cava never speaks (missing, or no
+                    // pipewire), a gentle synthetic motion stands in so the
+                    // module still reads as "playing".
+                    Item {
+                        id: wave
+                        visible: root.barVert
+                        anchors.centerIn: parent
+                        // 19.5 wide in the 26 px cell: at 23 it sat too near
+                        // the column's edges (Ahaan, 2026-11-02).
+                        width: 5 * 2.5 + 4 * 1.75; height: 18
+                        readonly property bool playing: mpris.st === MprisPlaybackState.Playing
+                        readonly property bool active: root.barVert && mpris.visible && playing
+                        property var levels: [0, 0, 0, 0, 0]
+                        property double lastData: 0
+                        // cava's frames are 33 ms apart; more than a second of
+                        // nothing means it is not coming, so fake it.
+                        property bool live: false
+                        Process {
+                            id: cava
+                            running: wave.active
+                            command: ["cava", "-p", String(Quickshell.shellDir || "").replace(/^file:\/\//, "") + "/cava-bar.conf"]
+                            stdout: SplitParser {
+                                onRead: (line) => {
+                                    const v = line.split(";").filter(s => s !== "").map(s => Math.min(1, Number(s) / 100))
+                                    if (v.length < 5) return
+                                    wave.levels = v
+                                    wave.lastData = Date.now()
+                                    wave.live = true
+                                }
+                            }
+                            onRunningChanged: if (!running) { wave.live = false; wave.levels = [0, 0, 0, 0, 0] }
+                        }
+                        Timer {   // the stand-in, and cava's watchdog
+                            interval: 90; repeat: true
+                            running: wave.active
+                            property real t: 0
+                            onTriggered: {
+                                if (wave.live && Date.now() - wave.lastData < 1000) return
+                                wave.live = false
+                                t += 0.42
+                                wave.levels = [0, 1, 2, 3, 4].map(i =>
+                                    0.35 + 0.3 * Math.sin(t * (1.1 + i * 0.37) + i * 1.7)
+                                         + 0.15 * Math.sin(t * 2.9 + i))
+                            }
+                        }
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 1.75
+                            Repeater {
+                                model: 5
+                                Rectangle {
+                                    required property int index
+                                    width: 2.5; radius: 1.25
+                                    // A middle-heavy envelope, so quiet music
+                                    // still has a shape and loud music is not
+                                    // a flat block.
+                                    readonly property real shape: [0.7, 0.88, 1, 0.88, 0.7][index]
+                                    // Lifted: cava's levels sit mostly low, and
+                                    // linear they barely moved the bars (Ahaan:
+                                    // "not too sensitive to the audio"). x^0.55
+                                    // takes 0.2 to 0.41 and 0.5 to 0.68.
+                                    readonly property real raw: wave.active ? (wave.levels[index] || 0) : 0
+                                    readonly property real lv: Math.min(1, Math.pow(raw, 0.55) * 1.1)
+                                    height: Math.max(2.5, 18 * shape * lv)
+                                    Behavior on height { NumberAnimation { duration: 70; easing.type: Easing.OutQuad } }
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: mpris.color
+                                }
+                            }
+                        }
+                    }
+                    // left-click opens the player in this island (Music.qml;
+                    // it was play/pause, which is a key there now), right-click = next
+                    onLeftClicked: MusicState.toggleOpen()
                     onRightClicked: if (player && player.canGoNext) player.next()
                 }
             }
@@ -4649,9 +5235,11 @@ Scope {
             //  shoving the whole row sideways from the middle.              //
             //--------------------------------------------------------------//
             Island {
-                anchors.right: parent.right
-                y: 22 - rowH / 2                 // the row stays at y 5-39, however tall the island grows
-                anchors.rightMargin: 5
+                id: rightIsland
+                // The far end of the bar: the right of a top bar, the bottom
+                // of a side one.
+                x: root.barPos === "right" || !root.barVert ? bar.width - 5 - width : 5
+                y: root.barVert ? bar.height - 5 - height : 22 - rowH / 2
 
                 //=== voxtype : voice-to-text ==================================
                 // Recording indicator, sitting left of the bluetooth glyph.
@@ -4708,18 +5296,25 @@ Scope {
                     }
 
                     clip: true
+                    Layout.alignment: Qt.AlignCenter
                     implicitHeight: voxRow.implicitHeight
-                    Layout.preferredWidth: (voxRow.implicitWidth + 10) * openAmount
+                    // On a side bar it opens down the column instead, the bars
+                    // alone (the mic glyph and five bars are wider than it).
+                    Layout.preferredWidth: root.barVert ? voxRow.implicitWidth : (voxRow.implicitWidth + 10) * openAmount
+                    Layout.preferredHeight: root.barVert ? (voxRow.implicitHeight + 8) * openAmount : -1
                     opacity: openAmount
 
                     Row {
                         id: voxRow
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.right: parent.right      // reveal leftward
-                        anchors.rightMargin: 5
+                        // reveal leftward (pinned right, 5 in); centred in a
+                        // side bar's column. By x, not a flipped anchor: one
+                        // bound to undefined is never released (panelX).
+                        x: root.barVert ? (parent.width - width) / 2 : parent.width - width - 5
                         spacing: 2
 
                         Text {
+                            visible: !root.barVert
                             anchors.verticalCenter: parent.verticalCenter
                             text: root.g.mic
                             font.family: root.fontFamily
@@ -4873,14 +5468,19 @@ Scope {
                     // correct, and anything that "fixed" it would be pushing
                     // the text off the line it is already on.
                     implicitHeight: Math.round(srecRow.implicitHeight)
-                    Layout.preferredWidth: Math.round((srecRow.implicitWidth + 10) * openAmount)
+                    Layout.alignment: Qt.AlignCenter
+                    // Down the column on a side bar, as vox: the dot alone
+                    // there, the running time beside it is wider than the bar.
+                    Layout.preferredWidth: root.barVert ? Math.round(srecRow.implicitWidth)
+                                                        : Math.round((srecRow.implicitWidth + 10) * openAmount)
+                    Layout.preferredHeight: root.barVert ? Math.round((srecRow.implicitHeight + 8) * openAmount) : -1
                     opacity: openAmount
 
                     Row {
                         id: srecRow
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.right: parent.right      // reveal leftward, as vox does
-                        anchors.rightMargin: 5
+                        // reveal leftward, as vox does — and placed the same way
+                        x: root.barVert ? (parent.width - width) / 2 : parent.width - width - 5
                         spacing: 5
 
                         // One solid circle, blinking, sized to the DIGITS
@@ -4910,6 +5510,7 @@ Scope {
                         }
 
                         Text {
+                            visible: !root.barVert
                             anchors.verticalCenter: parent.verticalCenter
                             text: srec.clock()
                             font.family: root.fontFamily
@@ -4981,6 +5582,9 @@ Scope {
                 // the  handle. click-to-reveal:false => reveal on hover.
                 Item {
                     id: expandGroup
+                    // Gone with all three of its drawer's modules unchecked.
+                    visible: root.modOn("volume") || root.modOn("display") || root.modOn("gita")
+                    Layout.alignment: Qt.AlignCenter
                     implicitHeight: expandInner.implicitHeight
                     implicitWidth: expandInner.implicitWidth
                     // Raw `expanded: grpHover.hovered` was too twitchy to use:
@@ -4999,36 +5603,53 @@ Scope {
                     // drawer used to collapse out from under the panel it had
                     // just opened. Both drawer icons now own a panel, so both
                     // visible flags pin the drawer open.
-                    property bool expanded: grpHover.hovered || collapseDelay.running
+                    property bool expanded: pointerIn || collapseDelay.running
                                             || root.audVisible || root.dispVisible
-                    HoverHandler {
-                        id: grpHover
-                        onHoveredChanged: hovered ? collapseDelay.stop() : collapseDelay.restart()
-                    }
+                    // Either handler: edgeHover (on the handle) reaches past
+                    // the group's own bounds, where grpHover cannot see.
+                    readonly property bool pointerIn: grpHover.hovered || edgeHover.hovered
+                    onPointerInChanged: pointerIn ? collapseDelay.stop() : collapseDelay.restart()
+                    HoverHandler { id: grpHover }
                     Timer { id: collapseDelay; interval: 1000 }
 
-                    RowLayout {
+                    // A row on top, a column on a side bar: there the drawer
+                    // opens UP the column from the handle, the way it opens
+                    // leftward from it under a top bar.
+                    GridLayout {
                         id: expandInner
-                        spacing: 0
+                        flow: root.barVert ? GridLayout.TopToBottom : GridLayout.LeftToRight
+                        rowSpacing: 0; columnSpacing: 0
 
                         // ---- drawer (hidden until hover) ----
                         Item {
                             id: drawer
                             clip: true
+                            // `open` is what animates: a Behavior on the
+                            // attached Layout.preferredWidth silently never
+                            // ran (the vox note above), so the drawer used to
+                            // snap. Both directions read the one value.
+                            property real open: expandGroup.expanded ? 1 : 0
+                            Behavior on open { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                            Layout.alignment: Qt.AlignCenter
                             implicitHeight: drawerRow.implicitHeight
-                            Layout.preferredWidth: expandGroup.expanded ? drawerRow.implicitWidth : 0
-                            opacity: expandGroup.expanded ? 1 : 0
-                            Behavior on Layout.preferredWidth { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
-                            Behavior on opacity { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                            implicitWidth: drawerRow.implicitWidth
+                            Layout.preferredWidth: root.barVert ? drawerRow.implicitWidth : drawerRow.implicitWidth * open
+                            Layout.preferredHeight: root.barVert ? drawerRow.implicitHeight * open : drawerRow.implicitHeight
+                            opacity: open
 
-                            RowLayout {
+                            GridLayout {
                                 id: drawerRow
-                                anchors.right: parent.right   // grow leftward from the handle
-                                spacing: 0
+                                flow: root.barVert ? GridLayout.TopToBottom : GridLayout.LeftToRight
+                                rowSpacing: 0; columnSpacing: 0
+                                // grow away from the handle: leftward on top, upward on a
+                                // side. By x/y for vox's reason (no flipped anchors).
+                                x: root.barVert ? (parent.width - width) / 2 : parent.width - width
+                                y: root.barVert ? parent.height - height : 0
 
                                 // custom/volume  (reuses volume.sh + your pactl cmds)
                                 BarLabel {
                                     id: volWidget
+                                    visible: root.modOn("volume")
                                     property string icon: ""
                                     text: icon
                                     // click -> audio panel ; right-click -> mute ; scroll -> volume
@@ -5067,15 +5688,43 @@ Scope {
                                 // click -> display panel ; scroll -> backlight
                                 BarLabel {
                                     id: brightness
+                                    visible: root.modOn("display")
                                     text: root.g.monitor
                                     onLeftClicked:  root.togglePanel("disp")
                                     onScrolledUp:   root.run("brightnessctl set +5%")
                                     onScrolledDown: root.run("brightnessctl set 5%-")
                                 }
 
+                                // The Gita reader (Gita.qml): Ahaan asked for
+                                // "a lil button … in the tray with audio and
+                                // display". It opens in the centre island, not
+                                // under itself, so unlike the two above it does
+                                // not pin the drawer open.
+                                BarLabel {
+                                    visible: root.modOn("gita")
+                                    text: root.g.book
+                                    color: GitaState.open ? root.col9 : ((hoverable && gitaHover.hovered) ? hoverColor : baseColor)
+                                    HoverHandler { id: gitaHover }
+                                    onLeftClicked: GitaState.toggleOpen()
+                                }
+
                                 // custom/endpoint : the subtle "|" divider
                                 // (#custom-endpoint: color transparent + dark text-shadow)
                                 Text {
+                                    // A rule across the row; nothing on a side
+                                    // bar, where a "|" would be a dash.
+                                    // Sized from its ink like a lone glyph
+                                    // (BarLabel's inkRow), with 5 px on the left
+                                    // only: the handle after it is the other 5 of
+                                    // the gap. As a bare Text the ink gaps measured
+                                    // book 6 / | / next icon 21 against 10 between
+                                    // the other icons (Ahaan: "make it uniform").
+                                    id: drawerRule
+                                    TextMetrics { id: ruleInk; font: drawerRule.font; text: drawerRule.text }
+                                    Layout.preferredWidth: ruleInk.tightBoundingRect.width + 5
+                                    horizontalAlignment: Text.AlignLeft
+                                    leftPadding: 5 - ruleInk.tightBoundingRect.x
+                                    visible: !root.barVert
                                     text: "|"
                                     font.family: root.fontFamily
                                     font.pixelSize: root.fontSize
@@ -5090,7 +5739,27 @@ Scope {
                         // #custom-expand: color alpha(@foreground,.2); hover: white .2
                         BarLabel {
                             text: ""
+                            // The handle is an empty label — a hover target,
+                            // 10 px wide across a top bar. Down a side bar its
+                            // line height plus padding made it a 28 px hole at
+                            // the top of the status island; 10 there too.
+                            Layout.preferredHeight: root.barVert ? 10 : -1
+                            // ...and the column's width: with a side bar's
+                            // zero side padding an empty label is 0 wide, and
+                            // the drawer had nothing to hover.
+                            // 5 across a top bar, not 10: it sits in the gap
+                            // between the rule and the next icon, and with that
+                            // icon's own 5 px that gap is the row's 10.
+                            Layout.preferredWidth: root.barVert ? 26 : 5
                             hoverable: false
+                            // Narrowing it must not narrow the target: collapsed,
+                            // this is all there is to hover. The strip reaches
+                            // into the island's 7 px padding, so 12 px in all.
+                            Item {
+                                visible: !root.barVert
+                                x: -7; width: 12; height: parent.height
+                                HoverHandler { id: edgeHover }
+                            }
                             color: grpHover.hovered ? Qt.rgba(1, 1, 1, 0.2) : root.alpha(root.colFg, 0.2)
                             styleColor: grpHover.hovered ? Qt.rgba(1, 1, 1, 0.5) : Qt.rgba(0, 0, 0, 0.7)
                             style: Text.Outline
@@ -5115,16 +5784,19 @@ Scope {
                 // within the probe's 2s; Ctrl+C back to the prompt and it
                 // leaves. The records decide what the PANEL draws, never
                 // whether the module is in the bar at all.
-                AgentBot {
+                //
+                // The md-robot glyph, back on 2026-11-05 at Ahaan's ask. From
+                // 2026-09-20 until then this was AgentBot, a drawn blob with
+                // eyes that looked around, blinked and dilated. It was deleted
+                // rather than commented out (435 lines). To bring it back, get
+                // the component and its call site from `git show eef803a:shell/Bar.qml`.
+                BarLabel {
                     id: agentBtn
-                    visible: root.agentRunning
-                    // Holds still and faces front for as long as the panel is
-                    // up, however it was opened or closed — the keybind-less
-                    // IPC verb and a click on the scrim both move this.
-                    attentive: root.agentVisible
+                    visible: root.agentRunning && root.modOn("agents")
+                    text: root.g.robotOn
 
                     // The icon is only ever on screen while an agent is up,
-                    // so presence alone carries "running" and the bot does not
+                    // so presence alone carries "running" and the glyph does not
                     // need to. Colour is left to say the one thing that is
                     // urgent: red once the fullest window is nearly spent, at
                     // the same 90% the panel's own meters go red at. (Not
@@ -5142,9 +5814,9 @@ Scope {
                     // Scroll cycles subscriptions when there is more than one,
                     // the same way the panel's chips do.
                     onScrolledUp: if (root.agents.length > 1)
-                        root.agentIndex = (root.agentIndex + 1) % root.agents.length
+                        root.agentSelect((root.agentIndex + 1) % root.agents.length)
                     onScrolledDown: if (root.agents.length > 1)
-                        root.agentIndex = (root.agentIndex + root.agents.length - 1) % root.agents.length
+                        root.agentSelect((root.agentIndex + root.agents.length - 1) % root.agents.length)
                 }
 
                 //=== bluetooth =================================================
@@ -5159,8 +5831,12 @@ Scope {
                         for (var i = 0; i < ds.length; i++) if (ds[i].connected) return ds[i];
                         return null;
                     }
-                    text: !btOn ? " 󰂲"
-                          : connDev ? (connDev.name + " 󰂯")
+                    visible: root.modOn("bluetooth")
+                    // A side bar shows the glyph alone (no tooltip, at Ahaan's call).
+                    // No leading space off (waybar's format-disabled): it stopped the
+                    // glyph being a lone one, and so took it out of the even row.
+                    text: !btOn ? root.g.btOff
+                          : connDev && !root.barVert ? (connDev.name + " 󰂯")
                           : "󰂯"
                     onLeftClicked: root.togglePanel("bt")
                     onRightClicked: root.runOnCurrentWorkspace("kitty --title bluetui zsh -i -c bluetui")
@@ -5177,6 +5853,7 @@ Scope {
                     property string essid: ""
                     property string signalPct: ""
 
+                    visible: root.modOn("network")
                     text: netState === "wifi" ? "\uf1eb"
                           : netState === "ethernet" ? "\uef09" : "\ueb01"
 
@@ -5209,6 +5886,9 @@ Scope {
                 //=== battery ==================================================
                 BatteryRing {
                     id: battery
+                    visible: root.modOn("battery")
+                    Layout.alignment: Qt.AlignCenter
+                    Layout.preferredHeight: root.barVert ? root.barPitch : -1
                     cap: root.batCap
                     charging: root.batCharging
                     ringColor: charging ? root.colCharging
@@ -5238,665 +5918,6 @@ Scope {
     }
 
     //========================================================================//
-    //  FLOATING NOTIFICATION POPUPS  (top-left, like swaync)                 //
-    //========================================================================//
-    Variants {
-        model: Quickshell.screens
-        delegate: PanelWindow {
-            required property var modelData
-            screen: modelData
-            // Reminder cards share this window with the notification popups
-            // rather than getting one of their own: two layer surfaces both
-            // anchored top-left at full screen height would draw over each
-            // other, and stacking them in one Column is also what puts
-            // reminders above notifications instead of interleaved with them.
-            visible: popupModel.count > 0 || remPopModel.count > 0
-            color: "transparent"
-            anchors { top: true; left: true }
-            margins { top: root.panelTopMargin; left: 10 }
-            implicitWidth: 260                       // notification-window-width 250
-
-            // The height is deliberately FIXED instead of tracking the card
-            // stack, and this is the fix for the "white box left behind when a
-            // notification disappears" bug. SHRINKING a layer surface leaves a
-            // translucent white block filling the strip that was removed, for
-            // a few hundred ms — nothing in the QML scene draws it (proved by
-            // painting the window red and the cards blue: the block stayed
-            // white), and pinning implicitHeight made it vanish completely.
-            // So the surface now keeps one size for its whole life and only
-            // the cards inside it come and go. `mask` keeps input to the cards
-            // themselves, exactly as macshell's dock window does, so the empty
-            // space below them stays click-through.
-            implicitHeight: screen.height
-            mask: Region { item: popupCol }
-            exclusiveZone: 0
-            WlrLayershell.layer: WlrLayer.Overlay    // config: "layer": "overlay"
-            WlrLayershell.namespace: "quickshell-notifications"
-
-            Column {
-                id: popupCol
-                width: parent.width
-                // spacing 0 on purpose — the 8px gap between cards lives
-                // INSIDE each slot below. Column spacing only exists between
-                // items, so it would snap shut the instant a collapsing slot
-                // hit zero, which is what made the cards below jump the last
-                // few pixels after an otherwise smooth collapse.
-                spacing: 0
-
-                // ---- reminders ----
-                // Above the notifications on purpose: a due reminder is the
-                // only card in this stack that will still be here in ten
-                // minutes, so transient traffic must not push it down screen.
-                //
-                // Two kinds ride this one model, and the ONLY difference
-                // between them is whether a timeout runs:
-                //   sticky  — a reminder that has come due. No timer. It goes
-                //             when it is clicked, and clicking it deletes the
-                //             reminder outright.
-                //   notice  — the "Reminder set" confirmation. Times out like
-                //             any other notification and deletes nothing.
-                Repeater {
-                    model: remPopModel
-                    // Same slot-owns-its-gap arrangement as the notification
-                    // cards below, and for the same reason — Column spacing
-                    // would snap shut the instant a collapsing slot hit zero.
-                    delegate: Item {
-                        id: remSlot
-                        required property var model
-                        // Copied off the model row, not read through it, so
-                        // they survive that row being removed out from under
-                        // the delegate mid-collapse.
-                        readonly property string rid:     model.rid
-                        readonly property string rtitle:  model.rtitle
-                        readonly property string rbody:   model.rbody
-                        readonly property bool   rsticky: model.rsticky
-
-                        width: popupCol.width
-                        implicitHeight: remCardItem.implicitHeight + remGap
-                        height: implicitHeight
-                        clip: closing
-
-                        readonly property int remGap: 8
-                        property bool closing: false
-
-                        function close() {
-                            if (closing) return;
-                            closing = true;
-                            remCardItem.opacity = 0;
-                            height = 0;
-                            remReaper.start();
-                        }
-                        Behavior on height {
-                            enabled: remSlot.closing
-                            NumberAnimation { duration: 200; easing.type: Easing.InOutQuad }
-                        }
-                        // Clicking a due reminder is an acknowledgement, so it
-                        // is deleted outright rather than hidden. A notice owns
-                        // nothing and only drops its own row. Either way it
-                        // happens at the END of the collapse, so the row — and
-                        // this delegate — survive the animation.
-                        Timer {
-                            id: remReaper
-                            interval: 220; repeat: false
-                            onTriggered: remSlot.rsticky ? root.remDelete(remSlot.rid)
-                                                         : root.remPopDrop(remSlot.rid)
-                        }
-
-                        // The real notification card, not a lookalike — so
-                        // "matches the system notification style" cannot drift.
-                        NotifCard {
-                            id: remCardItem
-                            width: remSlot.width
-                            summaryText: remSlot.rtitle
-                            bodyText: remSlot.rbody
-                            clickAnywhere: true
-                            onClosed: remSlot.close()
-
-                            opacity: 0
-                            Component.onCompleted: opacity = 1
-                            Behavior on opacity { NumberAnimation { duration: 200 } }
-                        }
-
-                        // A due reminder has NO auto-dismiss timer. That
-                        // absence is the feature. The confirmation notice gets
-                        // the same timeout an ordinary notification gets.
-                        Timer {
-                            interval: root.tNormal
-                            running: !remSlot.rsticky
-                            repeat: false
-                            onTriggered: remSlot.close()
-                        }
-                    }
-                }
-
-                // ---- notifications (self-dismissing) ----
-                Repeater {
-                    model: popupModel
-                    // Each card sits in a slot that owns the card plus the gap
-                    // under it. Closing animates the SLOT's height to zero, so
-                    // the card and its gap disappear as one motion and the
-                    // cards below slide up smoothly instead of snapping.
-                    delegate: Item {
-                        id: popupSlot
-                        required property var model
-                        // Held on the slot so it survives the model row being
-                        // removed out from under us.
-                        readonly property var myNotif: model.notif
-
-                        width: popupCol.width
-                        implicitHeight: card.implicitHeight + popupGap
-                        height: implicitHeight
-                        clip: closing               // card must not spill while the slot shrinks
-
-                        readonly property int popupGap: 8
-                        property bool closing: false
-
-                        function close() {
-                            if (closing) return;
-                            closing = true;         // enables the Behavior below first
-                            card.opacity = 0;
-                            height = 0;             // breaks the binding; Behavior animates it
-                            reaper.start();
-                        }
-                        Behavior on height {
-                            // Only while closing: height is otherwise bound to
-                            // implicitHeight, which settles as the icon/text
-                            // load, and animating that would look like a jitter.
-                            enabled: popupSlot.closing
-                            NumberAnimation { duration: 200; easing.type: Easing.InOutQuad }
-                        }
-                        Timer {
-                            id: reaper
-                            interval: 220; repeat: false
-                            onTriggered: root.removePopup(popupSlot.myNotif)
-                        }
-
-                        NotifCard {
-                            id: card
-                            width: popupSlot.width
-                            notif: popupSlot.myNotif
-                            onClosed: popupSlot.close()
-
-                            // appear animation
-                            opacity: 0
-                            Component.onCompleted: opacity = 1
-                            Behavior on opacity { NumberAnimation { duration: 200 } }
-                        }
-
-                        // auto-dismiss after the per-urgency timeout (history is kept)
-                        Timer {
-                            interval: popupSlot.model.ms; running: true; repeat: false
-                            onTriggered: popupSlot.close()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    //========================================================================//
-    //  CONTROL CENTER  (the panel from the screenshot)                       //
-    //========================================================================//
-    PanelWindow {
-        id: ccWin
-        visible: root.ccVisible
-        color: "transparent"
-        anchors { top: true; left: true; right: true; bottom: true }   // full-screen catcher
-        exclusiveZone: 0
-        WlrLayershell.layer: WlrLayer.Top                              // control-center-layer: top
-        WlrLayershell.namespace: "quickshell-control-center"
-        WlrLayershell.keyboardFocus: root.ccVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
-
-        // click anywhere outside the panel -> close
-        MouseArea { anchors.fill: parent; onClicked: root.ccVisible = false }
-
-        Rectangle {
-            id: ccPanel
-            width: 320
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.topMargin: root.panelTopMargin
-            anchors.leftMargin: 10                   // control-center-margin-left
-            height: Math.min(600, ccWin.height - 20) // control-center-height 600
-            radius: 14
-            color: root.colBg          // fully opaque, same as the other dropdowns
-            border.width: 2
-            border.color: root.ncBorder
-
-            MouseArea { anchors.fill: parent }       // swallow clicks (don't close)
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 12
-
-                // ---------- MPRIS widget (cover on top, info/controls below) ----------
-                // ===== To restyle the whole media box: border/color/radius are on
-                // ===== THIS Rectangle (id: mpBox). Fonts use root.ncFont; text sizes
-                // ===== are the font.pixelSize values on each Text below.
-                Rectangle {
-                    id: mpBox
-                    Layout.fillWidth: true
-                    // 300 was a fixed guess and the content outgrew it, so `clip`
-                    // sliced the time readout in half. Track the content height and
-                    // only ever use 300 as a floor, so it can't clip again if the
-                    // fonts grow (ncScale) or a longer control row appears.
-                    Layout.preferredHeight: Math.max(300, mpCol.implicitHeight + 32)
-                    visible: root.mprisPlayer !== null && root.mprisPlayer !== undefined
-                    radius: 12
-                    clip: true
-                    color: "#20000000"
-                    // border: uncomment / edit these two lines to frame the box
-                    border.width: 2
-                    border.color: "white"
-
-                    // ---- two-finger swipe cycles the player -------------------
-                    // A touchpad two-finger swipe reaches QML as scroll events -
-                    // there is no separate swipe gesture on this stack.
-                    //
-                    // This MUST be a MouseArea. Measured on this Quickshell/Qt
-                    // build, a WheelHandler receives NO wheel events at all (a
-                    // HoverHandler beside it fires normally), while
-                    // MouseArea.onWheel receives every one - which is why the
-                    // first attempt at this silently did nothing.
-                    //
-                    // Declared as the FIRST child, so it sits at the bottom of
-                    // the stack, and acceptedButtons: Qt.NoButton so it can never
-                    // take a click from the transport buttons or the seek bar
-                    // above it. Wheel still reaches it because nothing above
-                    // connects to `wheel`, so nothing above accepts one.
-                    MouseArea {
-                        id: mpSwipe
-                        anchors.fill: parent
-                        acceptedButtons: Qt.NoButton
-
-                        // Horizontal travel that counts as a swipe. From a real
-                        // touchpad capture on this machine: one deliberate
-                        // sideways swipe covers 25-410px (median 119) over ~20
-                        // events, i.e. ~5px per event. 25 is the smallest real
-                        // swipe seen, and firing only once per gesture means a
-                        // low bar costs nothing.
-                        readonly property int threshold: 25
-                        // This hardware reports angleDelta at exactly 12x
-                        // pixelDelta; a plain mouse wheel sets only angleDelta.
-                        readonly property int anglePerPixel: 12
-                        property real accX: 0
-                        property real accY: 0
-                        property bool fired: false
-
-                        function endGesture() { accX = 0; accY = 0; fired = false; }
-
-                        onWheel: (w) => {
-                            // The touchpad brackets every gesture with a
-                            // zero-delta event (libinput axis_stop). Measured: it
-                            // segmented a 1856-event capture into 65 gestures
-                            // cleanly. Momentum events would otherwise keep
-                            // cycling after the fingers lift, so they end it too.
-                            if (w.phase === Qt.ScrollEnd || w.phase === Qt.ScrollMomentum
-                                || (w.angleDelta.x === 0 && w.angleDelta.y === 0
-                                    && w.pixelDelta.x === 0 && w.pixelDelta.y === 0)) {
-                                mpSwipe.endGesture();
-                                gestureGap.stop();
-                                return;
-                            }
-                            // Fallback boundary if phase is ever absent: a gap in
-                            // the event stream ends the gesture.
-                            gestureGap.restart();
-
-                            if (Mpris.players.values.length < 2) return;
-
-                            mpSwipe.accX += w.pixelDelta.x !== 0 ? w.pixelDelta.x
-                                                                 : w.angleDelta.x / mpSwipe.anglePerPixel;
-                            mpSwipe.accY += w.pixelDelta.y !== 0 ? w.pixelDelta.y
-                                                                 : w.angleDelta.y / mpSwipe.anglePerPixel;
-
-                            // exactly one switch per swipe, and only for a swipe
-                            // that is mostly sideways - comparing against accY is
-                            // what keeps ordinary vertical scrolling inert.
-                            if (mpSwipe.fired) return;
-                            if (Math.abs(mpSwipe.accX) < mpSwipe.threshold) return;
-                            if (Math.abs(mpSwipe.accX) <= Math.abs(mpSwipe.accY)) return;
-                            mpSwipe.fired = true;
-                            mpBox.startCycle(mpSwipe.accX < 0 ? 1 : -1);
-                        }
-                    }
-                    Timer { id: gestureGap; interval: 150; onTriggered: mpSwipe.endGesture() }
-
-                    // ---- player-change transition ----------------------------
-                    // The swap is deferred to the MIDPOINT of the animation, so
-                    // the outgoing player slides out and the incoming one slides
-                    // in from the opposite side. Switching the data first and
-                    // animating after would just be the same abrupt change with a
-                    // wipe over it.
-                    property real swapShift: 0
-                    property real swapFade: 1
-                    // A swipe landing mid-transition is remembered rather than
-                    // dropped - swiping twice quickly should advance twice. One
-                    // deep on purpose: a flurry of swipes should not queue up a
-                    // long train of animations to sit through.
-                    property int pendingDir: 0
-                    function startCycle(dir) {
-                        if (mpSwap.running) { mpBox.pendingDir = dir; return; }
-                        mpSwap.dir = dir;
-                        mpSwap.start();
-                    }
-                    SequentialAnimation {
-                        id: mpSwap
-                        property int dir: 1
-                        ParallelAnimation {
-                            NumberAnimation { target: mpBox; property: "swapShift"
-                                              to: -mpSwap.dir * 34; duration: 120; easing.type: Easing.InQuad }
-                            NumberAnimation { target: mpBox; property: "swapFade"
-                                              to: 0; duration: 120; easing.type: Easing.InQuad }
-                        }
-                        ScriptAction { script: {
-                            root.mprisCycle(mpSwap.dir);
-                            mpBox.swapShift = mpSwap.dir * 34;   // jump to the far side to slide back in
-                        } }
-                        ParallelAnimation {
-                            NumberAnimation { target: mpBox; property: "swapShift"
-                                              to: 0; duration: 200; easing.type: Easing.OutCubic }
-                            NumberAnimation { target: mpBox; property: "swapFade"
-                                              to: 1; duration: 200; easing.type: Easing.OutCubic }
-                        }
-                        onFinished: if (mpBox.pendingDir !== 0) {
-                            var d = mpBox.pendingDir;
-                            mpBox.pendingDir = 0;
-                            mpBox.startCycle(d);
-                        }
-                    }
-
-                    property real trackLen: root.mprisPlayer ? (root.mprisPlayer.length || 0) : 0
-                    // live position: bound to the player; the timer below keeps it ticking
-                    property real curPos: root.mprisPlayer ? root.mprisPlayer.position : 0
-                    property bool seeking: false
-                    property real seekPos: 0
-                    readonly property real shownPos: seeking ? seekPos : curPos
-
-                    // Quickshell doesn't emit positionChanged every frame (to save CPU);
-                    // pulse it once a second while playing so curPos re-reads the position.
-                    Timer {
-                        interval: 1000; repeat: true
-                        running: root.ccVisible && root.mprisPlayer !== null && root.mprisPlayer !== undefined
-                                 && root.mprisPlayer.isPlaying && !mpBox.seeking
-                        onTriggered: if (root.mprisPlayer) root.mprisPlayer.positionChanged()
-                    }
-
-                    // Blurred album-art background + dim overlay, rounded off.
-                    //
-                    // `clip: true` on a Rectangle clips to the BOUNDING RECT, not to
-                    // the rounded corners, so a full-bleed square child still paints
-                    // into the four corner notches outside the radius. Both of these
-                    // did, which is what put the dark square patches on the corners.
-                    //
-                    // Blur and mask are two SEPARATE stages on purpose. Doing both in
-                    // one MultiEffect does not work: enabling blur expands the
-                    // effect's padding rect, and the mask texture is stretched over
-                    // that larger rect, so the rounded mask lands outside the corners
-                    // and clips nothing. Measured — the notch pixel stayed art-
-                    // coloured instead of going back to the panel background.
-                    // Blurring on the Image's own layer and masking the wrapper
-                    // (a mask-only MultiEffect, so no padding) clips exactly.
-                    Item {
-                        id: mpBg
-                        anchors.fill: parent
-                        opacity: mpBox.swapFade          // cross-fades with the swap; no slide
-                        layer.enabled: true
-                        layer.effect: MultiEffect { maskEnabled: true; maskSource: mpArtMask }
-
-                        Image {
-                            id: mpArt
-                            anchors.fill: parent
-                            source: root.mprisPlayer ? (root.mprisPlayer.trackArtUrl || "") : ""
-                            visible: source != ""
-                            fillMode: Image.PreserveAspectCrop
-                            // It is drawn a few hundred points wide and then blurred, so
-                            // the full-resolution cover art is never needed in memory.
-                            sourceSize.width: 600
-                            sourceSize.height: 600
-                            layer.enabled: true
-                            layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 48 }
-                        }
-                        Rectangle { anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.6) }
-                    }
-                    // rounded-rect mask for the stack above (same pattern as Vinyl)
-                    Item {
-                        id: mpArtMask
-                        anchors.fill: parent
-                        layer.enabled: true
-                        visible: false
-                        Rectangle { anchors.fill: parent; radius: mpBox.radius; color: "black" }
-                    }
-
-                    ColumnLayout {
-                        id: mpCol
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 6
-                        opacity: mpBox.swapFade
-                        // a Translate transform, not x - mpCol is anchor-filled
-                        transform: Translate { x: mpBox.swapShift }
-
-                        // which player the widget is on - only worth the space
-                        // once there is more than one to swipe between.
-                        Text {
-                            Layout.fillWidth: true
-                            horizontalAlignment: Text.AlignHCenter
-                            visible: Mpris.players.values.length > 1
-                            text: root.mprisPlayer ? (root.mprisPlayer.identity || "") : ""
-                            color: Qt.rgba(1, 1, 1, 0.55); font.family: root.ncFont
-                            font.pixelSize: root.ns(9); elide: Text.ElideRight
-                        }
-
-                        // spinning circular cover on top
-                        Vinyl {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.topMargin: 4
-                            Layout.preferredWidth: 118
-                            Layout.preferredHeight: 118
-                            art: root.mprisPlayer ? (root.mprisPlayer.trackArtUrl || "") : ""
-                            spinning: root.mprisPlayer ? root.mprisPlayer.isPlaying : false
-                        }
-
-                        Text {                                            // title
-                            Layout.fillWidth: true; Layout.topMargin: 6
-                            horizontalAlignment: Text.AlignHCenter
-                            text: root.mprisPlayer ? (root.mprisPlayer.trackTitle || "") : ""
-                            color: "white"; font.family: root.ncFont
-                            font.pixelSize: root.ns(15); font.bold: true; elide: Text.ElideRight
-                        }
-                        Text {                                            // artist
-                            Layout.fillWidth: true
-                            horizontalAlignment: Text.AlignHCenter
-                            text: root.mprisPlayer ? (root.mprisPlayer.trackArtist || "") : ""
-                            color: Qt.rgba(1, 1, 1, 0.75); font.family: root.ncFont
-                            font.pixelSize: root.ns(12); elide: Text.ElideRight
-                        }
-
-                        Item { Layout.fillHeight: true }   // push controls + progress toward the bottom
-
-                        // controls (play/pause pill in the middle)
-                        RowLayout {
-                            Layout.alignment: Qt.AlignHCenter
-                            spacing: 18
-                            MediaBtn {                                    // shuffle
-                                glyph: "\uf074"; font.pixelSize: 16
-                                color: (root.mprisPlayer && root.mprisPlayer.shuffle) ? root.ncAccent : "white"
-                                onClicked: if (root.mprisPlayer) root.mprisPlayer.shuffle = !root.mprisPlayer.shuffle
-                            }
-                            MediaBtn {                                    // previous
-                                glyph: "\uf048"; font.pixelSize: 16
-                                onClicked: if (root.mprisPlayer && root.mprisPlayer.canGoPrevious) root.mprisPlayer.previous()
-                            }
-                            Rectangle {                                   // play / pause pill
-                                Layout.preferredWidth: 48; Layout.preferredHeight: 32
-                                radius: height / 2
-                                color: Qt.rgba(1, 1, 1, 0.92)
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: (root.mprisPlayer && root.mprisPlayer.isPlaying) ? "\uf04c" : "\uf04b"
-                                    color: "#1a1a1a"; font.family: root.ncFont; font.pixelSize: root.ns(13)
-                                }
-                                MouseArea { anchors.fill: parent
-                                    onClicked: if (root.mprisPlayer) root.mprisPlayer.isPlaying = !root.mprisPlayer.isPlaying }
-                            }
-                            MediaBtn {                                    // next
-                                glyph: "\uf051"; font.pixelSize: 16
-                                onClicked: if (root.mprisPlayer && root.mprisPlayer.canGoNext) root.mprisPlayer.next()
-                            }
-                            MediaBtn {                                    // repeat / loop
-                                glyph: "\uf01e"; font.pixelSize: 16
-                                color: (root.mprisPlayer && root.mprisPlayer.loopState !== MprisLoopState.None) ? root.ncAccent : "white"
-                                onClicked: {
-                                    if (!root.mprisPlayer) return;
-                                    var s = root.mprisPlayer.loopState;
-                                    root.mprisPlayer.loopState = s === MprisLoopState.None ? MprisLoopState.Playlist
-                                                               : s === MprisLoopState.Playlist ? MprisLoopState.Track
-                                                               : MprisLoopState.None;
-                                }
-                            }
-                        }
-
-                        // draggable seek bar
-                        Rectangle {
-                            id: seekTrack
-                            Layout.fillWidth: true
-                            Layout.topMargin: 10
-                            implicitHeight: 5
-                            radius: 3
-                            visible: mpBox.trackLen > 0
-                            color: Qt.rgba(1, 1, 1, 0.2)
-
-                            Rectangle {                                   // filled portion
-                                height: parent.height; radius: 3
-                                width: parent.width * Math.max(0, Math.min(1, mpBox.shownPos / mpBox.trackLen))
-                                color: "white"
-                            }
-                            Rectangle {                                   // drag handle
-                                width: 12; height: 12; radius: 6; color: "white"
-                                y: parent.height / 2 - height / 2
-                                x: Math.max(0, Math.min(parent.width - width,
-                                       parent.width * (mpBox.shownPos / mpBox.trackLen) - width / 2))
-                                visible: mpBox.seeking || handleHover.hovered
-                                HoverHandler { id: handleHover }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -8          // easier to grab
-                                preventStealing: true
-                                enabled: mpBox.trackLen > 0
-                                function frac(mx) { return Math.max(0, Math.min(1, mx / seekTrack.width)); }
-                                onPressed: (e) => { mpBox.seeking = true; mpBox.seekPos = frac(e.x) * mpBox.trackLen; }
-                                onPositionChanged: (e) => { if (pressed) mpBox.seekPos = frac(e.x) * mpBox.trackLen; }
-                                onReleased: (e) => {
-                                    if (root.mprisPlayer && root.mprisPlayer.canSeek && root.mprisPlayer.positionSupported)
-                                        root.mprisPlayer.position = mpBox.seekPos;
-                                    mpBox.seeking = false;
-                                }
-                            }
-                        }
-                        Text {                                            // time
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.topMargin: 3
-                            visible: mpBox.trackLen > 0
-                            text: root.fmtTime(mpBox.shownPos) + " / " + root.fmtTime(mpBox.trackLen)
-                            color: Qt.rgba(1, 1, 1, 0.7); font.family: root.ncFont; font.pixelSize: root.ns(10)
-                        }
-                    }
-                }
-
-                // ---------- title + DND + clear-all ----------
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Text {
-                        Layout.fillWidth: true
-                        text: "Notification Center"           // title widget text
-                        color: root.ncText
-                        font.family: root.ncFont
-                        // 17 overflowed: this row has 292-46-46-8-8 = 184px for
-                        // the text, and 19 chars x 0.6em x 17px = 194px, so the
-                        // glyphs ran under the DND button's hover highlight.
-                        // 14 (=15px at ncScale 1.10) needs 171px and fits.
-                        font.pixelSize: root.ns(14)
-                        // safety net: if ncScale is ever raised far enough to
-                        // overflow again, truncate rather than collide.
-                        elide: Text.ElideRight
-                    }
-                    // Do Not Disturb toggle (bell / bell-slash, accent when on)
-                    Rectangle {
-                        Layout.preferredWidth: 46; Layout.preferredHeight: 34
-                        radius: 10
-                        color: root.dnd ? root.alpha(root.ncAccent, 0.25)
-                               : (dndHover.hovered ? root.alpha(root.ncAccent, 0.2) : "transparent")
-                        HoverHandler { id: dndHover }
-                        Text {
-                            anchors.centerIn: parent
-                            text: root.dnd ? "\uf1f6" : "\uf0f3"   // bell-slash when on, bell when off
-                            color: root.dnd ? root.ncAccent : root.ncText
-                            font.family: root.ncFont; font.pixelSize: root.ns(13)
-                        }
-                        MouseArea { anchors.fill: parent; onClicked: root.dnd = !root.dnd }
-                    }
-                    // clear all
-                    Rectangle {
-                        Layout.preferredWidth: 46; Layout.preferredHeight: 34
-                        radius: 10
-                        color: clearHover.hovered ? root.alpha(root.ncAccent, 0.2) : "transparent"
-                        HoverHandler { id: clearHover }
-                        Text {
-                            anchors.centerIn: parent
-                            text: "󰆴"                          // title button-text
-                            color: root.ncText; font.family: root.ncFont; font.pixelSize: root.ns(13)
-                        }
-                        MouseArea { anchors.fill: parent; onClicked: root.clearAllNotifs() }
-                    }
-                }
-
-                // ---------- notifications / empty state ----------
-                Item {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        visible: notifServer.trackedNotifications.values.length === 0
-                        spacing: 8
-                        Text {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "\uf0f3"                     // bell (empty state)
-                            color: root.alpha(root.ncText, 0.35)
-                            font.family: root.ncFont; font.pixelSize: root.ns(53)
-                        }
-                        Text {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "No Notifications"
-                            color: root.alpha(root.ncText, 0.5)
-                            font.family: root.ncFont; font.pixelSize: root.ns(15)
-                        }
-                    }
-
-                    ListView {
-                        anchors.fill: parent
-                        visible: count > 0
-                        // newest first: trackedNotifications appends new ones at the end,
-                        // so reverse it for display (history keeps ordering, this doesn't).
-                        model: notifServer.trackedNotifications.values.slice().reverse()
-                        spacing: 8
-                        clip: true
-                        delegate: NotifCard {
-                            required property var modelData
-                            width: ListView.view.width
-                            notif: modelData
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    //========================================================================//
     //  JARVIS: while a card is waiting for an answer (or holds something to   //
     //  read), a click anywhere else dismisses it and the keyboard answers it  //
     //========================================================================//
@@ -5912,6 +5933,13 @@ Scope {
     // card that is about to vanish by itself has no business taking the
     // keyboard from whatever you were typing into. Nor does a delete that is
     // waiting on the password box — that box needs the keyboard.
+    //
+    // The thinking words and a streaming reply DO raise it since 2026-11-02:
+    // a click outside folds the card back to the orb while the run goes on
+    // (JarvisState.interactive). Since 2026-11-03 they take the keyboard
+    // too, for Esc to do the same (wantsKeys below). A finished reply clicked away
+    // rests behind the orb (JarvisState.dismiss); the orb's left click brings
+    // it back, its right click clears it.
     PanelWindow {
         id: jarvisCatch
         visible: JarvisState.interactive && !JarvisState.awaitingPassword
@@ -5936,14 +5964,49 @@ Scope {
         // focused reply with only an Enter/Esc handler closed itself 2 s
         // after landing — most likely a key typed elsewhere. Now a stray key
         // lands in the box as text, and only Esc or Enter on it does
-        // anything. A reply still streaming takes nothing.
+        // anything.
+        //
+        // The thinking words and a streaming reply took nothing until
+        // 2026-11-03, so they could not be put away from the keyboard.
+        // Ahaan: "Can the esc key also close this [the thinking card] but let
+        // eve do its thing?" Now every card the catcher raises takes the keys,
+        // and Esc on a busy one is JarvisState.dismiss(), the same as a click
+        // away: the card folds to the orb and the run carries on. The cost is
+        // that a key typed while she thinks lands here and not in the window
+        // behind. Almost always that window was the pill you just sent from,
+        // and the card is in plain view, so a click or Esc hands it back.
         readonly property var jc: JarvisState.card
         readonly property bool replying: !!jc && jc.kind === "reply" && !jc.streaming
-        readonly property bool wantsKeys: visible && !!jc && (jc.kind === "approve" || replying)
-        WlrLayershell.keyboardFocus: wantsKeys ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+        readonly property bool wantsKeys: visible && !!jc
+        // A streaming reply that finishes keeps wantsKeys true throughout, so
+        // nothing else would move the cursor from jcKeys into the box.
+        onReplyingChanged: if (replying) takeKeys()
+        // `grab`: a short Exclusive pulse that TAKES the keyboard, then back
+        // to OnDemand for the reason above. OnDemand alone only gets focus
+        // when the surface maps or is clicked, and since 2026-11-02 this
+        // surface is usually mapped already when the reply finishes (the
+        // thinking words raised it, keys off), so flipping to OnDemand on a
+        // mapped surface left the keys with the window behind. Ahaan,
+        // 2026-11-03: "sometimes clicking on the eve expand box doesnt let me
+        // type in the eve reply box, it remains focused on the app behind".
+        // Exclusive takes the keyboard on a mapped layer at once. It is
+        // held only until the box reports focus, or 600 ms at most (jcFocus),
+        // so its everything-goes-here pointer behaviour has no time to bite.
+        property bool grab: false
+        WlrLayershell.keyboardFocus: !wantsKeys ? WlrKeyboardFocus.None
+            : grab ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+        // The island is cut out, then the reply box is put BACK. The box is
+        // drawn on this surface, but with it inside the hole a click on it
+        // fell through to the bar's surface, which never takes the keyboard,
+        // so clicking the box could not get the cursor back once it was lost.
+        // Regions apply in order, so Combine after Subtract restores just
+        // the box. jcBoxHit is zero-sized unless the box is showing: a rect
+        // there during the thinking words would catch clicks meant for the
+        // island and dismiss it.
         mask: Region {
             item: jcFull
             Region { item: jcHole; intersection: Intersection.Subtract }
+            Region { item: jcBoxHit; intersection: Intersection.Combine }
         }
         Item { id: jcFull; anchors.fill: parent }
         Item {
@@ -5954,25 +6017,59 @@ Scope {
             width: isl ? isl.width : 0
             height: isl ? isl.height : 0
         }
+        Item {
+            id: jcBoxHit
+            readonly property bool on: jcReplyBox.opacity > 0.5
+            x: on ? jcReplyBox.x : 0
+            y: on ? jcReplyBox.y : 0
+            width: on ? jcReplyBox.width : 0
+            height: on ? jcReplyBox.height : 0
+        }
 
         MouseArea { anchors.fill: parent; onClicked: JarvisState.dismiss() }
+
+        // Files dropped anywhere on the catcher go with the next reply
+        // (JarvisState.attachments). The island is cut out of this window's
+        // input region, and Wayland hands a drag to the surface under the
+        // pointer by that region, so a drop on the box itself lands on the
+        // bar's surface instead — JarvisCard has the matching DropArea.
+        DropArea {
+            anchors.fill: parent
+            enabled: jarvisCatch.replying
+            onEntered: drag => { drag.accepted = drag.hasUrls || drag.hasText; JarvisState.dragOver = drag.accepted }
+            onExited: JarvisState.dragOver = false
+            onDropped: drop => { JarvisState.dragOver = false; jcReplyBox.take(drop) }
+        }
 
         Item {
             id: jcKeys
             focus: true
             Keys.onPressed: event => {
                 const c = JarvisState.card
-                const ctrl = (event.modifiers & Qt.ControlModifier) !== 0
-                // A command waiting on manual mode: Ctrl+Right runs it,
-                // Ctrl+Left (or Esc) does not (Ahaan, 2026-10-20). Enter does
-                // nothing here on purpose — this surface takes the keyboard
-                // when the card appears, so an Enter meant for whatever you
-                // were typing into must not say yes to a command.
+                // A command waiting on manual mode: Left/Right pick No or
+                // Yes, Enter answers the picked one, Esc is a no (Ahaan,
+                // 2026-10-21; it was Ctrl+Right / Ctrl+Left until then). The
+                // pick starts on Yes (JarvisState.approveYes, which says why
+                // and what that costs).
                 if (c && c.kind === "approve") {
-                    if (ctrl && event.key === Qt.Key_Right) JarvisState.allow()
-                    else if ((ctrl && event.key === Qt.Key_Left) || event.key === Qt.Key_Escape) JarvisState.deny()
+                    // A read outside ~/EVE has a third button, "Yes, all of
+                    // <folder>/", to the right of Yes (JarvisState.approvePick).
+                    if (event.key === Qt.Key_Left) JarvisState.approvePick = Math.max(0, JarvisState.approvePick - 1)
+                    else if (event.key === Qt.Key_Right)
+                        JarvisState.approvePick = Math.min(c.always ? 2 : 1, JarvisState.approvePick + 1)
+                    else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (JarvisState.approveYes) JarvisState.allow()
+                        else JarvisState.deny()
+                    }
+                    else if (event.key === Qt.Key_Escape) JarvisState.deny()
                     else return
                 }
+                // The thinking words / a streaming reply: Esc folds it to the
+                // orb and the run goes on; the reply drops down by itself.
+                else if (event.key === Qt.Key_Escape) JarvisState.dismiss()
+                // Ctrl+C copies what is selected in the reply, streaming or
+                // not (JarvisCard's "copying").
+                else if (event.matches(StandardKey.Copy)) JarvisState.copySelection()
                 else return
                 event.accepted = true
             }
@@ -5989,10 +6086,14 @@ Scope {
             id: jcReplyBox
             readonly property var isl: JarvisState.island
             readonly property real pad: 16
-            visible: jarvisCatch.replying && !!isl
-            x: isl ? isl.x + pad : 0
-            y: isl ? isl.y + isl.height - pad - height : 0
-            width: isl ? isl.width - pad * 2 : 0
+            visible: opacity > 0.01 && !!isl
+            // In the island's grown AREA, not its whole box: on a side bar
+            // the box includes the bar's column, and the field ran over it
+            // (Ahaan's screenshot, left bar: "Reply…" across the clock and
+            // the waveform). On a top bar the two are the same rect.
+            x: isl ? isl.areaX + pad : 0
+            y: isl ? isl.areaY + isl.areaH - pad - height : 0
+            width: isl ? isl.areaW - pad * 2 : 0
             height: 38
             radius: 11
             // The panel's own surface a shade lighter, with a hairline edge
@@ -6000,13 +6101,43 @@ Scope {
             // focus was "the bright color border" Ahaan asked to lose.
             color: Qt.tint(Theme.bg, Theme.alpha(Theme.text, 0.055))
             border.width: 1.5
-            border.color: Theme.hairline
-            opacity: JarvisState.expanded ? 1 : 0
+            // The accent only while a drag hovers: "let go here".
+            border.color: JarvisState.dragOver ? Theme.alpha(Theme.accent, 0.8) : Theme.hairline
+            // A drop: local files become attachments; a dragged link or text
+            // (a browser image drags as its URL) goes into the box as text.
+            function take(drop) {
+                const files = (drop.urls || []).map(String).filter(u => u.startsWith("file://"))
+                if (files.length) JarvisState.attach(files)
+                else if (drop.hasUrls && drop.urls.length) jcReply.insert(jcReply.cursorPosition, String(drop.urls[0]))
+                else if (drop.hasText) jcReply.insert(jcReply.cursorPosition, drop.text)
+                jcFocus.tries = 0; jcFocus.start()
+            }
+            // Fades with the card rather than vanishing the frame a follow-up
+            // is sent (the card under it turns to the thinking words then).
+            opacity: JarvisState.expanded && jarvisCatch.replying ? 1 : 0
+            // Out only: the box is there with the answer, instantly.
+            Behavior on opacity { enabled: jcReplyBox.opacity > 0.5; NumberAnimation { duration: 180; easing.type: Easing.OutQuad } }
+            // A click anywhere on the box puts the cursor in it. It reaches
+            // this surface since the box is back in the input mask (above);
+            // the grab makes sure Hyprland hands the keys over too, not just
+            // Qt. The click itself still reaches the TextInput, so it places
+            // the caret where you clicked.
+            MouseArea {
+                anchors.fill: parent
+                propagateComposedEvents: true
+                onPressed: mouse => { jarvisCatch.takeKeys(); mouse.accepted = false }
+            }
+            EveAttachments {
+                id: jcAttach
+                x: 6
+                anchors.verticalCenter: parent.verticalCenter
+                maxW: (jcReplyBox.width - 28) * 0.6
+            }
             TextInput {
                 id: jcReply
-                x: 14
+                x: jcAttach.visible ? jcAttach.x + jcAttach.width + 8 : 14
                 anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - 28
+                width: parent.width - x - 14
                 verticalAlignment: TextInput.AlignVCenter
                 font.family: Theme.font
                 font.pixelSize: Theme.fsRow
@@ -6019,13 +6150,29 @@ Scope {
                     JarvisState.followUp(t)
                 }
                 Keys.onEscapePressed: JarvisState.dismiss()
+                // Ctrl+V / Shift+Insert: an image or a copied file attaches;
+                // text pastes as usual (JarvisState.paste decides). Backspace
+                // in an empty box takes the last attachment off.
+                // Ctrl+C with nothing selected in the box copies what is
+                // selected in the reply above it: the reply is on the bar's
+                // surface and never sees a key itself.
+                Keys.onPressed: event => {
+                    if (event.matches(StandardKey.Paste)) { JarvisState.paste(jcReply); event.accepted = true }
+                    else if (event.matches(StandardKey.Copy) && jcReply.selectedText === "") {
+                        JarvisState.copySelection(); event.accepted = true
+                    }
+                    else if (event.key === Qt.Key_Backspace && jcReply.text === "" && JarvisState.attachments.length) {
+                        JarvisState.detach(-1); event.accepted = true
+                    }
+                }
                 Text {
                     anchors.fill: parent
                     // Clear of the caret, which sits at x 0 and touched the R.
                     anchors.leftMargin: 6
                     verticalAlignment: Text.AlignVCenter
                     visible: jcReply.text.length === 0
-                    text: "Reply…"
+                    text: JarvisState.dragOver ? "Drop to attach"
+                        : JarvisState.attachments.length ? "Add a message, or Enter to send" : "Reply…"
                     font: jcReply.font
                     color: Theme.dimmer
                 }
@@ -6034,7 +6181,22 @@ Scope {
 
         // Same retry every exclusive surface here needs: a layer surface is
         // not reliably focusable on the frame it maps.
-        onWantsKeysChanged: if (wantsKeys) { jcFocus.tries = 0; jcFocus.start() }
+        // Every time the box should have the cursor: the reply finishing
+        // with the card up, a reply landing after the card was clicked away
+        // during the thinking (it comes back by itself — JarvisState._show —
+        // and takes the keys with it, Ahaan 2026-11-03: "when it re-expands
+        // with a reply, the focus should auto go into the eve panel"), the
+        // orb bringing back a resting reply, and a click on the box. Esc
+        // (dismiss) unmaps the surface, and Hyprland gives the keys back to
+        // the window underneath.
+        function takeKeys() {
+            if (!wantsKeys) return
+            grab = true
+            jcFocus.tries = 0
+            jcFocus.restart()
+        }
+        onWantsKeysChanged: wantsKeys ? takeKeys() : (grab = false)
+        onVisibleChanged: if (visible) takeKeys()
         Timer {
             id: jcFocus
             property int tries: 0
@@ -6042,403 +6204,12 @@ Scope {
             onTriggered: {
                 const want = jarvisCatch.replying ? jcReply : jcKeys
                 want.forceActiveFocus()
-                if (want.activeFocus || ++tries > 12) stop()
-            }
-        }
-    }
-
-    //========================================================================//
-    //  CALENDAR  (dropdown from the clock — same chrome as the control       //
-    //  center: rounded ncBgStrong card, ncBorder outline, ncFont/ncText)     //
-    //========================================================================//
-    PanelWindow {
-        id: calWin
-        visible: root.calVisible
-        color: "transparent"
-        anchors { top: true; left: true; right: true; bottom: true }   // full-screen catcher
-        exclusiveZone: 0
-        WlrLayershell.layer: WlrLayer.Top
-        WlrLayershell.namespace: "quickshell-calendar"
-        WlrLayershell.keyboardFocus: root.calVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
-
-        // click anywhere outside the panel -> close
-        MouseArea { anchors.fill: parent; onClicked: root.calVisible = false }
-
-        Rectangle {
-            id: calPanel
-            // 580 = 14 margin + 272 month column + 12 + 1 divider + 12 + 255
-            // reminders column + 14 margin. The month column keeps the 272 it
-            // had as a 300px panel, so nothing in the grid or the month header
-            // is any tighter than before — the reminders list is bolted on to
-            // the right of it rather than carved out of it. 255 is what stops
-            // "12:57 AM · in 45m" eliding: at 215 it did.
-            width: 580
-            anchors.top: parent.top
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.topMargin: root.panelTopMargin
-            // Driven by the month grid, which is always the taller of the two
-            // columns — so adding reminders never makes this dropdown grow.
-            // The list scrolls inside whatever height the grid dictates.
-            implicitHeight: calCol.implicitHeight + 28
-            radius: 14
-            // was deliberately more opaque than ncBgStrong; now fully opaque
-            // like every other dropdown
-            color: root.colBg
-            border.width: 2
-            border.color: root.ncBorder
-
-            MouseArea { anchors.fill: parent }      // swallow clicks (don't close)
-
-            RowLayout {
-                id: calBody
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 12
-
-            ColumnLayout {
-                id: calCol
-                // fillWidth is pinned OFF and the width capped, because
-                // Layout.fillWidth defaults to TRUE for a layout nested in
-                // another layout — not false, as it does for a plain Item. So
-                // preferredWidth alone did not hold: this column ate 99px of
-                // the slack that was meant for the reminders list beside it,
-                // which squeezed that column to 116px and elided every row.
-                Layout.fillWidth: false
-                Layout.preferredWidth: 272
-                Layout.maximumWidth: 272
-                Layout.alignment: Qt.AlignTop
-                spacing: 10
-
-                // ---------- month/year nav ----------
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 2
-                    CalNavBtn { glyph: ""; onClicked: root.calYear--       }  // «  prev year
-                    CalNavBtn { glyph: ""; onClicked: root.calPrevMonth()  }  // ‹  prev month
-                    Text {
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        text: root.monthNames[root.calMonth] + " " + root.calYear
-                        color: root.ncText
-                        font.family: root.ncFont
-                        font.pixelSize: root.ns(13)
-                        font.weight: Font.Medium
-                    }
-                    CalNavBtn { glyph: ""; onClicked: root.calNextMonth()  }  // ›  next month
-                    CalNavBtn { glyph: ""; onClicked: root.calYear++       }  // »  next year
-                }
-
-                // ---------- weekday header ----------
-                // Centred rather than filled: the 7x32 grid is 248px wide and
-                // the column is 272, and letting the layout stretch the cells
-                // to close that gap would stop them being circles.
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: 4
-                    Repeater {
-                        model: ["S", "M", "T", "W", "T", "F", "S"]
-                        delegate: Text {
-                            required property string modelData
-                            Layout.preferredWidth: 32
-                            horizontalAlignment: Text.AlignHCenter
-                            text: modelData
-                            color: root.alpha(root.ncText, 0.5)
-                            font.family: root.ncFont
-                            font.pixelSize: root.ns(10)
-                            font.weight: Font.DemiBold
-                        }
-                    }
-                }
-
-                // ---------- day grid ----------
-                GridLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    columns: 7
-                    rowSpacing: 4
-                    columnSpacing: 4
-
-                    Repeater {
-                        model: root.calCells
-                        delegate: Rectangle {
-                            required property var modelData
-                            Layout.preferredWidth: 32
-                            Layout.preferredHeight: 32
-                            radius: 16
-                            // weekends get a faint accent tint, today is a solid
-                            // accent fill, everything else a subtle neutral tint —
-                            // all derived from the live wal palette, not hardcoded
-                            color: !modelData.inMonth ? "transparent"
-                                   : modelData.isToday ? root.ncAccent
-                                   : (modelData.weekday === 0 || modelData.weekday === 6) ? root.alpha(root.ncAccent, 0.15)
-                                   : root.alpha(root.col7, 0.08)
-                            Text {
-                                anchors.centerIn: parent
-                                text: modelData.num
-                                font.family: root.ncFont
-                                font.pixelSize: root.ns(11)
-                                color: !modelData.inMonth ? root.alpha(root.ncText, 0.3)
-                                       : modelData.isToday ? root.contrastText(root.ncAccent)
-                                       : root.ncText
-                            }
-                        }
-                    }
-                }
-            }
-
-                // ---------- divider between the two columns ----------
-                Rectangle {
-                    Layout.fillHeight: true
-                    Layout.preferredWidth: 1
-                    color: root.alpha(root.ncText, 0.18)
-                }
-
-                //-------------------------------------------------------------//
-                //  REMINDERS COLUMN                                           //
-                //-------------------------------------------------------------//
-                ColumnLayout {
-                    id: remPanelCol
-                    Layout.fillWidth: true          // takes all of the slack now
-                    Layout.fillHeight: true
-                    spacing: 8
-
-                    // Header. Deliberately the SAME text treatment as the
-                    // month name opposite — ns(13) Medium ncText, centred in a
-                    // row of the nav buttons' own height — so the two columns
-                    // read as one panel with two headings on one line, not as
-                    // a calendar with a sidebar bolted to it. That is also why
-                    // it is not a SectionLabel: those are the small grey
-                    // all-caps captions used INSIDE a panel, and this is a
-                    // title. No count beside it, which would break the centring.
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 28          // == CalNavBtn height
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Reminders"
-                            color: root.ncText
-                            font.family: root.ncFont
-                            font.pixelSize: root.ns(13)
-                            font.weight: Font.Medium
-                        }
-                    }
-
-                    // Empty state and list share one box, exactly as the
-                    // control center's notification pane does: the message is
-                    // centred in the whole pane rather than sitting at the top
-                    // of an otherwise blank column.
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.minimumHeight: 120
-
-                        Text {
-                            anchors.centerIn: parent
-                            visible: root.reminders.length === 0
-                            text: "Nothing scheduled"
-                            color: root.alpha(root.ncText, 0.5)
-                            font.family: root.ncFont
-                            font.pixelSize: root.ns(15)     // == "No Notifications"
-                        }
-
-                        Flickable {
-                            id: remFlick
-                            anchors.fill: parent
-                            visible: root.reminders.length > 0
-                            contentWidth: width
-                            contentHeight: remListCol.implicitHeight
-                            clip: true
-                            boundsBehavior: Flickable.StopAtBounds
-                            // Only grabs the wheel once there is more list than
-                            // room for it, so a short list does not swallow
-                            // scrolls meant for the panel.
-                            interactive: contentHeight > height
-
-                            ColumnLayout {
-                                id: remListCol
-                                width: remFlick.width
-                                spacing: 8                  // == the ListView's
-
-                                Repeater {
-                                    model: root.reminders
-                                    // The real notification card again, so the
-                                    // list matches the control center's pane
-                                    // rather than resembling it.
-                                    delegate: NotifCard {
-                                        required property var modelData
-                                        Layout.fillWidth: true
-                                        summaryText: modelData.text
-                                        // pad and textSpacing above the card's
-                                        // defaults: the ask was a taller block
-                                        // with the time sitting lower in it.
-                                        pad: 13
-                                        textSpacing: 7
-                                        bodyText: Qt.formatDateTime(new Date(modelData.at), "hh:mm AP")
-                                                  + " · " + (modelData.fired ? "showing"
-                                                             : root.remCountdown(modelData.at))
-                                        // Smaller comes from the card (.body is
-                                        // ns(11) against the summary's ns(12));
-                                        // dimmer has to be said here.
-                                        bodyColor: root.alpha(root.ncText, 0.5)
-                                        // The x deletes it, and so does a
-                                        // right-click anywhere on the card.
-                                        // Left-click is left alone so a drag
-                                        // still flicks the list.
-                                        rightCloses: true
-                                        onClosed: root.remDelete(modelData.id)
-                                        onRightClicked: root.remDelete(modelData.id)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // ---------- add button, bottom right ----------
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Item { Layout.fillWidth: true }
-                        PanelIconBtn {
-                            glyph: root.g.plus
-                            // remPromptShow() closes every dropdown, this one
-                            // included — the prompt takes the keyboard
-                            // exclusively and a panel left open behind it would
-                            // be unreachable until the prompt was dismissed.
-                            onClicked: root.remPromptShow()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    //========================================================================//
-    //  REMINDER PROMPT  (SUPER+SHIFT+R, and the + in the calendar panel)     //
-    //========================================================================//
-    //  One field, asked twice: how long, then what. Overlay layer rather than
-    //  Top, so it sits above the notification popups it is about to add to.
-    PanelWindow {
-        id: remPromptWin
-        visible: root.remPromptOpen
-        color: "transparent"
-        anchors { top: true; left: true; right: true; bottom: true }
-        // Ignore, NOT exclusiveZone: 0. Those are different questions —
-        // exclusiveZone says what THIS surface reserves, exclusionMode says
-        // whether it honours what everyone ELSE reserved. At 0 the compositor
-        // still shrank this window out of the bar's 44px zone (measured:
-        // `hyprctl layers` gave y 44, h 766 on an 810-tall output), so the
-        // scrim stopped short and the bar sat there undimmed above a modal.
-        // Ignore maps to exclusive_zone -1, which is "give me the whole
-        // output". Every other full-screen catcher in this file wants the
-        // opposite — they are dropdowns and belong below the bar.
-        exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.namespace: "quickshell-reminder-prompt"
-        // Exclusive, not OnDemand like the dropdowns: this is reached by
-        // pressing a key, so it has to take the keyboard on its own rather
-        // than waiting for a click to hand it over.
-        WlrLayershell.keyboardFocus: root.remPromptOpen ? WlrKeyboardFocus.Exclusive
-                                                        : WlrKeyboardFocus.None
-
-        // Scrim. Also the cancel target — click anywhere off the box.
-        Rectangle {
-            anchors.fill: parent
-            color: Qt.rgba(0, 0, 0, 0.35)
-            MouseArea { anchors.fill: parent; onClicked: root.remPromptCancel() }
-        }
-
-        // One box, nothing else in it. No header, no step counter, no hint
-        // line and — the part that mattered — no inner field box: the panel
-        // WAS the outer box and the TextInput had its own rounded rect inside
-        // it, which read as a box in a box. The border is the panel chrome
-        // every dropdown uses (2px ncBorder, radius 14), so "minimal" still
-        // matches the system theme rather than inventing a look.
-        Rectangle {
-            id: remPromptBox
-            width: 520
-            height: 68
-            anchors.centerIn: parent
-            radius: 14
-            color: root.colBg
-            border.width: 2
-            // The only feedback left for a bad delay, now that the hint line
-            // is gone. It clears on the next keystroke.
-            border.color: root.remPromptBad ? root.ncAccent : root.ncBorder
-            Behavior on border.color { ColorAnimation { duration: 140 } }
-
-            MouseArea { anchors.fill: parent }      // swallow clicks (don't cancel)
-
-            TextInput {
-                id: remField
-                anchors.fill: parent
-                anchors.leftMargin: 22
-                anchors.rightMargin: 22
-                verticalAlignment: TextInput.AlignVCenter
-                color: root.ncText
-                selectionColor: root.alpha(root.ncAccent, 0.6)
-                selectByMouse: true
-                font.family: root.ncFont
-                font.pixelSize: root.ns(15)
-                clip: true
-                focus: true
-
-                // Mirror into root as it is typed, the same way the wifi
-                // password field does — the two steps swap this one field's
-                // contents, so the field cannot be where either answer lives.
-                onTextChanged: {
-                    if (root.remPromptStage === 0) root.remPromptMins = remField.text;
-                    else                           root.remPromptText = remField.text;
-                    root.remPromptBad = false;
-                }
-                onAccepted: root.remPromptAccept()
-                Keys.onEscapePressed: root.remPromptCancel()
-                // Backspace on an empty message walks back to the delay, so a
-                // mistyped number costs one key instead of a cancel and a
-                // restart. Undiscoverable now that the hint line is gone, and
-                // kept anyway because it costs nothing to have.
-                Keys.onPressed: (e) => {
-                    if (e.key === Qt.Key_Backspace && root.remPromptStage === 1
-                        && remField.text === "") {
-                        root.remPromptStage = 0;
-                        e.accepted = true;
-                    }
-                }
-
-                Connections {
-                    target: root
-                    function onRemPromptStageChanged() {
-                        remField.text = root.remPromptStage === 0 ? root.remPromptMins
-                                                                 : root.remPromptText;
-                        remField.cursorPosition = remField.text.length;
-                        remField.forceActiveFocus();
-                    }
-                    function onRemPromptOpenChanged() {
-                        if (!root.remPromptOpen) return;
-                        remField.text = "";
-                        remField.forceActiveFocus();
-                        remFocusRetry.restart();
-                    }
-                }
-                // Same retry the wifi prompt needs: the surface is not always
-                // focusable on the frame it becomes visible.
-                Timer {
-                    id: remFocusRetry
-                    interval: 60
-                    onTriggered: if (root.remPromptOpen && !remField.activeFocus)
-                                     remField.forceActiveFocus()
-                }
-
-                // The placeholder is the only label there is — which step you
-                // are on is said by what it asks for, and nothing else.
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    width: parent.width
-                    visible: remField.text === ""
-                    text: root.remPromptStage === 0 ? "Remind in minutes..."
-                                                    : "Reminder message..."
-                    color: root.alpha(root.ncText, 0.45)
-                    font.family: root.ncFont
-                    font.pixelSize: root.ns(15)
-                    elide: Text.ElideRight
+                // activeFocus is Qt's own bookkeeping and goes true without
+                // the compositor's say; Window.active is the wl_keyboard
+                // enter, so it is what says the keys really arrived here.
+                if ((want.activeFocus && want.Window.active) || ++tries > 15) {
+                    stop()
+                    jarvisCatch.grab = false
                 }
             }
         }
@@ -6446,7 +6217,7 @@ Scope {
 
     //========================================================================//
     //  BATTERY THRESHOLD PANEL  (dropdown from the battery icon — same       //
-    //  chrome as the calendar/control center: rounded ncBgStrong card,       //
+    //  chrome as the calendar/notification center: rounded ncBgStrong card,       //
     //  ncBorder outline, ncFont/ncText)                                      //
     //========================================================================//
     PanelWindow {
@@ -6465,10 +6236,13 @@ Scope {
         Rectangle {
             id: batPanel
             width: 300
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: root.panelTopMargin
-            anchors.rightMargin: 10
+            // Placed by x/y, not anchors: an anchor bound to `undefined`
+            // after holding an item is NOT released (measured 2026-10-31 —
+            // after left -> right the card kept both side anchors and
+            // stretched to 1386 px wide; back on top it kept the bottom one
+            // and stood 805 px tall). See root.panelX/panelY.
+            x: root.panelX(parent, width)
+            y: root.panelY(parent, height)
             implicitHeight: batCol.implicitHeight + 28
             radius: 14
             color: root.colBg          // fully opaque, same as the other dropdowns
@@ -6657,10 +6431,13 @@ Scope {
         Rectangle {
             id: dispPanel
             width: 340
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: root.panelTopMargin
-            anchors.rightMargin: 10
+            // Placed by x/y, not anchors: an anchor bound to `undefined`
+            // after holding an item is NOT released (measured 2026-10-31 —
+            // after left -> right the card kept both side anchors and
+            // stretched to 1386 px wide; back on top it kept the bottom one
+            // and stood 805 px tall). See root.panelX/panelY.
+            x: root.panelX(parent, width)
+            y: root.panelY(parent, height)
             implicitHeight: dispColLayout.implicitHeight + 28
             radius: 14
             color: root.colBg          // fully opaque, same as the other dropdowns
@@ -6875,10 +6652,13 @@ Scope {
         Rectangle {
             id: netPanel
             width: 340
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: root.panelTopMargin
-            anchors.rightMargin: 10
+            // Placed by x/y, not anchors: an anchor bound to `undefined`
+            // after holding an item is NOT released (measured 2026-10-31 —
+            // after left -> right the card kept both side anchors and
+            // stretched to 1386 px wide; back on top it kept the bottom one
+            // and stood 805 px tall). See root.panelX/panelY.
+            x: root.panelX(parent, width)
+            y: root.panelY(parent, height)
             implicitHeight: netColLayout.implicitHeight + 28
             radius: 14
             color: root.colBg          // fully opaque, same as the other dropdowns
@@ -7047,10 +6827,13 @@ Scope {
         Rectangle {
             id: btPanel
             width: 340
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: root.panelTopMargin
-            anchors.rightMargin: 10
+            // Placed by x/y, not anchors: an anchor bound to `undefined`
+            // after holding an item is NOT released (measured 2026-10-31 —
+            // after left -> right the card kept both side anchors and
+            // stretched to 1386 px wide; back on top it kept the bottom one
+            // and stood 805 px tall). See root.panelX/panelY.
+            x: root.panelX(parent, width)
+            y: root.panelY(parent, height)
             implicitHeight: btColLayout.implicitHeight + 28
             radius: 14
             color: root.colBg          // fully opaque, same as the audio panel
@@ -7196,10 +6979,13 @@ Scope {
         Rectangle {
             id: audPanel
             width: 340
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: root.panelTopMargin
-            anchors.rightMargin: 10
+            // Placed by x/y, not anchors: an anchor bound to `undefined`
+            // after holding an item is NOT released (measured 2026-10-31 —
+            // after left -> right the card kept both side anchors and
+            // stretched to 1386 px wide; back on top it kept the bottom one
+            // and stood 805 px tall). See root.panelX/panelY.
+            x: root.panelX(parent, width)
+            y: root.panelY(parent, height)
             implicitHeight: audColLayout.implicitHeight + 28
             radius: 14
             // Fully opaque, unlike the other dropdowns' ncBgStrong (alpha .95):
@@ -7392,10 +7178,13 @@ Scope {
             // and a limit row carries a title, a meter and a reset time on one
             // line.
             width: 340
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.topMargin: root.panelTopMargin
-            anchors.rightMargin: 10
+            // Placed by x/y, not anchors: an anchor bound to `undefined`
+            // after holding an item is NOT released (measured 2026-10-31 —
+            // after left -> right the card kept both side anchors and
+            // stretched to 1386 px wide; back on top it kept the bottom one
+            // and stood 805 px tall). See root.panelX/panelY.
+            x: root.panelX(parent, width)
+            y: root.panelY(parent, height)
             implicitHeight: agentCol.implicitHeight + 28
             radius: 14
             color: root.colBg
@@ -7476,7 +7265,7 @@ Scope {
                             required property int index
                             label: modelData.name
                             accent: index === root.agentIndex
-                            onClicked: root.agentIndex = index
+                            onClicked: root.agentSelect(index)
                         }
                     }
                 }

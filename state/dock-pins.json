@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "pins": [
+    {
+      "name": "kitty",
+      "icon": "kitty",
+      "command": "kitty",
+      "windowClass": "kitty",
+      "separator": false
+    },
+    {
+      "name": "Spotsie",
+      "icon": "spotsie",
+      "command": "/home/USER/.local/bin/spotsie",
+      "windowClass": "spotsie",
+      "separator": false
+    },
+    {
+      "name": "Zen Browser",
+      "icon": "zen-browser",
+      "command": "/opt/zen-browser-bin/zen-bin",
+      "windowClass": "zen",
+      "separator": false
+    },
+    {
+      "name": "Chromium",
+      "icon": "chromium",
+      "command": "chromium",
+      "windowClass": "chromium",
+      "separator": false
+    },
+    {
+      "name": "VSCodium",
+      "icon": "vscodium",
+      "command": "codium",
+      "windowClass": "codium",
+      "separator": false
+    },
+    {
+      "name": "ChatGPT",
+      "icon": "/home/USER/.local/share/icons/webapps/openai.svg",
+      "command": "chromium --app=https://chat.openai.com",
+      "windowClass": "chrome-chat.openai.com__-default",
+      "separator": false
+    },
+    {
+      "name": "Papers",
+      "icon": "org.gnome.Papers",
+      "command": "papers",
+      "windowClass": "org.gnome.Papers",
+      "separator": false
+    },
+    {
+      "name": "Files",
+      "icon": "org.kde.dolphin",
+      "command": "nautilus --new-window",
+      "windowClass": "org.gnome.nautilus",
+      "separator": false
+    },
+    {
+      "name": "Gmail",
+      "icon": "/home/USER/.local/share/icons/webapps/gmail.svg",
+      "command": "chromium --app=https://mail.google.com/mail/u/1/#inbox",
+      "windowClass": "chrome-mail.google.com__mail_u_1_-default",
+      "separator": false
+    },
+    {
+      "name": "Drive",
+      "icon": "/home/USER/.local/share/icons/webapps/gdrive.svg",
+      "command": "chromium --app=https://drive.google.com/drive/u/1/my-drive",
+      "windowClass": "chrome-drive.google.com__drive_u_1_my-drive-default",
+      "separator": false
+    },
+    {
+      "name": "Whatsapp",
+      "icon": "/home/USER/.local/share/icons/webapps/whatsapp.svg",
+      "command": "chromium --app=https://web.whatsapp.com/",
+      "windowClass": "chrome-web.whatsapp.com__-default",
+      "separator": false
+    },
+    {
+      "name": "LocalSend",
+      "icon": "localsend",
+      "command": "localsend",
+      "windowClass": "org.localsend.localsend_app",
+      "separator": false
+    },
+    {
+      "name": "Magpie",
+      "icon": "magpie",
+      "command": "/home/USER/.local/bin/magpie",
+      "windowClass": "magpie",
+      "separator": false
+    },
+    {
+      "name": "Opentern",
+      "icon": "opentern",
+      "command": "/home/USER/.local/bin/opentern",
+      "windowClass": "opentern",
+      "separator": false
+    },
+    {
+      "name": "Herdr",
+      "icon": "herdr-app",
+      "command": "/home/USER/.local/bin/herdr-app",
+      "windowClass": "herdr-app",
+      "separator": false
+    }
+  ]
+}

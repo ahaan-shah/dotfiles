@@ -98,7 +98,8 @@ fi
 # /etc/kernel/cmdline silently does nothing.
 CMDLINE_TARGETS=()
 [ -f /etc/kernel/cmdline ] && CMDLINE_TARGETS+=("uki:/etc/kernel/cmdline")
-for f in /boot/limine/limine.conf /boot/limine.conf /boot/EFI/limine/limine.conf; do
+# /boot/EFI/BOOT/ is where archinstall puts it for a removable-path Limine.
+for f in /boot/limine/limine.conf /boot/limine.conf /boot/EFI/limine/limine.conf /boot/EFI/BOOT/limine.conf; do
     [ -f "$f" ] && CMDLINE_TARGETS+=("limine:$f")
 done
 if [ -d /boot/loader/entries ]; then

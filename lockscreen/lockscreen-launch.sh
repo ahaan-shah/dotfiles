@@ -41,6 +41,14 @@ running() {
 exec 9>"$RUNTIME/lockscreen-launch.lock"
 flock -w 5 9 || exit 0
 
+# No new USB while locked (install/system/bin/hyprahaan-usb-lock). Above the
+# `running` check on purpose: after_sleep_cmd lands here with the lock already up,
+# and a resume can re-enumerate the card reader, so the block is applied again.
+# Fire and forget, and never part of the lock's own path: a missing helper or a
+# failed sudo must not delay the lock, least of all before a suspend. -n because
+# nobody is there to answer a prompt. Detached with the same reasoning as below.
+setsid timeout 5 sudo -n /usr/local/bin/hyprahaan-usb-lock lock </dev/null >/dev/null 2>&1 9>&- &
+
 running && exit 0
 
 # Detached with fds on /dev/null. This is what stops the lockscreen dying

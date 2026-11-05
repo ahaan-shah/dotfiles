@@ -152,6 +152,14 @@ copy "$HOME/.config/starship.toml"    "$DOTDIR/starship/starship.toml"
 copy "$HOME/.config/mimeapps.list"    "$DOTDIR/mimeapps.list"
 sync "$HOME/.config/spicetify/Themes/pywaldynamic" "$DOTDIR/spicetify/Themes/pywaldynamic"
 
+# ---------------- WHAT THIS DESKTOP IS SHOWING ----------------
+# State, not config, but it is what "the same desktop" looks like on arrival: the
+# wallpaper up now, and the dock's pins. Both are only names and paths, scrubbed
+# below like everything else. todos, reminders, EVE's sessions and the rest of
+# that directory are personal data and stay here.
+copy "$HOME/.local/state/hyprahaan/wallpaper"     "$DOTDIR/state/wallpaper"
+copy "$HOME/.local/state/hyprahaan/dock-pins.json" "$DOTDIR/state/dock-pins.json"
+
 # ---------------- DESKTOP FILES ----------------
 sync "$HOME/.local/share/applications"  "$DOTDIR/webapps/applications"
 sync "$HOME/.local/share/icons/webapps" "$DOTDIR/webapps/icons"
@@ -334,7 +342,12 @@ echo "Personal-data scan clean."
 # values, not the words themselves, so the many legitimate mentions of
 # "password" in the wifi panel's own code do not trip it.
 echo
-hits=$(grep -rIE --exclude-dir=.git \
+# policy.py is EVE's own secret scanner, so it holds key-header regexes and fake
+# credentials as selftest fixtures, and every one of them matches here. Same
+# reasoning as $SELF above: a scanner cannot scan itself. Excluded by name from
+# this one scan only; the personal-data scan above still covers it. Without this
+# the backup has refused to complete since f26bf01 (2026-11-03).
+hits=$(grep -rIE --exclude-dir=.git --exclude=policy.py \
         -e '(psk|password|passwd|api[_-]?key|secret|token)[[:space:]]*=[[:space:]]*["'"'"']?[A-Za-z0-9/+_.-]{8,}' \
         -e 'BEGIN [A-Z ]*PRIVATE KEY' \
         -e '\b(ghp|gho|ghs|sk|xoxb|xoxp)-[A-Za-z0-9]{16,}' \

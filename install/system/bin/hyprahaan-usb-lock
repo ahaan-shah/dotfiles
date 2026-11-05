@@ -1,0 +1,246 @@
+#!/bin/bash
+# hyprahaan-usb-lock lock|unlock|status — no new USB while the screen is locked.
+# Installed root:root 755 at /usr/local/bin by install.sh's system phase. `lock`
+# and `unlock` run through the NOPASSWD rule in
+# install/system/sudoers.d/hyprahaan-usb-lock; `status` only reads, so needs none.
+# Called by lockscreen-launch.sh (lock) and lockscreen/shell.qml (unlock).
+#
+# Ahaan, 2026-11-05: "no USB devices can be connected or mounted when the computer
+# is locked". While locked:
+#
+#   - New devices are not authorised. The kernel still sees them and still
+#     charges from the port, but binds no driver: no keyboard, no network, no disk.
+#   - USB storage that is attached and NOT mounted goes offline, including the
+#     built-in card reader, which is itself a hardwired USB device.
+#
+# ── Why 2 and not 0 ──────────────────────────────────────────────────────
+# authorized_default is per controller: 0 none, 1 all, 2 "internal", meaning ports
+# the firmware reports as hardwired. On this laptop the fingerprint sensor IS a USB
+# device (3-5, hardwired, read 2026-11-05). With 0, a resume that re-enumerates it
+# leaves it dead on the lock screen, taking away a way to unlock. 2 lets it return.
+#
+# ── What this must never do: leave nothing to type with ──────────────────
+# A blocked keyboard that re-enumerates does not come back. Here the keyboard is
+# PS/2 and the touchpad I2C, so nothing is at stake, but install.sh runs this on
+# other machines, and a desktop's only keyboard is an external USB one. So `lock`
+# keeps the default unless a keyboard exists that the block cannot reach
+# (safe_keyboard), and says so in the journal. Storage still goes offline.
+#
+# ── Left alone on purpose ────────────────────────────────────────────────
+# A device already authorised keeps working, and a mounted disk stays mounted:
+# pulling one mid-write loses data, and an external keyboard plugged in before the
+# lock is a legitimate way to type the password. To protect a disk, unmount it.
+#
+# ── A device plugged in while locked stays dead after unlocking ──────────
+# Unlocking restores the default but authorises nothing new, so a stick left in the
+# port overnight does not start typing the moment Ahaan unlocks. Replugging it
+# makes it a new device under the normal default.
+#
+# `unlock` re-authorises only what `lock` took offline, matched by port name AND
+# devnum. devnum changes on every enumeration, so a different device swapped into
+# that port during the lock does not inherit the approval.
+#
+# ── What the sudoers rule does and does not defend against ───────────────
+# The threat is a person at a locked machine. Anything already running as this user
+# can call `unlock`, the same as it can read the user's files. Fails closed: a lock
+# process that crashes leaves the compositor locked and USB blocked, because only a
+# real unlock in shell.qml lifts it. Measured in a nested Hyprland: kill -9 on the
+# lock shows Hyprland's "lockscreen app died" page, the session stays locked, and no
+# unlock is sent. So recovering from that through a TTY (hl.clear_crashed_lockscreen)
+# leaves USB blocked. Clear it by hand: sudo hyprahaan-usb-lock unlock
+# A reboot also clears it, since none of this persists.
+set -uo pipefail
+
+# Same reasons as hyprahaan-browser-policy: nothing may resolve out of a
+# user-writable dir, and nothing is taken from the caller's environment. The test
+# harness overrides these after sourcing; it does not reach them through the
+# environment, so sudo offers no way in.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+umask 077
+
+USB_ROOT=/sys/bus/usb/devices
+USB_PARAM=/sys/module/usbcore/parameters/authorized_default
+INPUT_ROOT=/sys/class/input
+UDEV_DATA=/run/udev/data
+STATE=/run/hyprahaan-usb-lock
+BLOCK_INTERNAL=2
+STORAGE_CLASS=08
+
+log() { logger -t hyprahaan-usb-lock -- "$*" 2>/dev/null; echo "hyprahaan-usb-lock: $*" >&2; }
+
+# usb1, usb2… the root hubs. Each is one controller.
+controllers() {
+    local c
+    for c in "$USB_ROOT"/usb*; do
+        [ -f "$c/authorized_default" ] && echo "$c"
+    done
+}
+
+# 3-5, 4-2, 3-1.2… every real device, never a root hub or an interface (4-2:1.0).
+devices() {
+    local d n
+    for d in "$USB_ROOT"/*; do
+        n=${d##*/}
+        case "$n" in usb*|*:*) continue ;; esac
+        [ -f "$d/authorized" ] && echo "$d"
+    done
+}
+
+is_storage() {
+    local i
+    for i in "$1/${1##*/}":*/bInterfaceClass; do
+        [ -f "$i" ] && [ "$(cat "$i")" = "$STORAGE_CLASS" ] && return 0
+    done
+    return 1
+}
+
+# lsblk and not /proc/mounts: it also sees a filesystem on top of LUKS or LVM, and
+# swap. If lsblk fails, answer "mounted": leaving a disk up is the safe mistake.
+block_mounted() {
+    local out
+    out=$(lsblk -nro MOUNTPOINTS "/dev/$1" 2>/dev/null) || return 0
+    [ -n "${out//[[:space:]]/}" ]
+}
+
+has_mounted() {
+    local b found
+    # Resolved first: find does not follow the symlink sysfs gives for a device.
+    # Only the direct children of block/: below sda sit power, queue, mq… and those
+    # sent lsblk a name that does not exist, which read as mounted and kept an empty
+    # card reader online (measured on this machine). lsblk on sda covers partitions.
+    # A failed look answers "mounted", the same safe mistake as in block_mounted.
+    found=$(find "$(readlink -f "$1")" -maxdepth 8 -type d -regex '.*/block/[^/]+' 2>/dev/null) || return 0
+    for b in $found; do
+        block_mounted "${b##*/}" && return 0
+    done
+    return 1
+}
+
+# A keyboard that survives the block: not virtual (keyd's copy would vanish with
+# the device under it), and either not USB or on a hardwired port.
+safe_keyboard() {
+    local e dev path p
+    for e in "$INPUT_ROOT"/event*; do
+        [ -f "$e/dev" ] || continue
+        dev=$(cat "$e/dev")
+        grep -qs '^E:ID_INPUT_KEYBOARD=1$' "$UDEV_DATA/c$dev" || continue
+        path=$(readlink -f "$e/device")
+        case "$path" in */virtual/*) continue ;; esac
+        case "$path" in */usb[0-9]*) ;; *) return 0 ;; esac
+        # Walk up to the USB device that owns it and ask about its port.
+        p=$path
+        while [ "$p" != / ] && [ "$p" != . ]; do
+            if [ -f "$p/port/connect_type" ]; then
+                [ "$(cat "$p/port/connect_type")" = hardwired ] && return 0
+                break
+            fi
+            p=$(dirname "$p")
+        done
+    done
+    return 1
+}
+
+cmd_lock() {
+    local c n failed=0 d blocked=0
+    mkdir -p "$STATE" || { log "cannot create $STATE"; return 1; }
+
+    if safe_keyboard; then
+        # Saved once: `lock` runs again on every resume, by which point the live
+        # value is our own 2, and restoring that would block USB for good.
+        [ -f "$STATE/param" ] || { [ -r "$USB_PARAM" ] && cat "$USB_PARAM" >"$STATE/param"; }
+        # The module parameter covers controllers that appear later (a dock).
+        [ -w "$USB_PARAM" ] && echo "$BLOCK_INTERNAL" >"$USB_PARAM"
+        # Plain for loops over command substitution, not a process substitution. One
+        # that cannot open /dev/fd skips the loop and still returns 0. A QEMU guest
+        # with no /dev/fd showed it: `lock` blocked nothing and said it had succeeded,
+        # which is the worst thing this script can do. Hence `blocked`.
+        for c in $(controllers); do
+            n=${c##*/}
+            [ -f "$STATE/default.$n" ] || cat "$c/authorized_default" >"$STATE/default.$n"
+            echo "$BLOCK_INTERNAL" >"$c/authorized_default" 2>/dev/null
+            # Read back: a write the kernel refused must not pass as a block.
+            if [ "$(cat "$c/authorized_default")" != "$BLOCK_INTERNAL" ]; then
+                log "$n did not take the block"
+                failed=1
+            else
+                blocked=$((blocked+1))
+            fi
+        done
+        if [ "$blocked" -eq 0 ]; then
+            log "no USB controller took the block"
+            failed=1
+        fi
+    else
+        log "no keyboard the block cannot reach: new USB stays allowed so one can still be plugged in"
+        failed=1
+    fi
+
+    for d in $(devices); do
+        n=${d##*/}
+        [ "$(cat "$d/authorized")" = 1 ] || continue
+        is_storage "$d" || continue
+        if has_mounted "$d"; then
+            log "$n is mounted, so it stays up"
+            continue
+        fi
+        # Written before the device goes down, so a failure below still restores it.
+        cat "$d/devnum" >"$STATE/offline.$n"
+        echo 0 >"$d/authorized" 2>/dev/null || { log "$n would not go offline"; rm -f "$STATE/offline.$n"; failed=1; }
+    done
+    return "$failed"
+}
+
+cmd_unlock() {
+    local f n d val failed=0
+    [ -d "$STATE" ] || return 0
+    for f in "$STATE"/default.*; do
+        [ -f "$f" ] || continue
+        n=${f##*default.}
+        cat "$f" >"$USB_ROOT/$n/authorized_default" 2>/dev/null || { log "could not restore $n"; failed=1; }
+    done
+    if [ -f "$STATE/param" ]; then
+        cat "$STATE/param" >"$USB_PARAM" 2>/dev/null || { log "could not restore the module default"; failed=1; }
+    fi
+    for f in "$STATE"/offline.*; do
+        [ -f "$f" ] || continue
+        n=${f##*offline.}
+        d=$USB_ROOT/$n
+        val=$(cat "$f")
+        # A different devnum is a different device: it stays blocked until replugged.
+        if [ -f "$d/devnum" ] && [ "$(cat "$d/devnum")" = "$val" ]; then
+            echo 1 >"$d/authorized" 2>/dev/null || { log "could not bring $n back"; failed=1; }
+        fi
+    done
+    # Kept on failure, so a second `unlock` can finish the job.
+    [ "$failed" = 0 ] && rm -rf "$STATE"
+    return "$failed"
+}
+
+cmd_status() {
+    local c d
+    [ -d "$STATE" ] && echo "state: locked" || echo "state: open"
+    for c in $(controllers); do
+        echo "${c##*/} authorized_default=$(cat "$c/authorized_default")"
+    done
+    for d in $(devices); do
+        [ "$(cat "$d/authorized")" = 1 ] && continue
+        echo "blocked ${d##*/} $(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null) $(cat "$d/product" 2>/dev/null)"
+    done
+}
+
+# Sourced by install/tests/usb-lock-cases.sh, which runs the functions on a fake tree.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    [ $# -eq 1 ] || { echo "usage: hyprahaan-usb-lock lock|unlock|status" >&2; exit 2; }
+    case "$1" in
+        status) cmd_status; exit $? ;;
+        lock|unlock) ;;
+        *) echo "usage: hyprahaan-usb-lock lock|unlock|status" >&2; exit 2 ;;
+    esac
+    [ "$(id -u)" -eq 0 ] || { echo "hyprahaan-usb-lock: must run as root (through sudo)" >&2; exit 1; }
+    # One at a time: a lock and an unlock racing could save our own 2 as the original.
+    # Outside STATE, which unlock removes. /run is root-only, so nobody can hold this.
+    exec 8>/run/hyprahaan-usb-lock.lock
+    flock -w 4 8 || { log "another run is holding the lock"; exit 1; }
+    "cmd_$1"
+    exit $?
+fi

@@ -10,9 +10,24 @@
 #       DEFAULT_TERMINAL  DEFAULT_EDITOR  DEFAULT_PDF
 #       DOCK_AUTOHIDE (overlap|always)  DOCK_POSITION (bottom|left|right)
 #       SWITCHER_SPECIAL (on|off)
+#       BAR_POSITION     (top|left|right) — Settings -> Shell -> Bar
+#       BAR_HIDDEN       (none | comma list of module ids) — the bar's
+#                        Modules page; ids are the ones Bar.qml's modOn() reads
+#       BAR_STYLE        (islands|full) — three islands, or one full-length strip
+#       BAR_AUTOHIDE     (off|on) — on: hidden until the pointer reaches its edge,
+#                        reserving no space (the dock's "Always hide")
 #       AI_ENABLED       (on|off)  — Settings -> AI; off disables EVE entirely
 #       AI_MODEL         (sonnet|haiku|opus) — Settings -> AI -> Model; which
 #                        Claude EVE talks to
+#       AI_LEVEL         (basic|advanced) — Settings -> AI -> EVE's
+#                        capabilities; advanced starts jarvis/broker.py
+#       NOTIF_DND        (on|off) — Settings -> Setup -> Notifications; on: no
+#                        island drop and no sound, the center still fills
+#       NOTIF_SOUND      (on|off) — play NOTIF_SOUND_NAME on arrival
+#       NOTIF_SOUND_NAME (chime|bell|message|complete|info|attention) — ids of
+#                        NotifState.sounds, which maps them to .oga files
+#       NOTIF_AUTODISMISS (on|off) — off: the drop stays until clicked
+#       NOTIF_DURATION   (0.5|1|1.5 … 10, half-second steps) — seconds the drop shows for
 #
 # ── Why a plain file, and why this one ────────────────────────────────────
 # Six different things need to agree on these values: the four Quickshell
@@ -44,7 +59,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/ui.conf"
 
 die() { echo "ui-prefs: $*" >&2; exit 1; }
 
-VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP DEFAULT_PDF DOCK_AUTOHIDE DOCK_POSITION SWITCHER_SPECIAL AI_ENABLED AI_MODEL"
+VALID_KEYS="UI_FONT ICON_THEME GTK_THEME PALETTE DEFAULT_BROWSER DEFAULT_TERMINAL DEFAULT_EDITOR DEFAULT_BROWSER_DESKTOP DEFAULT_PDF DOCK_AUTOHIDE DOCK_POSITION SWITCHER_SPECIAL BAR_POSITION BAR_HIDDEN BAR_STYLE BAR_AUTOHIDE AI_ENABLED AI_MODEL AI_LEVEL NOTIF_DND NOTIF_SOUND NOTIF_SOUND_NAME NOTIF_AUTODISMISS NOTIF_DURATION"
 
 # ── store ────────────────────────────────────────────────────────────────
 
@@ -393,22 +408,18 @@ apply_icon_theme() {
 }
 
 apply_gtk_theme() {
-    local val="$1" d scheme
+    local val="$1" d
     command -v gsettings >/dev/null &&
         gsettings set org.gnome.desktop.interface gtk-theme "$val" 2>/dev/null || true
     for d in gtk-3.0 gtk-4.0; do
         ini_set "${XDG_CONFIG_HOME:-$HOME/.config}/$d/settings.ini" gtk-theme-name "$val"
     done
-    # libadwaita apps ignore gtk-theme entirely and follow color-scheme instead,
-    # so a dark theme that does not also set this leaves half the GTK apps on
-    # the desktop light. Inferred from the name because there is no other signal
-    # a theme directory carries.
-    case "$val" in
-        *dark*|*Dark*|*mocha*|*macchiato*|*frappe*) scheme="prefer-dark" ;;
-        *) scheme="default" ;;
-    esac
-    command -v gsettings >/dev/null &&
-        gsettings set org.gnome.desktop.interface color-scheme "$scheme" 2>/dev/null || true
+    # color-scheme is NOT set here any more. It was, inferred from this name
+    # (*dark* -> prefer-dark), because libadwaita apps ignore gtk-theme and
+    # follow color-scheme instead. Since 2026-10-29 palette.sh sets it from the
+    # palette's measured brightness: the browsers follow it too, and a light
+    # palette under Adwaita-dark was getting dark browsers. One owner, or the
+    # last of the two settings pages touched would win.
 }
 
 # PALETTE is the one preference this file does not implement. It is sixteen
@@ -419,6 +430,62 @@ apply_gtk_theme() {
 # this file owns only the fact that a value was chosen.
 apply_palette() {
     "$(dirname -- "${BASH_SOURCE[0]}")/palette.sh" apply "$1"
+}
+
+# desktop_for_cmd <command> — the .desktop file that runs <command>: <cmd>.desktop
+# if there is one, else the first entry whose Exec's first word is <cmd> (by
+# basename, so /usr/bin/kitty counts). Empty if nothing on the search path does.
+desktop_for_cmd() {
+    local c="$1" f e
+    for f in "$HOME/.local/share/applications/$c.desktop" "/usr/share/applications/$c.desktop"; do
+        [ -f "$f" ] && { basename "$f"; return 0; }
+    done
+    for f in "$HOME"/.local/share/applications/*.desktop /usr/share/applications/*.desktop; do
+        [ -f "$f" ] || continue
+        e="$(sed -n 's/^Exec=//p' "$f" | head -1)"; e="${e%% *}"
+        [ "${e##*/}" = "$c" ] && { basename "$f"; return 0; }
+    done
+    return 0
+}
+
+# DEFAULT_EDITOR used to reach only $EDITOR (hyprland.lua), so a file opened
+# from nautilus went wherever the mime database said — text/plain=vim.desktop
+# here, set by nothing anyone remembers, while the menu read "Neovim". The
+# association IS the setting for everything that is not a shell, the same
+# relationship DEFAULT_PDF has with application/pdf. So the editor's own entry
+# becomes the default for every type it declares, minus inode/* (VS Code claims
+# directories, and taking inode/directory from the file manager would turn
+# double-clicking a folder into opening an editor) and x-scheme-handler/*.
+# No entry (a hand-installed binary) leaves the mime database alone.
+apply_editor() {
+    local d f types
+    d="$(desktop_for_cmd "$1")"
+    [ -n "$d" ] && command -v xdg-mime >/dev/null || return 0
+    for f in "$HOME/.local/share/applications/$d" "/usr/share/applications/$d"; do
+        [ -f "$f" ] && break
+    done
+    types="$(sed -n 's/^MimeType=//p' "$f" | head -1 | tr ';' '\n' \
+             | grep -vE '^(inode/|x-scheme-handler/|$)' || true)"
+    [ -n "$types" ] || return 0
+    # shellcheck disable=SC2086 — one word per type, deliberately split
+    xdg-mime default "$d" $types 2>/dev/null || true
+}
+
+# A terminal editor's entry says Terminal=true, and GLib — nautilus, gio open,
+# every GTK "open with" — then has to find a terminal itself. Measured on glib2
+# 2.90: its list is xdg-terminal-exec, ghostty, gnome-terminal, konsole … and
+# not kitty, so with kitty alone `gio launch nvim.desktop f` fails with
+# "Unable to find terminal required for application" and nautilus just does
+# nothing. xdg-terminal-exec is the first thing it tries; this file is how that
+# tool is told which terminal is wanted. Written atomically like ui.conf.
+apply_terminal() {
+    local d list tmp
+    d="$(desktop_for_cmd "$1")"
+    [ -n "$d" ] || return 0
+    list="${XDG_CONFIG_HOME:-$HOME/.config}/xdg-terminals.list"
+    tmp="$list.tmp.$$"
+    printf '# Written by ui-prefs.sh (Settings -> Defaults -> Terminal).\n%s\n' "$d" >"$tmp"
+    mv "$tmp" "$list"
 }
 
 # hyprland.lua reads DEFAULT_TERMINAL/EDITOR/BROWSER at CONFIG-PARSE time, so a
@@ -449,10 +516,35 @@ case "$cmd" in
             DOCK_*) die "bad value for $key: $val" ;;
             SWITCHER_SPECIAL=on|SWITCHER_SPECIAL=off) ;;
             SWITCHER_SPECIAL=*) die "bad value for $key: $val" ;;
+            BAR_POSITION=top|BAR_POSITION=left|BAR_POSITION=right) ;;
+            BAR_POSITION=*) die "bad value for $key: $val" ;;
+            BAR_STYLE=islands|BAR_STYLE=full) ;;
+            BAR_STYLE=*) die "bad value for $key: $val" ;;
+            BAR_AUTOHIDE=on|BAR_AUTOHIDE=off) ;;
+            BAR_AUTOHIDE=*) die "bad value for $key: $val" ;;
+            # "none", never "": UiConfig ignores an empty value (it keeps
+            # whatever it had), so un-hiding the last module would never
+            # reach the bar. Ids are lower-case words, comma-separated.
+            BAR_HIDDEN=none) ;;
+            BAR_HIDDEN=*)
+                case "$val" in
+                    ''|*[!a-z,]*|,*|*,|*,,*) die "bad value for $key: $val" ;;
+                esac ;;
             AI_ENABLED=on|AI_ENABLED=off) ;;
             AI_ENABLED=*) die "bad value for $key: $val" ;;
             AI_MODEL=sonnet|AI_MODEL=haiku|AI_MODEL=opus) ;;
             AI_MODEL=*) die "bad value for $key: $val" ;;
+            AI_LEVEL=basic|AI_LEVEL=advanced) ;;
+            AI_LEVEL=*) die "bad value for $key: $val" ;;
+            # Closed sets, like the dock's: NotifState reads these verbatim.
+            NOTIF_DND=on|NOTIF_DND=off|NOTIF_SOUND=on|NOTIF_SOUND=off) ;;
+            NOTIF_AUTODISMISS=on|NOTIF_AUTODISMISS=off) ;;
+            NOTIF_SOUND_NAME=chime|NOTIF_SOUND_NAME=bell|NOTIF_SOUND_NAME=message) ;;
+            NOTIF_SOUND_NAME=complete|NOTIF_SOUND_NAME=info|NOTIF_SOUND_NAME=attention) ;;
+            # 0.5 to 10 in half-second steps: 1..10, or 0.5..9.5.
+            NOTIF_DURATION=*)
+                [[ "$val" =~ ^([1-9]|10|[0-9]\.5)$ ]] || die "bad value for $key: $val" ;;
+            NOTIF_*) die "bad value for $key: $val" ;;
         esac
         pref_set "$key" "$val"
         case "$key" in
@@ -460,7 +552,7 @@ case "$cmd" in
             ICON_THEME)       apply_icon_theme "$val"; notify "Icon theme" "$val" ;;
             GTK_THEME)        apply_gtk_theme "$val";  notify "Theme" "$val" ;;
             PALETTE)          apply_palette "$val";    notify "Palette" "$val" ;;
-            DEFAULT_TERMINAL) reload_hyprland;         notify "Default terminal" "$val" ;;
+            DEFAULT_TERMINAL) apply_terminal "$val"; reload_hyprland; notify "Default terminal" "$val" ;;
             DEFAULT_PDF)
                 # The association is the setting; the ui.conf line is only the
                 # record of having chosen it (effective() reads the mime
@@ -471,7 +563,25 @@ case "$cmd" in
                 fi
                 notify "Default PDF viewer" "$(desktop_name "$val" || true)"
                 ;;
-            DEFAULT_EDITOR)   reload_hyprland;         notify "Default editor" "$val" ;;
+            # The bar moved edge. Two things outside the shell have to follow
+            # it: gaps_out (0 on the bar's side, so a window's border meets the
+            # strip — window-rules.sh owns gaps) and any window SUPER+D sized
+            # to the old free area (window-zoom.sh refit waits for Hyprland to
+            # move the reserved inset first). Detached: refit polls for up to
+            # ~2 s and nobody should wait on it.
+            #
+            # Always hide reserves nothing, so then there is no bar edge: every
+            # side gets the outer gap, and refit waits for the zone to go
+            # ("none"). Either key can change which of the two applies.
+            BAR_POSITION|BAR_AUTOHIDE)
+                here="$(dirname -- "${BASH_SOURCE[0]}")"
+                if [ "$(pref_get BAR_AUTOHIDE 2>/dev/null)" = on ]; then edge=none
+                else edge="$(pref_get BAR_POSITION 2>/dev/null)"; fi
+                case "$edge" in none|left|right) ;; *) edge=top ;; esac
+                "$here/window-rules.sh" apply-gaps "$edge" >/dev/null 2>&1 || true
+                setsid "$here/window-zoom.sh" refit "$edge" </dev/null >/dev/null 2>&1 &
+                ;;
+            DEFAULT_EDITOR)   apply_editor "$val";   reload_hyprland; notify "Default editor" "$val" ;;
             DEFAULT_BROWSER)
                 # DETAIL is the .desktop file name. xdg-settings is what every
                 # OTHER app on the system consults when it opens a link, so

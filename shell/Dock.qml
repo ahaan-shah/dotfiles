@@ -156,6 +156,18 @@ Item {
                          root.vertical ? root.width : root.height, root.screen, local.y)
     }
 
+    // The Downloads stack's popup, anchored to its icon. Everything in
+    // GLOBAL coordinates: the popup's window is full-screen while open (it is
+    // its own click-outside catcher — see MacShell.qml), so unlike the window
+    // preview it has no strip of its own to place a window-local y in.
+    function toggleStackFor(item) {
+        if (!item) return
+        const p = item.mapToGlobal(item.width / 2, 0)
+        const c = item.mapToGlobal(item.width / 2, item.height / 2)
+        DownloadsStack.toggle(p.x, p.y, root.vertical ? root.width : root.height,
+                              root.screen, c.y)
+    }
+
     // Sustained-hover gate — only shows the popup after 500ms of continuous
     // hover over the same multi-instance icon.
     property var _previewIntentTimer: Timer {
@@ -651,11 +663,34 @@ Item {
     property real len: root.pillWidth
     Behavior on len { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
-    // Total size this item occupies (pill + float gap): the bounding box of a
-    // len x thickness rectangle turned to `angle`. Exactly that rectangle at
-    // either rest angle.
-    width:  Math.abs(root._c) * root.len + Math.abs(root._s) * root.thickness
-    height: Math.abs(root._s) * root.len + Math.abs(root._c) * root.thickness
+    // ── The mini-dock ─────────────────────────────────────────────
+    // A second, smaller pill after the main one along the row — to its right
+    // on a bottom dock, below it on a side dock — for widgets rather than apps.
+    // Ahaan, 2026-10-29: the Downloads stack began as a slot at the end of the
+    // main row behind a hairline separator, and "the separator also looks bad
+    // ... split the dock into a new minidock beside it with these widgets".
+    //
+    // Same item, not a second window: the dock window's input mask is this
+    // Item, so anything drawn inside it is clickable for free, the pair hides
+    // and flies between edges as one, and the hover tracking below already
+    // covers it. The two pills are centred as a GROUP, so the main pill sits
+    // _shift back from the centre.
+    readonly property var  miniWidgets: ["downloads"]
+    readonly property real miniGap:     1.5 // three physical px at this panel's 2x (tried 8, 3, 1, 0.5, 1 on 2026-10-29); the two read as two pills
+    readonly property real miniRowW:    root.dockPadH * 2 + root.miniWidgets.length * (root.baseIconSize + 8)
+    readonly property real miniLen:     root.miniRowW + root.dockPadH * 2
+    readonly property real _shift:      (root.miniGap + root.miniLen) / 2
+    readonly property real groupLen:    root.len + root.miniGap + root.miniLen
+    // Where each row starts, measured along the row from the item's centre.
+    readonly property real _mainOrigin: -root.rowWidth / 2 - root._shift
+    readonly property real _miniC:      (root.len + root.miniGap) / 2
+    readonly property real _miniOrigin: root._miniC - root.miniRowW / 2
+
+    // Total size this item occupies (pills + float gap): the bounding box of a
+    // groupLen x thickness rectangle turned to `angle`. Exactly that rectangle
+    // at either rest angle.
+    width:  Math.abs(root._c) * root.groupLen + Math.abs(root._s) * root.thickness
+    height: Math.abs(root._s) * root.groupLen + Math.abs(root._c) * root.thickness
 
     // Points inside this item, from its centre. `v` is a distance along n —
     // towards the screen edge — so "sits `gap` off the edge" is
@@ -664,7 +699,7 @@ Item {
         return Qt.point(root.width  / 2 + root.dx * along + root.nx * v,
                         root.height / 2 + root.dy * along + root.ny * v)
     }
-    readonly property point _pillC: root._at(0, root.thickness / 2 - root.floatMargin - root.pillHeight / 2)
+    readonly property point _pillC: root._at(-root._shift, root.thickness / 2 - root.floatMargin - root.pillHeight / 2)
 
     // ── Frosted glass background ──────────────────────────────────
     Rectangle {
@@ -672,7 +707,13 @@ Item {
         // Always a horizontal pill, turned by `angle` about its centre.
         width:  root.len
         height: root.pillHeight
-        radius: root.pillHeight / 2
+        // Theme.cardRadius, not a stadium: the dock was the one surface on this
+        // desktop drawn as a full pill (pillHeight / 2 = 27 on the 54px body).
+        // 20 matches the launcher, settings card and EVE card. Tried beside the
+        // bar's rowRadius (12) on 2026-10-29 and Ahaan kept 20: the dock is 54px
+        // tall to the islands' ~34, so 20 is the same proportion (Bar.qml's
+        // Island note). One token, so a retune moves them together.
+        radius: Theme.cardRadius
         rotation: root.angle
         x: root._pillC.x - width  / 2
         y: root._pillC.y - height / 2
@@ -709,7 +750,7 @@ Item {
         anchors.fill: parent
         readonly property real thick: root.maxIconSize + 24
         readonly property point origin:
-            root._at(-root.rowWidth / 2, root.thickness / 2 - root.floatMargin - iconRow.thick / 2)
+            root._at(root._mainOrigin, root.thickness / 2 - root.floatMargin - iconRow.thick / 2)
 
         Repeater {
             id: iconRepeater
@@ -756,6 +797,64 @@ Item {
                 onDragStartRequested: root.beginDrag(modelData.key, index)
                 onDragMoved:          rowX => root.updateDrag(rowX)
                 onDragFinished:       committed => root.endDrag(committed)
+            }
+        }
+    }
+
+    // ── Mini-dock pill and its widgets ────────────────────────────
+    // The main pill's surface exactly (see `pill` above for every token).
+    Rectangle {
+        id: miniPill
+        readonly property point c: root._at(root._miniC, root.thickness / 2 - root.floatMargin - root.pillHeight / 2)
+        width:  root.miniLen
+        height: root.pillHeight
+        radius: Theme.cardRadius
+        rotation: root.angle
+        x: c.x - width  / 2
+        y: c.y - height / 2
+        color:        Theme.bg
+        border.color: Theme.barLine
+        border.width: Theme.cardBorder
+        Behavior on color        { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
+        Behavior on border.color { ColorAnimation { duration: 600; easing.type: Easing.InOutCubic } }
+    }
+
+    Item {
+        id: miniRow
+        anchors.fill: parent
+        readonly property point origin:
+            root._at(root._miniOrigin, root.thickness / 2 - root.floatMargin - iconRow.thick / 2)
+
+        // One delegate per widget. Only "downloads" exists; the next widget is
+        // a new name in miniWidgets and a branch here.
+        Repeater {
+            model: root.miniWidgets
+
+            DockIcon {
+                id: widgetIcon
+                required property string modelData
+                required property int    index
+
+                appName: "Downloads"
+                stack:   true
+                // No `badge` (defaults to 0, so DockIcon hides it): Ahaan had
+                // the unseen-downloads count removed on 2026-10-31.
+                // DownloadsStack.unseen still exists, now with no reader.
+
+                dx: root.dx; dy: root.dy; nx: root.nx; ny: root.ny
+                ox: miniRow.origin.x
+                oy: miniRow.origin.y
+                angle:      root.angle
+                baseSize:   root.baseIconSize
+                maxSize:    root.maxIconSize
+                magnRadius: root.magnRadius
+                // hoverX is measured along the MAIN row; shift it into this
+                // row's coordinates so magnification works the same here.
+                dockHoverX: (root.dragActive || root.hoverX < 0) ? -1
+                            : root.hoverX + root._mainOrigin - root._miniOrigin
+                targetX: root.dockPadH + index * (root.baseIconSize + 8)
+
+                onStackRequested: root.toggleStackFor(widgetIcon)
             }
         }
     }

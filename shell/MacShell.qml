@@ -160,6 +160,8 @@ Scope {
                 // and the normal grace below then runs from that moment.
                 readonly property bool previewOpenHere: DockPreview.visible
                                                         && DockPreview.activeScreen === dockPanel.screen
+                                                        || DownloadsStack.visible
+                                                        && DownloadsStack.activeScreen === dockPanel.screen
 
                 // Grace period: after the mouse leaves the reveal region, keep the
                 // dock up for a moment so a brief/accidental exit doesn't instantly
@@ -443,6 +445,66 @@ Scope {
                 cancelClose:   DockPreview.cancelClose
                 scheduleClose: DockPreview.scheduleClose
                 closeNow:      DockPreview.hideNow
+            }
+        }
+    }
+
+    // ── Downloads stack popup ──────────────────────────────────────
+    // A full-screen Top-layer window while open, and that is the point: it is
+    // its own click-outside catcher. A click anywhere off the card lands on the
+    // MouseArea under it and closes the popup at once — the pattern Music.qml
+    // and Todo.qml use. There is no close timer (see DownloadsStack.show()).
+    // Like theirs, the click that closes is consumed rather than passed to
+    // whatever is underneath; a click on the drawer icon itself therefore
+    // lands here too, which is what makes the icon a toggle.
+    //
+    // It was a content-sized window copied from the window preview, input cut
+    // to the card, closing itself on a timer. A content-sized surface cannot
+    // see a click outside itself at all, which is why it needed the timer.
+    //
+    // The card is placed by the icon's GLOBAL position (Dock.toggleStackFor):
+    // centred over it on a bottom dock and clamped to the screen, beside it on
+    // a side dock. dockHeight - 3 - margin is the preview's measured 7px gap.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            id: stackWindow
+            required property ShellScreen modelData
+            screen: modelData
+
+            visible: DownloadsStack.visible && DownloadsStack.activeScreen === modelData
+
+            color: "transparent"
+            anchors { top: true; left: true; right: true; bottom: true }
+            exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.layer:     WlrLayer.Top
+            WlrLayershell.namespace: "macdock-downloads"
+
+            readonly property string edge: UiConfig.dockEdge
+            readonly property real gap: DownloadsStack.dockHeight - 3 - stackPopup.margin
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.AllButtons
+                onPressed: DownloadsStack.hideNow()
+            }
+
+            DownloadsPopup {
+                id: stackPopup
+                readonly property real sw: stackWindow.width
+                readonly property real sh: stackWindow.height
+                function clamp(v, lo, hi) { return Math.max(lo, Math.min(v, hi)) }
+                x: stackWindow.edge === "left"  ? stackWindow.gap
+                 : stackWindow.edge === "right" ? sw - stackWindow.gap - implicitWidth
+                 : clamp(DownloadsStack.globalX - stackWindow.modelData.x - implicitWidth / 2,
+                         0, sw - implicitWidth)
+                y: stackWindow.edge === "bottom"
+                   ? sh - stackWindow.gap - implicitHeight
+                   : clamp(DownloadsStack.globalCY - stackWindow.modelData.y - implicitHeight / 2,
+                           0, sh - implicitHeight)
+                width:  implicitWidth
+                height: implicitHeight
             }
         }
     }

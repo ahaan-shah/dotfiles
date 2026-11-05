@@ -17,11 +17,15 @@
 //     the eyes are looking:
 //         capsule  tall and upright — at rest, and thinking (glancing about)
 //         circle   wide, like the agents bot — waiting on an answer
-//         chevron  > <  — done, pleased
 //         dash     – –  — something went wrong
 //     A change of shape is a MORPH, not a cut: the blob's width, height and
 //     corner radius animate (capsule ⇄ circle ⇄ dash are all one rounded
-//     rectangle), and the chevrons grow out of a shrinking blob;
+//     rectangle);
+//   - "done" has NO shape of its own: she goes back to the open capsules
+//     and hops. It was > < and then smile arcs with a blush; Ahaan,
+//     2026-11-03: "Just open eyes is better than other emotes. I only want
+//     the circle and eyes." So the face is the disc and the eyes, nothing
+//     else is ever drawn on it;
 //   - she blinks — a squash to a slit and a slightly springy reopen, now and
 //     then twice — and glances while idle, on randomised clocks, so the face
 //     is never on a visible loop.
@@ -52,7 +56,6 @@ Item {
     // ── pose, all in head diameters so it scales ───────────────────────
     property real eyeW: 0.15
     property real eyeH: 0.36
-    property real chev: 0        // 0 blob .. 1 chevrons > <
     property real gazeX: 0
     property real gazeY: 0
     property real blinkK: 1      // owned by the blink animations alone
@@ -60,20 +63,19 @@ Item {
     readonly property real dia: headSize
     readonly property real eyeDX: 0.19
 
-    function _pose(w, h, ch, gx, gy, ms) {
+    function _pose(w, h, gx, gy, ms) {
         poseAnim.stop()
-        aw.to = w; ah.to = h; ac.to = ch; ax.to = gx; ay.to = gy
-        for (const a of [aw, ah, ac, ax, ay]) a.duration = ms
+        aw.to = w; ah.to = h; ax.to = gx; ay.to = gy
+        for (const a of [aw, ah, ax, ay]) a.duration = ms
         poseAnim.start()
     }
     function _look(gx, gy, ms) {      // move without changing shape
-        _pose(eyeW, eyeH, chev, gx, gy, ms)
+        _pose(eyeW, eyeH, gx, gy, ms)
     }
     ParallelAnimation {
         id: poseAnim
         NumberAnimation { id: aw; target: orb; property: "eyeW";  easing.type: Easing.OutBack; easing.overshoot: 1.2 }
         NumberAnimation { id: ah; target: orb; property: "eyeH";  easing.type: Easing.OutBack; easing.overshoot: 1.2 }
-        NumberAnimation { id: ac; target: orb; property: "chev";  easing.type: Easing.InOutCubic }
         NumberAnimation { id: ax; target: orb; property: "gazeX"; easing.type: Easing.InOutSine }
         NumberAnimation { id: ay; target: orb; property: "gazeY"; easing.type: Easing.InOutSine }
     }
@@ -95,7 +97,7 @@ Item {
         NumberAnimation { target: orb; property: "blinkK"; to: 0.12; duration: 60; easing.type: Easing.InQuad }
         NumberAnimation { target: orb; property: "blinkK"; to: 1.0;  duration: 150; easing.type: Easing.OutBack; easing.overshoot: 1.6 }
     }
-    readonly property bool canBlink: chev < 0.05 && mood !== "error"
+    readonly property bool canBlink: mood !== "error"
     Timer {
         interval: 2800; repeat: true
         running: orb.visible && orb.canBlink
@@ -128,7 +130,7 @@ Item {
         triggeredOnStart: true
         onTriggered: {
             const p = orb._thinkPath[orb._step++ % orb._thinkPath.length]
-            orb._pose(0.15, 0.36, 0, p[0], p[1], 420)
+            orb._pose(0.15, 0.36, p[0], p[1], 420)
         }
     }
 
@@ -143,10 +145,10 @@ Item {
     onMoodChanged: {
         switch (mood) {
         case "think": break                                                 // the timer drives it
-        case "ask":   _pose(0.22, 0.22, 0, 0, 0.05, 300); blinkNow(); break   // circles, looking down at the card
-        case "happy": _pose(0.10, 0.10, 1, 0, 0, 280); hop.restart(); break   // > <
-        case "error": _pose(0.24, 0.07, 0, 0, 0.05, 280); break               // – –
-        default:      _pose(0.15, 0.36, 0, 0, 0, 340)                         // tall capsules
+        case "ask":   _pose(0.22, 0.22, 0, 0.05, 300); blinkNow(); break   // circles, looking down at the card
+        case "happy": _pose(0.15, 0.36, 0, 0, 340); hop.restart(); break    // open capsules + a hop
+        case "error": _pose(0.24, 0.07, 0, 0.05, 280); break               // – –
+        default:      _pose(0.15, 0.36, 0, 0, 340)                         // tall capsules
         }
     }
 
@@ -184,44 +186,13 @@ Item {
                 y: orb.dia / 2 - orb.dia * 0.03 + orb.gazeY * orb.dia - height / 2
 
                 // The blob: capsule, circle or dash — one rounded rectangle.
-                // It shrinks away as the chevron takes over.
                 Rectangle {
                     anchors.centerIn: parent
-                    width: orb.eyeW * orb.dia * (1 - orb.chev * 0.6)
-                    height: Math.max(orb.dia * 0.035, orb.eyeH * orb.dia * orb.blinkK * (1 - orb.chev * 0.6))
+                    width: orb.eyeW * orb.dia
+                    height: Math.max(orb.dia * 0.035, orb.eyeH * orb.dia * orb.blinkK)
                     radius: Math.min(width, height) / 2
                     color: orb.ink
-                    opacity: 1 - orb.chev
                     antialiasing: true
-                }
-
-                // The chevron: > on the left eye, < on the right, pointing at
-                // each other — a squeezed, pleased look.
-                Shape {
-                    id: chevShape
-                    anchors.centerIn: parent
-                    width: orb.dia * 0.22; height: width
-                    preferredRendererType: Shape.CurveRenderer
-                    opacity: orb.chev
-                    visible: orb.chev > 0.01
-                    scale: 0.55 + 0.45 * orb.chev
-                    readonly property real a: width * 0.26
-                    readonly property real b: width * 0.36
-                    readonly property real c: width / 2
-                    // Left eye: >, its point toward the centre (+x);
-                    // right eye: <, its point toward the centre (-x).
-                    readonly property real tip: eye.side < 0 ? c + a : c - a
-                    readonly property real tail: eye.side < 0 ? c - a : c + a
-                    ShapePath {
-                        strokeColor: orb.ink
-                        strokeWidth: Math.max(1.2, orb.dia * 0.075)
-                        fillColor: "transparent"
-                        capStyle: ShapePath.RoundCap
-                        joinStyle: ShapePath.RoundJoin
-                        startX: chevShape.tail; startY: chevShape.c - chevShape.b
-                        PathLine { x: chevShape.tip;  y: chevShape.c }
-                        PathLine { x: chevShape.tail; y: chevShape.c + chevShape.b }
-                    }
                 }
             }
         }

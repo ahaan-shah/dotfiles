@@ -19,10 +19,9 @@ signal-desktop
 # ── documents / office ───────────────────────────────────────────────────
 libreoffice-still
 obsidian
-calibre                   # mimeapps.list: application/epub+zip
 papers                    # mimeapps.list: application/pdf
 zathura
-zathura-pdf-poppler
+zathura-pdf-mupdf
 apostrophe
 gnome-text-editor         # mimeapps.list: text/plain, text/x-shellscript
 
@@ -71,3 +70,47 @@ wget
 intel-gpu-tools
 mesa-utils
 vulkan-tools
+
+# ── EVE's `docs` tool ─────────────────────────────────────────────────────
+man-db                    # jarvis/broker.py's docs tool: man pages and apropos
+arch-wiki-docs            # the same tool's offline Arch Wiki, read from
+                          #   /usr/share/doc/arch-wiki/html (227 MiB). Without
+                          #   these, docs only reports it is not installed.
+
+# ── Everything else this machine runs, added 2026-11-05 ───────────────────
+# Ahaan: "All the packages that I use in general installed", so the list was
+# rebuilt from `pacman -Qqen` here. This reverses the earlier "deliberately
+# excludes r, steam, discord". Left out on purpose: base/linux/sudo and friends
+# (archinstall's), vendor packages (install_gpu_userspace), asusctl
+# (install_power_backend), and ggml-cuda (needs CUDA, and only its planner ever
+# used it, retired 2026-10-20).
+7zip
+bat
+breeze-icons
+dcraw
+discord
+dmidecode
+docker                    # not enabled here either; start it when wanted
+dosfstools
+efibootmgr
+ffmpegthumbnailer
+fuzzel
+ggml-vulkan               # llama-cpp's backend; a provider it would otherwise prompt for
+github-cli
+gitleaks
+gst-libav
+inxi
+kimageformats
+lazydocker
+librewolf
+llama-cpp
+man-pages
+obsidian-icon-theme
+openai-codex
+playerctl
+r
+steam                     # multilib; phase_packages enables that repo first
+syntax-highlighting
+tailscale                 # not enabled here either; it needs your login
+uv
+virtiofsd

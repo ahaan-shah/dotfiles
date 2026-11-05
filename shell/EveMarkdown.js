@@ -67,8 +67,13 @@ function blocks(md) {
 function inline(s, c) {
     const keep = []
     const hold = h => "\u0000" + (keep.push(h) - 1) + "\u0000"
-    const link = (href, label) =>
-        hold('<a href="' + esc(href) + '" style="color:' + c.link + '; text-decoration:none">' + label + "</a>")
+    // Sealed (the conversation has read something local, chat.py): a web or
+    // mail link is shown as text, not as something to click. Its URL was
+    // written by a model holding private text, and opening it would send
+    // whatever it spells out (2026-11-03). File links stay: they open here.
+    const link = (href, label) => c.sealed && !/^(file:|reveal:)/.test(href)
+        ? hold('<span style="color:' + c.dim + '">' + label + (label.indexOf(esc(href)) < 0 ? " (" + esc(href) + ")" : "") + "</span>")
+        : hold('<a href="' + esc(href) + '" style="color:' + c.link + '; text-decoration:none">' + label + "</a>")
 
     // Files chat.py found to exist, keyed by how the reply wrote them: the
     // name opens it in its default app, and the folder glyph after it shows

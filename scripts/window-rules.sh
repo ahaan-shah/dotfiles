@@ -59,13 +59,20 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # the menu shows what the compositor is ACTUALLY doing rather than what was
 # last written here, so a value changed by any other means still reads back
 # correctly. Two rows have no option and are reported from the store instead —
-# ANIM_SPEED and TILING_MODE; see current().
+# ANIM_SPEED and WINDOW_MODE; see current().
 #
-# TILING_MODE is first because it is the only row here that changes what the
+# WINDOW_MODE is first because it is the only row here that changes what the
 # desktop DOES rather than what it looks like, and because it is the one a
 # reader is most likely to have come to this page for.
+#
+# It is the one `enum` row, and its kind field carries its own options:
+# `enum:a|b|c`. Settings.qml draws that as a ‹ value › cycle row and `set`
+# refuses anything not in the list, so the options are written down once.
+# It replaced a `bool` WIN_TILING_MODE on 2026-10-29, when scrolling became a
+# third mode; a window.conf that still holds only the old key is read through
+# legacy_mode() and the old key is dropped on the first write.
 RULES=$(cat <<'EOF'
-WIN_TILING_MODE	Tiling Mode	Windows tile side by side instead of floating	bool						false
+WIN_WINDOW_MODE	Window mode	Floating, tiled side by side, or a scrolling strip of columns	enum:floating|tiling|scrolling						floating
 WIN_BORDER_SIZE	Border thickness	Outline drawn around every window	int	general:border_size	px	0	12	1	2
 WIN_ROUNDING	Corner rounding	Radius of every window corner	int	decoration:rounding	px	0	40	1	16
 WIN_GAPS_IN	Inner gaps	Space between two tiled windows	css	general:gaps_in	px	0	60	1	3
@@ -106,13 +113,15 @@ stored() {
 # depend on which leaf was picked and drift as soon as a leaf's base speed
 # changed, so this one is reported from the store, defaulting to 1.
 #
-# TILING_MODE has none either, for a harder reason: it is the enabled flag of a
-# window RULE, not a config option, and HL.WindowRule is write-only from Lua.
+# WINDOW_MODE has none either, for a harder reason: half of it is the enabled
+# flag of a window RULE, not a config option, and HL.WindowRule is write-only
+# from Lua. (The other half, general:layout, IS readable — but "dwindle" is
+# both floating and tiling, so it cannot say which of the two is in force.)
 # Measured on 0.56 — `set_enabled()` is the only method the object carries,
 # `globalFloatRule.enabled` reads nil, and its metatable's __index is a C
 # function with nothing enumerable behind it. So the store is the source of
 # truth for this one, and the two things that can write it — this script and
-# SUPER+T, which now comes through this script — are the only two that do.
+# SUPER+SHIFT+L, which now comes through this script — are the only two that do.
 # A hand-run `hyprctl eval 'globalFloatRule:set_enabled(...)'` would still
 # drift the page from the compositor, and nothing here can detect that.
 # One record of hyprctl's JSON, and the type to pull out of it.
@@ -141,6 +150,7 @@ current() {
 
     if [ -z "$opt" ]; then
         raw="$(stored "$key")"
+        [ -z "$raw" ] && [ "$key" = "WIN_WINDOW_MODE" ] && raw="$(legacy_mode)"
         [ -n "$raw" ] && { printf '%s' "$raw"; return; }
         field "$row" 10; return
     fi
@@ -149,6 +159,17 @@ current() {
     raw="$(hyprctl getoption "$opt" -j 2>/dev/null)" || raw=""
     [ -n "$raw" ] || { field "$row" 10; return; }
     extract_typed "$raw" "$kind"
+}
+
+# The bool WIN_WINDOW_MODE replaced. A window.conf written before 2026-10-29
+# says WIN_TILING_MODE="true" for a tiled desktop, and reading it here is what
+# keeps that desktop tiled across the upgrade instead of quietly floating.
+# Empty when the old key is absent too, so the table's default applies.
+legacy_mode() {
+    case "$(stored WIN_TILING_MODE)" in
+        true)  printf 'tiling' ;;
+        false) printf 'floating' ;;
+    esac
 }
 
 # ── validation ────────────────────────────────────────────────────────────
@@ -169,6 +190,14 @@ validate() {
             case "$val" in
                 true|false) ;;
                 *) die "$what takes true or false, not '$val'" ;;
+            esac
+            ;;
+        enum:*)
+            # Matched as a whole word of the list, so "tile" or "" is refused
+            # rather than prefix-matching its way in.
+            case "|${kind#enum:}|" in
+                *"|$val|"*) [ -n "$val" ] || die "$what needs a value" ;;
+                *) die "$what is one of ${kind#enum:}, not '$val'" ;;
             esac
             ;;
         int|css)
@@ -219,32 +248,64 @@ apply_live() {
     hyprctl eval "$expr" >/dev/null 2>&1 || return 1
 }
 
-# ── tiling mode ───────────────────────────────────────────────────────────
-# Not a config option and so not apply_live()'s shape at all: it enables or
-# disables globalFloatRule, the `class = ".*"` float rule hyprland.lua defines
-# as a global for exactly this purpose. Tiling ON means that rule OFF.
+# ── window mode ───────────────────────────────────────────────────────────
+# Not a config option and so not apply_live()'s shape at all. Three modes, made
+# of two switches:
 #
-# TWO halves, and both are needed. Disabling the rule only decides what the
-# NEXT window does; the ones already open keep whatever they were given when
-# they opened, so each is converted by address. Toggling the rule alone looked
-# like it had done nothing at all, because the screen in front of you is
-# entirely made of windows that already exist.
+#   floating   globalFloatRule ON,  layout dwindle
+#   tiling     globalFloatRule OFF, layout dwindle
+#   scrolling  globalFloatRule OFF, layout scrolling (Hyprland's built-in)
 #
-# This body used to live in toggle-layout.sh, which SUPER+T runs. It is here
-# now and that script calls this one, so the keybind and the settings switch
-# cannot disagree about which mode the desktop is in — they are the same write
-# to the same file.
-apply_tiling_mode() {
-    local tiling="$1" action addrs addr
+# globalFloatRule is the `class = ".*"` float rule hyprland.lua defines as a
+# global for exactly this purpose. Floating keeps dwindle rather than leaving
+# whatever the last mode set: a window SUPER+W drops out of floating has to
+# tile SOMEWHERE, and dwindle is where it always went before scrolling existed.
+#
+# LAYOUT FIRST, then the windows. Converting each window to tiled inserts it
+# into whatever layout is in force at that moment — measured in a nested
+# 0.56.2, switching general.layout with windows already tiled re-lays them out
+# (three kittys went from a dwindle split to a strip of columns at once), so
+# either order ends up right, but this one never lays the screen out twice.
+#
+# TWO halves for the windows, and both are needed. Disabling the rule only
+# decides what the NEXT window does; the ones already open keep whatever they
+# were given when they opened, so each is converted by address. Toggling the
+# rule alone looked like it had done nothing at all, because the screen in
+# front of you is entirely made of windows that already exist.
+#
+# Tiling <-> scrolling touches no window's float state at all: both are tiled,
+# so the layout switch is the whole change and the per-window walk below is a
+# no-op `disable` on each.
+#
+# This body used to live in toggle-layout.sh, which SUPER+SHIFT+L runs. It is
+# here now and that script calls this one, so the keybind and the settings
+# switch cannot disagree about which mode the desktop is in — they are the same
+# write to the same file.
+apply_window_mode() {
+    local mode="$1" layout action addrs addr
     have hyprctl || return 0
 
-    if [ "$tiling" = "true" ]; then
-        hyprctl eval 'globalFloatRule:set_enabled(false)' >/dev/null 2>&1 || return 1
-        action="unset"
-    else
+    case "$mode" in
+        scrolling) layout="scrolling" ;;
+        *)         layout="dwindle" ;;
+    esac
+    hyprctl eval "hl.config({ general = { layout = \"$layout\" } })" >/dev/null 2>&1 || return 1
+
+    if [ "$mode" = "floating" ]; then
         hyprctl eval 'globalFloatRule:set_enabled(true)' >/dev/null 2>&1 || return 1
-        action="set"
+        action="enable"
+    else
+        hyprctl eval 'globalFloatRule:set_enabled(false)' >/dev/null 2>&1 || return 1
+        action="disable"
     fi
+    # enable/disable, NOT set/unset. Measured in a nested 0.56.2 on
+    # 2026-10-29: "set" and "unset" are not values window.float knows, and an
+    # unknown action falls through to TOGGLE with no error — `set` twice on one
+    # window flipped it tiled, then floating again. enable/disable (and on/off)
+    # are idempotent. This ran as set/unset from the start and looked right
+    # only because every window usually starts in the other state; a window
+    # SUPER+W had already moved got flipped the wrong way, and tiling ->
+    # scrolling, where every window is already tiled, floated all of them.
 
     # Captured, not piped into the loop. `hyprctl | jq | while read` under
     # `set -o pipefail` takes the whole script down the moment either producer
@@ -344,6 +405,10 @@ cmd_list() {
             n = split(store, kv, "\n")
             for (i = 1; i <= n; i++)
                 if (split(kv[i], p, "=") == 2) saved[p[1]] = p[2]
+            # legacy_mode(), for the page: a file that predates the window
+            # mode still says which of the old two it was in.
+            if (!("WIN_WINDOW_MODE" in saved) && ("WIN_TILING_MODE" in saved))
+                saved["WIN_WINDOW_MODE"] = (saved["WIN_TILING_MODE"] == "true") ? "tiling" : "floating"
         }
         # ── pass 2: the table ─────────────────────────────────────────────
         NF >= 4 {
@@ -373,48 +438,87 @@ cmd_set() {
     # mv, and doing it first put all of that between a keypress and the border
     # actually moving. The file is what survives, so it cannot be skipped — but
     # nothing is waiting on it.
-    if [ "$key" = "WIN_TILING_MODE" ]; then
-        apply_tiling_mode "$val" || echo "window-rules: saved, but the live apply failed" >&2
+    if [ "$key" = "WIN_WINDOW_MODE" ]; then
+        apply_window_mode "$val" || echo "window-rules: saved, but the live apply failed" >&2
     elif [ -z "$opt" ]; then
         apply_anim_speed "$val"
     elif [ "$key" = "WIN_GAPS_OUT" ]; then
-        # Three edges, not four: the top stays 0 so windows meet the bar's
-        # edge, the same shape hyprland.lua gives it at parse time.
-        have hyprctl && hyprctl eval "hl.config({ general = { gaps_out = { top = 0, right = $val, bottom = $val, left = $val } } })" >/dev/null 2>&1 \
-            || echo "window-rules: saved, but the live apply failed" >&2
+        # Three edges, not four: the bar's edge stays 0 so windows meet the
+        # bar's strip, the same shape hyprland.lua gives it at parse time.
+        apply_gaps "$val" || echo "window-rules: saved, but the live apply failed" >&2
     else
         apply_live "$opt" "$val" || echo "window-rules: saved, but the live apply failed" >&2
     fi
 
     write_conf "$key" "$val"
+    # The bool this key replaced goes with the first write of the new one, so
+    # the file cannot hold two answers to the same question.
+    [ "$key" = "WIN_WINDOW_MODE" ] && write_conf WIN_TILING_MODE ""
     printf '%s\n' "$val"
 }
 
+# ── outer gaps follow the bar ─────────────────────────────────────────────
+# gaps_out is 0 on the bar's edge and the outer-gap value on the other three,
+# so a window's border starts on the bar's reserved strip and the gap under
+# the islands is set by the bar's zone alone (hyprland.lua has the history).
+# The bar's edge is a ui.conf key since 2026-10-31 (BAR_POSITION, Settings ->
+# Shell -> Bar), so which edge is 0 is no longer always the top. hyprland.lua
+# does the same at parse time; this is the live half.
+#
+#   apply_gaps <outer px> [top|left|right]
+#
+# The edge is an argument when the caller knows it: ui-prefs.sh calls this
+# BEFORE its own write of ui.conf can be relied on (the settings menu moves
+# the bar optimistically), so reading the file here would get the old edge.
+bar_edge() {
+    local ui="${XDG_CONFIG_HOME:-$HOME/.config}/scripts/ui.conf" v
+    v="$(sed -n 's/^[[:space:]]*BAR_POSITION[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$ui" 2>/dev/null | tail -n 1)"
+    case "$v" in left|right) ;; *) v=top ;; esac
+    # Always hide (BAR_AUTOHIDE) reserves no zone, so no edge is the bar's.
+    grep -qE '^[[:space:]]*BAR_AUTOHIDE[[:space:]]*=[[:space:]]*"on"' "$ui" 2>/dev/null && v=none
+    printf '%s' "$v"
+}
+apply_gaps() {
+    local g="$1" edge="${2:-}" t r l
+    [ -n "$edge" ] || edge="$(bar_edge)"
+    t="$g"; r="$g"; l="$g"
+    case "$edge" in
+        left)  l=0 ;;
+        right) r=0 ;;
+        none)  ;;                     # an auto-hidden bar: the gap on all four
+        *)     t=0 ;;
+    esac
+    have hyprctl || return 1
+    hyprctl eval "hl.config({ general = { gaps_out = { top = $t, right = $r, bottom = $g, left = $l } } })" >/dev/null 2>&1
+}
+
 cmd_reset() {
-    local key="$1" row was_tiling
-    # Read BEFORE the file is touched — after it, the store says "false"
+    local key="$1" row was_mode
+    # Read BEFORE the file is touched — after it, the store says "floating"
     # whatever the desktop is actually doing.
-    was_tiling="$(current WIN_TILING_MODE 2>/dev/null)" || was_tiling="false"
+    was_mode="$(current WIN_WINDOW_MODE 2>/dev/null)" || was_mode="floating"
 
     if [ "$key" = "--all" ]; then
         rm -f "$CONF"
     else
         row="$(row_for "$key")" || die "unknown rule: $key"
         write_conf "$key" ""
+        [ "$key" = "WIN_WINDOW_MODE" ] && write_conf WIN_TILING_MODE ""
     fi
     # A reset is the one path that DOES reload: the default it falls back to is
     # whatever hyprland.lua hardcodes, and this script does not know those —
     # re-parsing the config is what produces them.
     have hyprctl && hyprctl reload >/dev/null 2>&1 || true
 
-    # The reload restores globalFloatRule for the NEXT window, since
-    # hyprland.lua re-reads a window.conf that no longer names the key. It does
-    # nothing to the windows already open — a reload does not re-run rules over
-    # them — so a reset out of tiling would otherwise leave a tiled screen under
-    # a page that says floating. Only on the way OUT of tiling: the default is
-    # false, so resetting while already floating has nothing to undo.
-    if [ "$was_tiling" = "true" ] && { [ "$key" = "--all" ] || [ "$key" = "WIN_TILING_MODE" ]; }; then
-        apply_tiling_mode false || true
+    # The reload restores globalFloatRule and dwindle for the NEXT window,
+    # since hyprland.lua re-reads a window.conf that no longer names the key.
+    # It does nothing to the windows already open — a reload does not re-run
+    # rules over them — so a reset out of tiling or scrolling would otherwise
+    # leave a tiled screen under a page that says floating. Only on the way OUT
+    # of a tiled mode: the default is floating, so resetting while already
+    # floating has nothing to undo.
+    if [ "$was_mode" != "floating" ] && { [ "$key" = "--all" ] || [ "$key" = "WIN_WINDOW_MODE" ]; }; then
+        apply_window_mode floating || true
     fi
 }
 
@@ -423,6 +527,12 @@ case "${1:-}" in
     get)   [ $# -ge 2 ] || die "get needs a key"; current "$2" ;;
     set)   [ $# -ge 3 ] || die "set needs a key and a value"; cmd_set "$2" "$3" ;;
     reset) [ $# -ge 2 ] || die "reset needs a key or --all"; cmd_reset "$2" ;;
+    # ui-prefs.sh, when the bar changes edge: the stored outer gap, re-applied
+    # with the new edge at 0. Falls back to the table's default.
+    apply-gaps)
+        g="$(stored WIN_GAPS_OUT)"
+        [ -n "$g" ] || g="$(field "$(row_for WIN_GAPS_OUT)" 10)"
+        apply_gaps "$g" "${2:-}" ;;
     *)
         echo "usage: $(basename "$0") list" >&2
         echo "       $(basename "$0") get <KEY>" >&2

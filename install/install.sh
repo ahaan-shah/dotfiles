@@ -2,8 +2,9 @@
 #
 # install.sh — rebuild this Hyprland/Quickshell desktop on a fresh Arch install.
 #
-# Designed to be run on a MINIMAL Arch system from a TTY: it installs the
-# compositor, every package the configs actually call, the configs themselves,
+# The one line that fetches and runs this on a new machine is bootstrap.sh; see
+# its header. Designed to be run on a MINIMAL Arch system (archinstall's minimal
+# profile) from a TTY: it installs the compositor, every package the configs actually call, the configs themselves,
 # the systemd units, the root-level rules, and the theme. It is idempotent —
 # re-running it is a supported way to repair a half-finished install.
 #
@@ -13,11 +14,12 @@
 #   ./install.sh --only hardware run one phase
 #   ./install.sh --skip virt     skip a phase
 #   ./install.sh --list          list phases
+#   ./install.sh --with-heavy    also the one 18 GiB package (55-aur-heavy.txt)
 #
 # Package selection is not interactive. Every manifest in packages/ is
 # installed, because a half-answered prompt produces a machine that is subtly
-# not this one. The AUR list is deliberately four packages; install anything
-# else afterwards with ~/.config/scripts/pkg-aur-install.sh.
+# not this one. A package that cannot be installed costs only itself: the run
+# carries on, names it at the end and exits non-zero.
 #
 # NVIDIA is set up only where the machine actually has an NVIDIA discrete GPU,
 # and only in one shape: the iGPU draws the desktop, the dGPU renders nothing
@@ -35,9 +37,12 @@ ASSUME_YES=0
 NO_ROOT=0
 ONLY=""
 SKIP=""
+WITH_HEAVY=0
+PKG_FAILED=()
+MISSING_APPS=()
 LOGFILE="/tmp/hyprahaan-install-$(date +%Y%m%d-%H%M%S).log"
 
-ALL_PHASES="preflight packages configs hardware nvidia apps usersystemd system network virt theming hibernation snapshots fingerprint verify"
+ALL_PHASES="preflight packages configs hardware nvidia apps tools eve usersystemd system network virt theming hibernation snapshots fingerprint verify"
 
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
@@ -55,6 +60,7 @@ while [ $# -gt 0 ]; do
         --dry-run)      DRY_RUN=1 ;;
         --yes|-y)       ASSUME_YES=1 ;;
         --no-root)      NO_ROOT=1 ;;
+        --with-heavy)   WITH_HEAVY=1 ;;
         --only)         ONLY="${2:-}"; shift ;;
         --skip)         SKIP="${SKIP} ${2:-}"; shift ;;
         --list)         echo "$ALL_PHASES" | tr ' ' '\n'; exit 0 ;;
@@ -141,26 +147,49 @@ pac_install() {
     run sudo pacman -S --needed --noconfirm "$@"
 }
 
+# One at a time, for the same reason install_manifest falls back to one at a
+# time: yay given a list aborts the whole list when one package fails to build.
+# The answer flags stop yay asking about diffs and cleans, which --noconfirm
+# does not cover. sudo_refresh, because a build can outlast a ticket and makepkg
+# would then ask from inside its own output (see common.sh).
 aur_install() {
-    [ $# -gt 0 ] || return 0
-    run yay -S --needed --noconfirm "$@"
+    local p rc=0
+    for p in "$@"; do
+        if pacman -Qq "$p" >/dev/null 2>&1; then skip "$p already installed"; continue; fi
+        sudo_refresh
+        if ! run yay -S --needed --noconfirm --answerclean None --answerdiff None \
+                 --removemake --cleanafter "$p" </dev/null; then
+            warn "AUR package failed: $p (carrying on; it is listed at the end)"
+            PKG_FAILED+=("$p")
+            rc=1
+        fi
+    done
+    return "$rc"
 }
 
 bootstrap_yay() {
     have yay && { skip "yay already present"; return 0; }
-    # makepkg -si calls sudo itself, and by the time we get here the repo
-    # packages may have been downloading for ten minutes. Ask now, visibly,
-    # rather than letting makepkg ask from inside its own output.
     sudo_refresh
     info "bootstrapping yay from the AUR"
     pac_install base-devel git
     local tmp="/tmp/yay-bootstrap-$$"
     run rm -rf "$tmp"
     run git clone --depth 1 https://aur.archlinux.org/yay-bin.git "$tmp"
+    # Never `makepkg -si`. makepkg runs its install step as `sudo -k pacman -U`
+    # (/usr/bin/makepkg, run_pacman), and -k throws the cached ticket away, so it
+    # ALWAYS asks for the password however warm the ticket is. On an unattended
+    # run nobody answers: "sudo: timed out reading password" five minutes later.
+    # Measured 2026-11-05: the journal shows the keepalive's `sudo -n true`
+    # succeeding every 50 s throughout that prompt. That also overturns what this
+    # was blamed on on 2026-09-21, a ticket lapsing during a long download. So
+    # build, then install with our own sudo. yay-bin has no build dependencies,
+    # hence no -s. The glob skips the -debug package makepkg also produces.
     if [ "$DRY_RUN" = 1 ]; then
-        printf '  %sDRY%s (cd %s && makepkg -si --noconfirm)\n' "$C_DIM" "$C_RST" "$tmp"
+        printf '  %sDRY%s (cd %s && makepkg --noconfirm && sudo pacman -U yay-bin-*)\n' "$C_DIM" "$C_RST" "$tmp"
     else
-        ( cd "$tmp" && makepkg -si --noconfirm ) || die "yay bootstrap failed"
+        ( cd "$tmp" && makepkg --noconfirm </dev/null \
+            && sudo pacman -U --noconfirm --needed ./yay-bin-[0-9]*.pkg.tar.* ) \
+            || die "yay bootstrap failed"
     fi
     run rm -rf "$tmp"
     ok "yay installed"
@@ -178,9 +207,12 @@ install_gpu_userspace() {
         esac
     done
     case "$vendor" in
-        intel) info "Intel graphics detected"; pac_install mesa vulkan-intel intel-media-driver libva-utils ;;
-        amd)   info "AMD graphics detected";   pac_install mesa vulkan-radeon libva-mesa-driver libva-utils ;;
-        *)     warn "no Intel/AMD integrated GPU detected — installing mesa only"; pac_install mesa ;;
+        # The lib32 half is here, BEFORE the manifests, because steam needs a
+        # lib32-vulkan-driver and pacman --noconfirm resolves a virtual package
+        # to the first provider it lists, not the one matching this GPU.
+        intel) info "Intel graphics detected"; pac_install mesa vulkan-intel intel-media-driver libva-utils lib32-mesa lib32-vulkan-intel ;;
+        amd)   info "AMD graphics detected";   pac_install mesa vulkan-radeon libva-mesa-driver libva-utils lib32-mesa lib32-vulkan-radeon ;;
+        *)     warn "no Intel/AMD integrated GPU detected — software Vulkan"; pac_install mesa vulkan-swrast lib32-mesa lib32-vulkan-swrast ;;
     esac
     # CPU microcode, matched to the actual CPU
     if grep -qi 'GenuineIntel' /proc/cpuinfo; then pac_install intel-ucode
@@ -200,13 +232,35 @@ install_manifest() {
     done
     if [ "${#repo[@]}" -gt 0 ]; then
         info "installing ${#repo[@]} repository packages"
-        pac_install "${repo[@]}"
+        # One name pacman cannot find aborts the whole transaction before it
+        # installs anything: measured 2026-09-21, a repo rename cost the whole
+        # run at phase 2. So: all at once for the common case, and only on
+        # failure one at a time, which isolates the bad name to itself.
+        if ! pac_install "${repo[@]}"; then
+            warn "that transaction failed — retrying one package at a time"
+            for pkg in "${repo[@]}"; do
+                pac_install "$pkg" || { warn "package failed: $pkg"; PKG_FAILED+=("$pkg"); }
+            done
+        fi
     fi
     if [ "${#aur[@]}" -gt 0 ]; then
         bootstrap_yay
         info "installing ${#aur[@]} AUR packages (built from source — this is the slow part)"
-        aur_install "${aur[@]}"
+        aur_install "${aur[@]}" || true
     fi
+}
+
+# Steam and its lib32 stack live in multilib, which pacman.conf ships commented
+# out. Edited in place (a whole-file copy would mean .pacnew on every pacman
+# update); only the two lines of that one section.
+enable_multilib() {
+    if [ "$(pacman-conf --repo-list 2>/dev/null | grep -cx multilib || true)" -gt 0 ]; then
+        skip "multilib already enabled"
+        return 0
+    fi
+    run sudo cp -a /etc/pacman.conf "/etc/pacman.conf.bak-$BACKUP_STAMP"
+    run sudo sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+    ok "multilib enabled"
 }
 
 # ── the power-profile daemon, and only ONE of them ───────────────────────
@@ -256,8 +310,17 @@ install_power_backend() {
 phase_packages() {
     phase "Packages"
 
-    info "refreshing package databases"
-    run sudo pacman -Sy --noconfirm
+    enable_multilib
+
+    # -Syu, not -Sy: installing on top of a bare -Sy is a partial upgrade, and
+    # on a machine installed from an ISO a few months old that is real. The
+    # keyring goes first because packages signed since the ISO was built fail
+    # with "signature is unknown trust" otherwise.
+    info "upgrading the system first"
+    run sudo pacman -Sy --needed --noconfirm archlinux-keyring
+    run sudo pacman -Su --noconfirm
+
+    install_gpu_userspace
 
     # Core, fonts and applications go on every machine.
     install_manifest "$SCRIPT_DIR/packages/10-core.txt" \
@@ -279,14 +342,22 @@ phase_packages() {
         skip "no VT-x/AMD-V support — virtualisation packages skipped"
     fi
 
-    install_gpu_userspace
     install_power_backend
 
     # AUR last: it is the slow, fallible part, so everything that can succeed
     # has already succeeded by the time a build can fail.
     install_manifest "$SCRIPT_DIR/packages/50-aur.txt"
+    if [ "$WITH_HEAVY" = 1 ]; then
+        install_manifest "$SCRIPT_DIR/packages/55-aur-heavy.txt"
+    else
+        skip "freesurfer-bin (18 GiB) skipped — add --with-heavy to include it"
+    fi
 
-    ok "packages complete"
+    if [ "${#PKG_FAILED[@]}" -gt 0 ]; then
+        warn "${#PKG_FAILED[@]} package(s) failed: ${PKG_FAILED[*]}"
+    else
+        ok "packages complete"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -323,7 +394,8 @@ phase_configs() {
     # deployed. colors-hyprland.lua is likewise absent from the repo: it is
     # generated by pywal, and phase 7 links it into place.
     deploy_dir "$DOTDIR/hypr" "$HOME/.config/hypr" \
-               --exclude 'hyprland.conf' --exclude 'hyprlock.conf' --exclude '*.bak-*' || true
+               --exclude 'hyprland.conf' --exclude 'hyprlock.conf' --exclude 'hyprpaper.conf' \
+               --exclude '*.bak-*' || true
 
     # `shell` is the whole desktop in one Quickshell config since 2026-09-14;
     # it replaced taskbar/, macshell/ and finder/, which a machine installed
@@ -343,6 +415,14 @@ phase_configs() {
     # (bulky, machine-specific, and hardcoding a project path) and the personal
     # file-backup script stay in the source repo and never land there.
     deploy_scripts
+
+    # Small files this desktop reads that no mirrored directory covers. They are
+    # source in install/templates/config/, not synced from live, so a change to
+    # the live copy needs copying there too. hyprland-portals.conf is the
+    # load-bearing one: it is what names gnome-keyring as the Secret portal.
+    # environment.d/libvirt.conf points virsh and virt-manager at the system
+    # instance, where the virt phase built the networks and pools.
+    deploy_dir "$SCRIPT_DIR/templates/config" "$HOME/.config" || true
 
     # Single files, which live in differently-shaped places in the mirror.
     deploy_file "$DOTDIR/starship/starship.toml" "$HOME/.config/starship.toml" || \
@@ -477,8 +557,7 @@ phase_hardware() {
     write_hardware_env
 
     if [ "$HW_LIVE" = 0 ]; then
-        warn "written from a TTY: monitor mode is 'preferred' and the touchpad is unknown."
-        warn "Re-run '--only hardware' from inside Hyprland to pin exact values."
+        skip "written from a TTY: the monitor uses highrr, and complete-hardware-profile.sh fills the touchpad in at first login"
     fi
     if [ -z "${HW_BATTERY:-}" ]; then
         skip "no battery — the taskbar's battery panel will read as empty"
@@ -800,6 +879,10 @@ phase_apps() {
         if [ "$DRY_RUN" = 0 ]; then
             sed "s|@HOME@|$HOME|g" "$SCRIPT_DIR/templates/voxtype-config.toml" >"$vt"
         fi
+        # The template is a whisper config, so the build Settings -> Tools ->
+        # Voice typing may have selected no longer applies; vulkan.conf below
+        # is left to decide. See scripts/voice-typing.sh.
+        run rm -f "$HOME/.config/systemd/user/voxtype.service.d/zz-engine.conf"
         ok "voxtype config written"
 
         # Validate with voxtype's own resolver rather than trusting the write.
@@ -815,6 +898,9 @@ phase_apps() {
         else
             skip "voxtype-vulkan not present — staying on the CPU build"
         fi
+        # Applies to every build, so outside that check. The file says why.
+        deploy_file "$SCRIPT_DIR/user-systemd/voxtype.service.d/no-gpu-probe.conf" \
+                    "$HOME/.config/systemd/user/voxtype.service.d/no-gpu-probe.conf"
     else
         skip "voxtype not installed"
     fi
@@ -837,6 +923,125 @@ phase_apps() {
             ok "login shell set to zsh"
         fi
     fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# 6b · TOOLS  (installed outside pacman)
+# ═══════════════════════════════════════════════════════════════════════
+# try <label> <shell string> — one optional download. Their upstreams can be
+# down on the day; none of them is worth abandoning the desktop for, so a
+# failure is recorded with the package failures rather than raised.
+try_tool() {
+    local label="$1" cmd="$2"
+    if run_sh "set -o pipefail; $cmd"; then ok "$label"
+    else warn "$label failed (carrying on)"; PKG_FAILED+=("$label"); fi
+}
+
+# The dock's pins, from the mirror's state/ (a path-scrubbed copy). Absolute
+# icon and command paths are rewritten to this home, and a pin whose command is
+# one of the programs that cannot be installed here is dropped, for the same
+# reason as the launcher rows below: a dock button that does nothing. An existing
+# pins file means a machine already set up, and it is left alone.
+deploy_dock_pins() {
+    local src="$DOTDIR/state/dock-pins.json" dst="$HOME/.local/state/hyprahaan/dock-pins.json"
+    [ -f "$src" ] || return 0
+    [ ! -e "$dst" ] || { skip "dock pins already set on this machine"; return 0; }
+    mkdir -p "$(dirname "$dst")"
+    python3 - "$src" "$dst" "$HOME" <<'PY' || warn "dock pins not carried over"
+import json, os, re, sys
+src, dst, home = sys.argv[1:4]
+text = re.sub(r"/home/[A-Za-z0-9_.-]+/", home + "/", open(src).read())
+d = json.loads(text)
+d["pins"] = [p for p in d["pins"]
+             if not p["command"].startswith(home) or os.access(p["command"].split()[0], os.X_OK)]
+json.dump(d, open(dst, "w"), indent=2)
+PY
+    ok "dock pins carried over"
+}
+
+phase_tools() {
+    phase "Tools outside pacman"
+    run mkdir -p "$HOME/.local/bin"
+
+    # Claude Code: EVE's brain, and the CLI this desktop's agents panel reads.
+    # Installed, never logged in: an account does not travel. eve phase below
+    # says what is left to do.
+    if [ -x "$HOME/.local/bin/claude" ] || have claude; then
+        skip "claude already installed"
+    else
+        try_tool "Claude Code CLI" "curl -fsSL https://claude.ai/install.sh | bash"
+    fi
+
+    if have flatpak; then
+        run sudo flatpak remote-add --if-not-exists --system \
+            flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+        local fp
+        while IFS= read -r fp; do
+            fp="${fp%%#*}"; fp="${fp//[[:space:]]/}"
+            [ -n "$fp" ] || continue
+            try_tool "flatpak $fp" "sudo flatpak install -y --noninteractive --system flathub $fp"
+        done <"$SCRIPT_DIR/packages/70-flatpak.txt"
+    fi
+
+    if have uv; then
+        try_tool "kaggle (uv tool)" "uv tool install --quiet kaggle || uv tool list | grep -c '^kaggle' >/dev/null"
+    fi
+
+    # Used by rstudio's PDF output. Its installer links into ~/.local/bin.
+    if [ -d "$HOME/.TinyTeX" ]; then
+        skip "TinyTeX already installed"
+    else
+        try_tool "TinyTeX" "curl -fsSL https://yihui.org/tinytex/install-bin-unix.sh | sh >/dev/null"
+    fi
+
+    if [ -x "$HOME/.local/bin/herdr" ]; then
+        skip "herdr already installed"
+    else
+        try_tool "herdr" "curl -fsSL https://herdr.dev/install.sh | sh"
+    fi
+
+    # Launcher entries that travelled without their program. wwrite, magpie,
+    # opentern, spotsie and herdr-app are built from Ahaan's own repos and are
+    # in no package and no mirror, so here each would be a launcher row that
+    # does nothing when clicked. Removed from THIS machine's list, never from
+    # the mirror, and only when its target really is absent, so a re-run on a
+    # machine that has them changes nothing. Named at the end of the run.
+    MISSING_APPS=()
+    if [ "$DRY_RUN" = 0 ]; then
+        local d x
+        deploy_dock_pins
+        for d in "$HOME"/.local/share/applications/*.desktop; do
+            [ -f "$d" ] || continue
+            x="$(sed -n 's/^Exec=//p' "$d" | head -1 | awk '{print $1}' | tr -d '"')"
+            case "$x" in
+                "$HOME"/*) [ -x "$x" ] && continue ;;
+                *) continue ;;
+            esac
+            MISSING_APPS+=("$(basename "$d" .desktop)")
+            rm -f "$d"
+        done
+        [ "${#MISSING_APPS[@]}" -eq 0 ] || warn "not installable from here: ${MISSING_APPS[*]}"
+        have update-desktop-database && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# 6c · EVE  (the assistant: ~/.config/jarvis behind shell/Jarvis*)
+# ═══════════════════════════════════════════════════════════════════════
+# Everything except the login. chat.py runs the `claude` CLI, which reads
+# whoever is logged in from its own ~/.claude, so nothing here holds an account
+# and running `claude` once is the only thing left afterwards.
+phase_eve() {
+    phase "EVE"
+    deploy_dir "$DOTDIR/jarvis" "$HOME/.config/jarvis" \
+               --exclude 'HANDOFF.md' --exclude '__pycache__/' || { warn "jarvis/ is not in this checkout — EVE's pill will have nothing behind it"; return 0; }
+    run chmod +x "$HOME/.config/jarvis/chat.py"
+    # Claude's cwd, and the one place EVE may read and write without asking.
+    run mkdir -p "$HOME/EVE"
+    if [ "$DRY_RUN" = 0 ] && ! ( cd "$HOME/.config/jarvis" && python3 policy.py selftest ) >/dev/null 2>&1; then
+        warn "EVE's secret policy failed its selftest — run: python3 ~/.config/jarvis/policy.py selftest"
+    fi
+    ok "EVE in place (run \`claude\` once and log in; nothing else is left)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -929,6 +1134,53 @@ phase_system() {
         skip "no fingerprint reader — fprintd polkit rule not installed"
     fi
 
+    # polkit 127+ reaches its helper through this socket. It is `static` and comes
+    # up with the next boot, so on a machine where polkit was installed minutes
+    # ago it is down: password prompts cannot be answered until the reboot, and
+    # verify fails correctly but alarmingly. Seen on one of two clean runs.
+    run sudo systemctl start polkit-agent-helper.socket 2>/dev/null || true
+
+    # ── browser theme policy ───────────────────────────────────────────
+    # palette.sh retints Chromium and Brave by having BrowserThemeColor written
+    # into a managed policy under /etc. The file stays root's; the one thing a
+    # user process may do is call this helper, without a password, with a
+    # colour (omarchy's arrangement — the helper's header has the why). The
+    # sudoers file is checked with visudo BEFORE it goes in: a broken file in
+    # sudoers.d takes every sudo on the machine down with it. A policy dir is
+    # created only for a browser that is installed, because the helper writes
+    # only to dirs that exist and a dir is a managed-policy root for whatever
+    # reads it. Edge is left out on purpose.
+    local browsers_policy=() bdir
+    have chromium && browsers_policy+=(/etc/chromium/policies/managed)
+    have brave    && browsers_policy+=(/etc/brave/policies/managed)
+    if [ ${#browsers_policy[@]} -eq 0 ]; then
+        skip "no chromium or brave — browser theme policy not installed"
+    elif ! visudo -cf "$SCRIPT_DIR/system/sudoers.d/hyprahaan-browser-policy" >/dev/null; then
+        err "sudoers.d/hyprahaan-browser-policy does not parse — browser theme policy not installed"
+    else
+        sudo_file "$SCRIPT_DIR/system/bin/hyprahaan-browser-policy" \
+                  /usr/local/bin/hyprahaan-browser-policy 755
+        sudo_file "$SCRIPT_DIR/system/sudoers.d/hyprahaan-browser-policy" \
+                  /etc/sudoers.d/hyprahaan-browser-policy 440
+        for bdir in "${browsers_policy[@]}"; do
+            [ -d "$bdir" ] && continue
+            run sudo install -d -m 755 "$bdir"
+            ok "$bdir (filled by palette.sh on the next palette apply)"
+        done
+    fi
+
+    # No new USB while the screen is locked. The same visudo gate as above: a broken
+    # file in sudoers.d takes every sudo on the machine down with it. Without this,
+    # the lock screen still locks, and USB simply stays open.
+    if ! visudo -cf "$SCRIPT_DIR/system/sudoers.d/hyprahaan-usb-lock" >/dev/null; then
+        err "sudoers.d/hyprahaan-usb-lock does not parse — USB lock not installed"
+    else
+        sudo_file "$SCRIPT_DIR/system/bin/hyprahaan-usb-lock" \
+                  /usr/local/bin/hyprahaan-usb-lock 755
+        sudo_file "$SCRIPT_DIR/system/sudoers.d/hyprahaan-usb-lock" \
+                  /etc/sudoers.d/hyprahaan-usb-lock 440
+    fi
+
     # ── everyday services ──────────────────────────────────────────────
     # (wifi, bluetooth and the firewall are handled by the `network` phase.)
     have upower           && enable_unit upower.service
@@ -998,6 +1250,64 @@ phase_system() {
 # ═══════════════════════════════════════════════════════════════════════
 # 9 · NETWORK — wifi, bluetooth, firewall
 # ═══════════════════════════════════════════════════════════════════════
+# archinstall's network choices include "copy ISO config" and "iwd", either of
+# which leaves another manager owning the link, and this desktop's wifi panel
+# only talks to NetworkManager. Two managers on one interface fight, so the
+# others are stopped. resolved's stub goes with them: NM will not touch an
+# /etc/resolv.conf that is a symlink into systemd, so left in place it points
+# name lookups at a stopped daemon and every later phase loses DNS. Known wifi
+# networks are carried over first, or the machine would come back up offline.
+network_take_over() {
+    [ "$DRY_RUN" = 1 ] && { info "DRY would stop systemd-networkd/resolved/standalone iwd if enabled"; return 0; }
+    import_iwd_networks
+    local u
+    for u in systemd-networkd.service systemd-networkd.socket systemd-resolved.service; do
+        if [ "$(systemctl is-enabled "$u" 2>/dev/null || true)" = enabled ]; then
+            warn "$u is enabled — NetworkManager owns the network on this desktop, disabling it"
+            run sudo systemctl disable --now "$u" || true
+        fi
+    done
+    if [ -L /etc/resolv.conf ]; then
+        case "$(readlink -f /etc/resolv.conf)" in
+            /run/systemd/resolve/*) run sudo rm -f /etc/resolv.conf ;;
+        esac
+    fi
+    # iwd stays installed (NM drives it) but must not run as its own manager of
+    # record. NM starts it over D-Bus on demand, which is how this machine runs.
+    if [ "$(systemctl is-enabled iwd.service 2>/dev/null || true)" = enabled ]; then
+        run sudo systemctl disable iwd.service || true
+    fi
+}
+
+# Every /var/lib/iwd/*.psk becomes a NetworkManager profile. iwd names the file
+# after the SSID, or "=<hex>" when the SSID has characters a filename cannot.
+import_iwd_networks() {
+    local list f base ssid psk
+    list="$(sudo find /var/lib/iwd -maxdepth 1 -name '*.psk' 2>/dev/null || true)"
+    [ -n "$list" ] || return 0
+    while IFS= read -r f; do
+        base="$(basename "$f" .psk)"
+        case "$base" in
+            =*) ssid="$(printf '%s' "${base#=}" | sed 's/../\\x&/g' | xargs -0 printf '%b')" ;;
+            *)  ssid="$base" ;;
+        esac
+        psk="$(sudo sed -n 's/^PreSharedKey=//p; s/^Passphrase=//p' "$f" | tail -1)"
+        [ -n "$psk" ] || continue
+        [ ! -e "/etc/NetworkManager/system-connections/$base.nmconnection" ] || continue
+        printf '[connection]\nid=%s\ntype=wifi\n\n[wifi]\nssid=%s\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' \
+               "$ssid" "$ssid" "$psk" \
+            | sudo install -D -m 600 /dev/stdin "/etc/NetworkManager/system-connections/$base.nmconnection"
+        ok "wifi network carried over from iwd: $ssid"
+    done <<<"$list"
+}
+
+# Later phases still fetch things, so give NM a moment to bring the link back.
+network_wait() {
+    [ "$DRY_RUN" = 1 ] && return 0
+    have nm-online || return 0
+    nm-online -q -t 30 || warn "NetworkManager has no connection yet — later downloads may fail"
+}
+
 phase_network() {
     phase "Wifi, Bluetooth and firewall"
     if [ "$NO_ROOT" = 1 ]; then skip "--no-root given"; return 0; fi
@@ -1012,8 +1322,10 @@ phase_network() {
         pacman -Qq iwd >/dev/null 2>&1 && \
             sudo_file "$SCRIPT_DIR/system/NetworkManager/wifi_backend.conf" \
                       /etc/NetworkManager/conf.d/wifi_backend.conf
+        network_take_over
         enable_unit NetworkManager.service
         run sudo systemctl start NetworkManager.service
+        network_wait
         # A fresh install can come up with the radio soft-blocked.
         if have rfkill; then
             run sudo rfkill unblock wifi
@@ -1117,16 +1429,16 @@ phase_virt() {
     # generate .pacnew noise on every libvirt update.
     local qc=/etc/libvirt/qemu.conf
     if [ -f "$qc" ]; then
-        if [ "$(sudo -n grep -cE '^\s*(user|group)\s*=\s*"qemu"' "$qc" 2>/dev/null || echo 0)" = 2 ]; then
+        if [ "$(sudo -n grep -cE '^\s*(user|group)\s*=\s*"qemu"' "$qc" 2>/dev/null || true)" = 2 ]; then
             skip "qemu.conf user/group already set"
         else
             run sudo cp -a "$qc" "$qc.bak-$BACKUP_STAMP"
-            # Rewrite the key if present (commented or not), else append it.
-            run sudo sed -i -E \
-                -e 's|^#?\s*user\s*=.*|user = "qemu"|' \
-                -e 's|^#?\s*group\s*=.*|group = "qemu"|' "$qc"
-            run_sh "sudo grep -qE '^user = \"qemu\"'  $qc || echo 'user = \"qemu\"'  | sudo tee -a $qc >/dev/null"
-            run_sh "sudo grep -qE '^group = \"qemu\"' $qc || echo 'group = \"qemu\"' | sudo tee -a $qc >/dev/null"
+            # Remove any live key, then append one of each. Never rewrite the
+            # commented lines: the stock file has several `#user = ...` examples,
+            # and matching them left four live user lines. libvirt takes the
+            # last, so it worked, but verify's count of 2 failed (2026-11-05).
+            run sudo sed -i -E '/^\s*(user|group)\s*=/d' "$qc"
+            run_sh "printf 'user = \"qemu\"\ngroup = \"qemu\"\n' | sudo tee -a $qc >/dev/null"
             ok "qemu.conf: user/group = qemu"
         fi
     fi
@@ -1153,7 +1465,12 @@ phase_virt() {
              virtnodedevd.socket virtsecretd.socket virtlogd.socket; do
         enable_unit "$u"
     done
-    run sudo systemctl start virtqemud.socket virtnetworkd.socket
+    # All of them, not just the two the network step below uses. Enabling does
+    # not start, and until the next boot `virsh pool-*` fails with "Failed to
+    # connect socket to '/var/run/libvirt/virtstoraged-sock'". Measured
+    # 2026-11-05, on the first run that ever got here without a reboot.
+    run sudo systemctl start virtqemud.socket virtnetworkd.socket virtstoraged.socket \
+        virtnodedevd.socket virtsecretd.socket virtlogd.socket
 
     # ── 4 · the default NAT network ────────────────────────────────────
     # Defined by the package but neither started nor autostarted, which is why
@@ -1275,7 +1592,8 @@ phase_theming() {
     # still read as the second source — it is dormant since 2026-09-14 but a
     # mirror taken before that is the only record an older clone carries.
     local wp="" wanted
-    wanted="$(head -1 "$DOTDIR/../.local/state/hyprahaan/wallpaper" 2>/dev/null || true)"
+    # state/ is what backup_configs.sh carries of the source machine's choices.
+    wanted="$(head -1 "$DOTDIR/state/wallpaper" 2>/dev/null || true)"
     [ -n "$wanted" ] ||
         wanted="$(sed -n 's/^\s*path\s*=\s*//p' "$DOTDIR/hypr/hyprpaper.conf" 2>/dev/null | head -1)"
     # What is recorded is the SOURCE machine's absolute path, so only the part
@@ -1348,6 +1666,22 @@ phase_theming() {
             printf '%s\n' "$wp" >"$HOME/.local/state/hyprahaan/wallpaper"
         fi
         ok "wallpaper recorded: $(basename "$wp")"
+
+        # `wal -i` above made colours from the picture, which is the "pywal"
+        # palette. ui.conf names the one this desktop actually uses, and only
+        # palette.sh knows how to apply a named one (every consumer it fans out
+        # to, see its header). Asked for after the wallpaper is recorded, because
+        # it reads that file. Not fatal: a palette problem leaves pywal's colours.
+        local pal=""
+        [ -x "$HOME/.config/scripts/palette.sh" ] && \
+            pal="$(sed -n 's/^PALETTE="\(.*\)"/\1/p' "$HOME/.config/scripts/ui.conf" 2>/dev/null | head -1)"
+        if [ -n "$pal" ] && [ "$pal" != pywal ]; then
+            if run "$HOME/.config/scripts/palette.sh" apply "$pal" >/dev/null 2>&1; then
+                ok "palette: $pal"
+            else
+                warn "palette $pal did not apply; staying on pywal colours"
+            fi
+        fi
     else
         warn "no wallpaper found in ~/Pictures/wallpapers — theming left at defaults"
         warn "add an image there and run: ~/.config/shell/apply-wallpaper.sh <path>"
@@ -1369,7 +1703,14 @@ phase_theming() {
         else
             run_sh "$gs gtk-theme 'Adwaita-dark'"
         fi
-        run_sh "$gs color-scheme 'prefer-dark'"
+        # Light or dark follows the palette (palette.sh owns color-scheme since
+        # 2026-10-29). pywal was primed above with `wal -i`, not through
+        # palette.sh, so ask it directly; prefer-dark only if it is missing.
+        if [ -x "$HOME/.config/scripts/palette.sh" ]; then
+            run "$HOME/.config/scripts/palette.sh" color-scheme
+        else
+            run_sh "$gs color-scheme 'prefer-dark'"
+        fi
         ok "GTK/cursor settings applied"
     fi
 }
@@ -1407,10 +1748,13 @@ phase_hibernation() {
     info "Here is exactly what it would change on this machine:"
     printf '\n'
     if [ "$DRY_RUN" = 1 ]; then
-        run_sh "'$sh' --dry-run"
+        sudo -nE "$sh" --dry-run 2>/dev/null || run_sh "'$sh' --dry-run"
         return 0
     fi
-    "$sh" --dry-run || { warn "hibernation is not possible here — see the reason above"; return 0; }
+    # With sudo: archinstall mounts /boot fmask=0077, so without root the script
+    # cannot see any bootloader config and reports "no kernel command line to
+    # edit", which then skips hibernation with no sign of why. Measured 2026-11-05.
+    sudo -E "$sh" --dry-run || { warn "hibernation is not possible here — see the reason above"; return 0; }
     printf '\n'
 
     if ask_yn "Set up hibernation now? (edits fstab, mkinitcpio and the bootloader)" y; then
@@ -1457,10 +1801,15 @@ phase_snapshots() {
 
     # The dry run is the gate. It prints the reason itself on refusal, so
     # nothing here has to guess at one or repeat it.
-    if ! "$sh" --dry-run; then
-        skip "snapshots not available on this machine (see above)"
+    # Captured, and only shown when it says yes: its refusal is written for
+    # someone who asked for snapshots, and on the ext4 root archinstall gives by
+    # default that was two red crosses in a run where nothing had gone wrong.
+    local plan
+    if ! plan="$("$sh" --dry-run 2>&1)"; then
+        skip "snapshots need a btrfs root; not available here"
         return 0
     fi
+    printf '%s\n' "$plan"
 
     if [ "$DRY_RUN" = 1 ]; then
         info "(--dry-run: the plan above is what a real run would do)"
@@ -1668,10 +2017,15 @@ phase_verify() {
     # Safe to exclude here in a way excluding an ordinary config would not be,
     # because the file is source in this repo and the one file whose whole
     # purpose is to be read before it is trusted.
-    foreign="$(grep -rhoI --exclude='*.bak*' --exclude='backup_configs.sh' \
+    # jarvis/ runs through a filter of its own: chat.py's comments carry an
+    # example path scrubbed to /home/USER, and policy.py is excluded for the same
+    # reason as above, its selftest fixtures being path-shaped on purpose.
+    foreign="$( { grep -rhoI --exclude='*.bak*' --exclude='backup_configs.sh' \
                  -E '/home/[A-Za-z0-9_.-]+' \
                  "$HOME/.config"/{hypr,shell,lockscreen,scripts,nvim} \
-                 "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.vimrc" 2>/dev/null \
+                 "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.vimrc" 2>/dev/null
+                 grep -rhI --include='*.py' --exclude='policy.py' '/home/' "$HOME/.config/jarvis" 2>/dev/null \
+                 | sed 's/#.*//' | grep -oE '/home/[A-Za-z0-9_.-]+'; } \
                | sort -u | grep -vx "/home/$USER" || true)"
     if [ -n "$foreign" ]; then
         bad "deployed configs reference another machine's home: $(echo "$foreign" | tr '\n' ' ')"
@@ -1713,11 +2067,13 @@ phase_verify() {
     # found by auditing this list against the menu rather than by a failure.
     # All three are the same shape as the rest: reached from QML by absolute
     # path, never from a keybind, so the bind sweep above cannot see them.
+    # machine-mark.sh replaced about-system.sh on 2026-10-21 (the About sigil);
+    # it reads machine-mark.jsonc and machine-mark-gpu.jsonc from beside itself.
     # capture-wait.sh is the one worth naming explicitly — EVERY Tools row is
     # launched through it, so one missing file takes out the whole category
     # while each tool it wraps still works from its own keybind.
     for sm in ui-prefs.sh palette.sh list-keybinds.sh keybinds.sh window-rules.sh \
-              icon-index.sh about-system.sh \
+              icon-index.sh machine-mark.sh \
               privileged-run.sh change-password.sh firewall.sh fingerprint.sh \
               webapp-install.sh webapp-remove.sh nightlight.sh ocr-region.sh \
               capture-wait.sh screenrecord.sh wallpapers.sh; do
@@ -1823,6 +2179,17 @@ phase_verify() {
         bad "hyprsunset not installed — the Display panel's night light can never turn on"
     fi
 
+    # ── no new USB while locked ────────────────────────────────────────
+    # Asked of sudo, the thing that decides, and with -n, because the lock screen
+    # has nobody to answer a prompt. Absent, the lock still works and USB stays
+    # open with no error anywhere, so this is the only place it would show.
+    if sudo -n -l /usr/local/bin/hyprahaan-usb-lock lock >/dev/null 2>&1 && \
+       sudo -n -l /usr/local/bin/hyprahaan-usb-lock unlock >/dev/null 2>&1; then
+        ok "the lock screen can block new USB"
+    else
+        bad "hyprahaan-usb-lock is not usable without a password — USB stays open while locked"
+    fi
+
     # ── fingerprint enrolment authorisation ────────────────────────────
     # Enrolling and deleting check net.reactivated.fprint.device.enroll, which
     # upstream leaves at auth_self_keep — meaning the session's polkit agent
@@ -1915,7 +2282,16 @@ phase_verify() {
         check "wifi backend is iwd" \
               "[ -n \"\$(grep -rhs 'wifi.backend=iwd' /etc/NetworkManager/conf.d/ 2>/dev/null)\" ]"
     fi
-    have bluetoothctl && check "bluetooth active" "systemctl is-active bluetooth.service"
+    # Active only means anything with an adapter: the unit carries
+    # ConditionPathIsDirectory=/sys/class/bluetooth, so a machine without one
+    # skips it correctly and "enabled" is all there is to check.
+    if have bluetoothctl; then
+        if [ -d /sys/class/bluetooth ]; then
+            check "bluetooth active" "systemctl is-active bluetooth.service"
+        else
+            check "bluetooth enabled (no adapter here, so not started)" "systemctl is-enabled bluetooth.service"
+        fi
+    fi
 
     if have firewall-cmd; then
         check "firewalld active" "systemctl is-active firewalld.service"
@@ -2236,6 +2612,32 @@ phase_verify() {
     # ── systemd ────────────────────────────────────────────────────────
     have voxtype && check "voxtype.service enabled" "systemctl --user is-enabled voxtype.service"
 
+    # ── EVE ────────────────────────────────────────────────────────────
+    # The shell draws EVE's pill whether or not there is anything behind it, so
+    # a missing back end shows up only as a pill that never answers.
+    for a in chat.py broker.py policy.py act.py mqueue.py; do
+        check "EVE: $a deployed" "[ -f '$HOME/.config/jarvis/$a' ]"
+    done
+    check "EVE: chat.py executable" "[ -x '$HOME/.config/jarvis/chat.py' ]"
+    check "EVE: ~/EVE exists" "[ -d '$HOME/EVE' ]"
+    check "EVE: secret policy selftest passes" "cd '$HOME/.config/jarvis' && python3 policy.py selftest"
+    check "EVE: the claude CLI is installed" "[ -x '$HOME/.local/bin/claude' ] || command -v claude"
+
+    # ── every package the manifests name ───────────────────────────────
+    # pacman -Q rather than PKG_FAILED, so this also holds for `--only verify`
+    # and for a package removed since. Virtual names are found by -Qq too.
+    local pf pmiss="" pm k
+    for pf in 10-core 30-fonts 40-apps 50-aur; do
+        while read -r k pm; do
+            pacman -Qq "$pm" >/dev/null 2>&1 || pacman -Qqs "^$pm\$" >/dev/null 2>&1 || pmiss="$pmiss $pm"
+        done < <(read_manifest "$SCRIPT_DIR/packages/$pf.txt")
+    done
+    if [ -n "$pmiss" ]; then
+        bad "packages missing:$pmiss"
+    else
+        chk "every package in the manifests is installed"
+    fi
+
     printf '\n'
     if [ "$V_FAIL" -eq 0 ]; then
         printf '  %s%d checks passed, 0 failed.%s\n' "$C_GRN$C_B" "$V_PASS" "$C_RST"
@@ -2301,6 +2703,39 @@ maybe_reboot() {
     fi
 }
 
+# run_phase <name> — one phase, and whether its failure stops the install.
+#
+# preflight, packages and configs stop it: everything after them assumes them.
+# Every other phase runs in a subshell, so a failure costs that phase and the run
+# goes on to the next. Measured 2026-11-05: one libvirt pool that would not define
+# took theming, hibernation and verify down with it, leaving a desktop with no
+# colours over a problem in virt-manager. Re-running repairs what is named at the
+# end, since every phase is idempotent.
+#
+# tools and verify stay in this shell because they set variables main() reports
+# (PKG_FAILED, MISSING_APPS, V_FAIL), and neither can raise: tools records its own
+# failures and verify's whole job is to count them. The cost of the subshell is
+# that what a phase sets dies with it, which is why PHASE_N is advanced here and
+# BACKUP_ROOT is re-derived at the end.
+FAILED_PHASES=()
+run_phase() {
+    local p="$1" rc
+    want_phase "$p" || return 0
+    case "$p" in
+        preflight|packages|configs|tools|verify) "phase_$p"; return 0 ;;
+    esac
+    phase_close
+    set +e
+    ( set -e; IN_SUBSHELL_PHASE=1; "phase_$p"; phase_close )
+    rc=$?
+    set -e
+    PHASE_N=$((PHASE_N+1))
+    if [ "$rc" -ne 0 ]; then
+        err "the $p phase failed (exit $rc) — carrying on with the rest"
+        FAILED_PHASES+=("$p")
+    fi
+}
+
 main() {
     printf '%s╭──────────────────────────────────────────────╮%s\n' "$C_B$C_BLU" "$C_RST"
     printf '%s│  hyprahaan — Hyprland + Quickshell installer │%s\n' "$C_B$C_BLU" "$C_RST"
@@ -2328,24 +2763,11 @@ main() {
         # removes its three leftover scripts. The REASON is what is kept here,
         # because it applies to every phase named below and will apply to the
         # next one added.
-        case "$ONLY" in system|network|virt|hibernation|snapshots|packages|nvidia) sudo_prime ;; esac
+        case "$ONLY" in system|network|virt|hibernation|snapshots|packages|nvidia|tools) sudo_prime ;; esac
     fi
 
-    want_phase preflight   && phase_preflight
-    want_phase packages    && phase_packages
-    want_phase configs     && phase_configs
-    want_phase hardware    && phase_hardware
-    want_phase nvidia      && phase_nvidia
-    want_phase apps        && phase_apps
-    want_phase usersystemd && phase_usersystemd
-    want_phase system      && phase_system
-    want_phase network     && phase_network
-    want_phase virt        && phase_virt
-    want_phase theming     && phase_theming
-    want_phase hibernation && phase_hibernation
-    want_phase snapshots   && phase_snapshots
-    want_phase fingerprint && phase_fingerprint
-    want_phase verify      && phase_verify
+    local p
+    for p in $ALL_PHASES; do run_phase "$p"; done
 
     phase_close
     printf '\n%s══ Done in %s ══%s\n' "$C_B$C_GRN" "$(total_elapsed)" "$C_RST"
@@ -2355,19 +2777,33 @@ main() {
     1. ${C_B}Log out completely${C_RST} (or reboot). Group changes — the ones that let
        the brightness slider and libinput work without sudo — do not reach an
        already-running session.
-    2. At the greeter, log in and start ${C_B}Hyprland${C_RST}.
+    2. At the greeter, log in. It starts ${C_B}Hyprland${C_RST} itself.
     3. Nothing else is required. The touchpad name is the one fact that needs
        a live session, and ${C_B}complete-hardware-profile.sh${C_RST} fills it in
        automatically at your first login.
 
-  Install more from the AUR (browsers, Spotify, editors) with:
-    ${C_B}~/.config/scripts/pkg-aur-install.sh${C_RST}
+    4. ${C_B}EVE${C_RST}: run ${C_B}claude${C_RST} once in a terminal and log in. That is all she needs.
+    5. Fingerprints, if this machine has a reader: ${C_B}$SCRIPT_DIR/install.sh --only fingerprint${C_RST}
 
-  Backups of anything overwritten: ${BACKUP_ROOT:-<nothing was overwritten>}
+  Backups of anything overwritten: $( [ -d "$HOME/.config-backup-$BACKUP_STAMP" ] && echo "$HOME/.config-backup-$BACKUP_STAMP" || echo "<nothing was overwritten>" )
   Full log: $LOGFILE
 NEXT
+    if [ "${#MISSING_APPS[@]}" -gt 0 ]; then
+        printf '\n  %sNot on this machine%s (your own builds, in no package or mirror; launcher rows removed):\n    %s\n' \
+               "$C_YLW" "$C_RST" "${MISSING_APPS[*]}"
+    fi
+    if [ "${#FAILED_PHASES[@]}" -gt 0 ]; then
+        printf '\n  %sThese phases failed:%s %s\n  Repair one with: %s --only <phase>\n' \
+               "$C_RED" "$C_RST" "${FAILED_PHASES[*]}" "$0"
+    fi
+    if [ "${#PKG_FAILED[@]}" -gt 0 ]; then
+        printf '\n  %sThese failed to install:%s\n    %s\n  Re-running this installer retries them.\n' \
+               "$C_RED" "$C_RST" "${PKG_FAILED[*]}"
+    fi
 
     maybe_reboot
+    # Non-zero when anything is short, so whatever launched this can tell.
+    [ "${#PKG_FAILED[@]}" -eq 0 ] && [ "${#FAILED_PHASES[@]}" -eq 0 ] && [ "$V_FAIL" -eq 0 ]
 }
 
 main "$@"

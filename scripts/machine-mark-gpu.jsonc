@@ -1,0 +1,3 @@
+// Read by machine-mark.sh ONLY while the dGPU is already awake (or absent):
+// driverSpecific is what reports core counts, and it wakes the card.
+{ "modules": [ { "type": "gpu", "driverSpecific": true } ] }

@@ -57,6 +57,29 @@ Rectangle {
     property string pageKey: ""
     property string query: ""
     property int sel: 0
+    // The value column of a row that ends in › (a menu row's state, a cycle
+    // row's ‹ value ›). Everything in it is centred on one line: the midpoint
+    // between a cycle row's ‹ and the › in the chevron slot. Ahaan, 2026-10-26:
+    // "Advanced" sat right-aligned inside its arrows and "Haiku 5.5" ended
+    // flush against the tick slot, so the two rows' text did not line up.
+    // valueCol is the column's laid-out width (‹ 12 + value); valueOver is how
+    // far it is from the column's right edge to the › glyph — the row spacing,
+    // the tick slot, the row spacing again (12 + 15 + 12). The centre line is
+    // then valueMid in from the column's right edge.
+    readonly property int valueCol: 88
+    readonly property int valueOver: 39
+    readonly property real valueMid: (valueCol - 12 - valueOver) / 2 + 0.5
+    // ...except on a page that also has value rows (Window rules: Window mode
+    // above Border size, Gaps…). There the cycle row's value is centred on the
+    // number boxes' column instead, and its ‹ › sit where a value row's − + do.
+    // Ahaan, 2026-10-30: "Floating" sat on the › line, 130 px right of the
+    // "2" below it, so the page read as two columns. Both offsets are measured
+    // from the value row's right edge: unit 20 + 4 + "+" 24 + 4 + half the
+    // 66 box = 85 to the box centre; 33 + 4 + 12 = 49 from there to either
+    // stepper's centre. The chevron slot's › hides on such a row (see there).
+    readonly property bool boxCol: panel.rows.some(r => r.kind === "value")
+    readonly property int boxMid: 85
+    readonly property int boxStep: 49
 
     readonly property bool searching: panel.query.trim().length > 0
     readonly property var rows: panel.searching ? Settings.search(panel.pageKey, panel.query)
@@ -267,6 +290,17 @@ Rectangle {
         panel.jumpTo((cut < 0) ? "" : panel.pageKey.substring(0, cut), false)
     }
 
+    // A "cycle" row (EVE's capabilities): Left/Right step its value instead
+    // of walking the menu, which is what Ahaan asked for (2026-10-26). Back
+    // is still Esc, Backspace, or Left on any other row.
+    function cycle(i, dir) {
+        const r = panel.rows[i]
+        if (!r || r.kind !== "cycle") return false
+        list.rememberScroll()
+        Settings.cycle(r.pageKey !== undefined ? r.pageKey : panel.pageKey, r, dir)
+        return true
+    }
+
     function activate(i) {
         const r = panel.rows[i]
         if (!r) return
@@ -467,7 +501,8 @@ Rectangle {
                         // nested page took as many presses as it took to get in.
                         panel.requestClose(); event.accepted = true
                     } else if (event.key === Qt.Key_Left && searchInput.cursorPosition === 0) {
-                        panel.back(); event.accepted = true
+                        if (!panel.cycle(panel.sel, -1)) panel.back()
+                        event.accepted = true
                     } else if (event.key === Qt.Key_Backspace && searchInput.text.length === 0) {
                         panel.back(); event.accepted = true
                     } else if ((event.key === Qt.Key_Minus || event.key === Qt.Key_Plus
@@ -516,6 +551,7 @@ Rectangle {
                     } else if (event.key === Qt.Key_Right && searchInput.cursorPosition === searchInput.text.length) {
                         const r = panel.rows[panel.sel]
                         if (r && r.kind === "menu") { panel.enter(r); event.accepted = true }
+                        else if (panel.cycle(panel.sel, 1)) event.accepted = true
                     }
                 }
             }
@@ -881,13 +917,119 @@ Rectangle {
                     // than as a second label, and so it never adds a line to the
                     // row's height the way a subtitle does.
                     Text {
-                        visible: (row.modelData.trail || "") !== ""
+                        visible: (row.modelData.trail || "") !== "" && !trailMid.on
                         text: row.modelData.trail || ""
                         color: Theme.dimmer
                         font.family: Theme.font
                         font.pixelSize: Theme.fsSub
                         elide: Text.ElideLeft
                         Layout.maximumWidth: 130
+                    }
+                    // ...and centred in the value column on a row that ends in ›
+                    // (panel.valueCol). Not on a search hit, whose trail is the
+                    // page it lives on, an annotation rather than a value. A trail
+                    // wider than the column spills right toward the › (it may: the
+                    // tick slot there is empty on a menu row) and, past that, is
+                    // pushed left, stopping 4 px short of the arrow.
+                    Item {
+                        id: trailMid
+                        readonly property bool on: row.nests && !panel.searching
+                                                   && (row.modelData.trail || "") !== ""
+                        visible: on
+                        readonly property real w: Math.min(trailT.implicitWidth, 170)
+                        implicitHeight: trailT.implicitHeight
+                        implicitWidth: Math.max(panel.valueCol, panel.valueMid + w / 2,
+                                                w - panel.valueOver + 4)
+                        Layout.alignment: Qt.AlignVCenter
+                        Text {
+                            id: trailT
+                            width: parent.w
+                            x: Math.min(parent.width - panel.valueMid - parent.w / 2,
+                                        parent.width + panel.valueOver - 4 - parent.w)
+                            text: row.modelData.trail || ""
+                            color: Theme.dimmer
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fsSub
+                            elide: Text.ElideLeft
+                        }
+                    }
+
+                    // ── a cycle row: ‹ value › ──────────────────────────────
+                    // The value in the row's text colour (the accent once it is
+                    // Advanced, so the wider mode is visible at a glance), the
+                    // chevrons dim until the row is selected, each clickable.
+                    // Fixed width so Basic and Advanced do not move the arrows; 72 px
+                    // fits "Advanced" and leaves the title whole (86 cut it to
+                    // "EVE's capabiliti…" at this card's width). Only the ‹ lives
+                    // here: the value is right-aligned so it ends where a menu row's
+                    // trail ("Haiku 5.5") ends, and the › is the row's own chevron
+                    // slot below, so both arrows sit in one column (Ahaan's ask —
+                    // a › of its own sat a tick-slot left of the Model row's).
+                    Loader {
+                        active: row.modelData.kind === "cycle"
+                        visible: active
+                        Layout.alignment: Qt.AlignVCenter
+                        sourceComponent: Component {
+                            // ‹ in a 12 px cell, the value centred from there to
+                            // the row's › (panel.valueMid); the value overhangs
+                            // the column into the tick slot, which a cycle row
+                            // never uses.
+                            Item {
+                                id: cyc
+                                implicitWidth: panel.boxCol ? panel.boxMid + panel.boxStep + 12 : panel.valueCol
+                                implicitHeight: 20
+                                readonly property var opts: row.modelData.options || []
+                                readonly property var labs: row.modelData.labels || opts
+                                readonly property int at: Math.max(0, opts.indexOf(row.modelData.value))
+                                // Where the value is centred, in from the right edge.
+                                readonly property real mid: panel.boxCol ? panel.boxMid : panel.valueMid
+                                Text {
+                                    width: 12
+                                    x: panel.boxCol ? cyc.width - cyc.mid - panel.boxStep - 6 : 0
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: "‹"
+                                    color: row.isSel ? Theme.text : Theme.dimmer
+                                    font.family: Theme.font
+                                    font.pixelSize: 16
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -6
+                                        onClicked: { panel.sel = row.index; panel.cycle(row.index, -1) }
+                                    }
+                                }
+                                Text {
+                                    readonly property real span: 120         // any width centred on the line
+                                    x: parent.width - cyc.mid - span / 2
+                                    width: span
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: parent.labs[parent.at] || ""
+                                    color: row.modelData.value === "advanced" ? Theme.accent : Theme.text
+                                    font.family: Theme.font
+                                    font.pixelSize: Theme.fsSub + 1
+                                    font.weight: Font.DemiBold
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                // The › of its own, mirroring the ‹, on a box-column
+                                // page only; elsewhere it is the chevron slot's.
+                                Text {
+                                    visible: panel.boxCol
+                                    width: 12
+                                    x: cyc.width - cyc.mid + panel.boxStep - 6
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: "›"
+                                    color: row.isSel ? Theme.text : Theme.dimmer
+                                    font.family: Theme.font
+                                    font.pixelSize: 16
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -6
+                                        onClicked: { panel.sel = row.index; panel.cycle(row.index, 1) }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // ── a value row: two steppers, a box, and its unit ──────
@@ -1224,6 +1366,30 @@ Rectangle {
                     Item {
                         Layout.preferredWidth: 15
                         Layout.preferredHeight: 15
+                        // "check" (2026-10-31, the bar's Modules page): a real
+                        // checkbox, because every row there is on or off on
+                        // its own and an empty slot would not say "off" — a
+                        // missing tick reads as nothing at all. The box is
+                        // the card's hairline edge; on, it fills with the
+                        // accent and the tick is drawn in the card's ground.
+                        Rectangle {
+                            anchors.centerIn: parent
+                            visible: row.modelData.kind === "check"
+                            width: 15; height: 15
+                            radius: 4
+                            color: row.isOn ? Theme.accent : "transparent"
+                            border.width: 1.5
+                            border.color: row.isOn ? Theme.accent : Theme.alpha(Theme.text, 0.45)
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Text {
+                                anchors.centerIn: parent
+                                visible: row.isOn
+                                text: "󰄬"
+                                color: Theme.bg
+                                font.family: Theme.font
+                                font.pixelSize: 12
+                            }
+                        }
                         Text {
                             anchors.centerIn: parent
                             visible: row.isOn && (row.modelData.kind === "choice"
@@ -1248,11 +1414,19 @@ Rectangle {
                         Layout.preferredHeight: 16
                         Text {
                             anchors.centerIn: parent
-                            visible: row.nests
+                            readonly property bool cyc: row.modelData.kind === "cycle"
+                            // A cycle row on a box-column page draws its own ›.
+                            visible: row.nests || (cyc && !panel.boxCol)
                             text: "›"
-                            color: Theme.dimmer
+                            color: cyc && row.isSel ? Theme.text : Theme.dimmer
                             font.family: Theme.font
                             font.pixelSize: 16
+                            MouseArea {
+                                enabled: parent.cyc
+                                anchors.fill: parent
+                                anchors.margins: -6
+                                onClicked: { panel.sel = row.index; panel.cycle(row.index, 1) }
+                            }
                         }
                     }
                 }
