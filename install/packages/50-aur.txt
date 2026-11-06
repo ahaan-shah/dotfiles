@@ -2,9 +2,13 @@
 # package that fails to build costs that package and not the rest. Failures are
 # listed at the end of the run and in verify.
 #
-# Was deliberately four packages until 2026-11-05, when Ahaan asked for the new
-# machine to have "all the packages that I use", browsers included. The one
-# exception is 55-aur-heavy.txt.
+# One y/n at the start of the run covers this whole file (Ahaan, 2026-11-06).
+# Nothing here may be something the desktop cannot run without: on a "no", voxtype's
+# bind does nothing, the cursor is the fallback theme, mimeapps.list is repointed
+# from Zen at chromium, and the dock drops pins for what is absent. The AUR packages
+# that ARE required never come through this file: python-pywal (10-core.txt),
+# asusctl (install_power_backend) and limine-snapper-sync (the snapshots phase).
+# 55-aur-heavy.txt stays behind its own flag.
 #
 # The "aur:" prefix is what read_manifest keys on, so one parser handles every
 # manifest in this directory.
@@ -23,3 +27,11 @@ aur:fum-bin               # ~/.config/fum is deployed
 aur:cliamp
 aur:clock-tui
 aur:nomacs
+aur:python-pywalfox       # AUR as well, same failure, same fix.
+                          #   finder/apply-wallpaper.sh calls `pywalfox update`
+                          #   as one step of the theme fan-out, so Firefox
+                          #   retints with everything else. That script has no
+                          #   `set -e` by design, so a missing pywalfox is not
+                          #   fatal — it prints "command not found" to a stderr
+                          #   nobody reads and the browser just stays on the
+                          #   old palette.

@@ -6,9 +6,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/ahaan-shah/dotfiles/main/install/bootstrap.sh | bash
 #
-# It asks for the sudo password once, then needs nothing else from you. Extra
-# arguments go to install.sh: `| bash -s -- --with-heavy`, or `--interactive`
-# to be asked at each decision instead of taking its defaults.
+# It asks for the sudo password once and three y/n questions (the AUR packages, the
+# web apps, the extras), all in the first minutes, then needs nothing else from
+# you. Extra arguments go to install.sh: `| bash -s -- --with-heavy`, `--no-aur` to
+# answer in advance, `--yes` to be asked nothing, or `--interactive` to be asked at
+# each decision instead of taking its defaults.
 #
 # Everything lives in main(), called on the last line, so a download cut off
 # halfway runs nothing rather than half of this. It also has to stay usable
@@ -57,12 +59,15 @@ main() {
     fi
 
     # --yes unless asked otherwise: the point of one line is that it finishes
-    # while you are away. Every default is what this desktop is set up as.
-    local yes=(--yes) a
+    # while you are away. Every default is what this desktop is set up as. The one
+    # thing still asked is what goes on the machine, and install.sh asks that before
+    # the long part. Passing --yes here means not even that.
+    local yes=(--yes --ask-sets) a
     local pass=()
     for a in "$@"; do
         case "$a" in
             --interactive) yes=() ;;
+            --yes|-y) yes=(--yes) ;;
             *) pass+=("$a") ;;
         esac
     done

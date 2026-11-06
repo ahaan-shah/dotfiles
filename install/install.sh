@@ -15,11 +15,16 @@
 #   ./install.sh --skip virt     skip a phase
 #   ./install.sh --list          list phases
 #   ./install.sh --with-heavy    also the one 18 GiB package (55-aur-heavy.txt)
+#   ./install.sh --no-aur        answer one of the three questions below in advance
+#                (also --with-aur, --no-webapps, --with-webapps, --no-extras, --with-extras)
 #
-# Package selection is not interactive. Every manifest in packages/ is
-# installed, because a half-answered prompt produces a machine that is subtly
-# not this one. A package that cannot be installed costs only itself: the run
-# carries on, names it at the end and exits non-zero.
+# What the desktop needs is always installed. Three optional sets are each one
+# y/n, asked together right after preflight so the rest of the run needs nobody:
+# the AUR packages, the web apps, and the extras (40-apps.txt, VMs, Flatpak, and
+# the tools phase's downloads). --yes takes the last answer, or yes on a first run.
+# A "no" removes nothing that is already installed. A package that cannot be
+# installed costs only itself: the run carries on, names it at the end and exits
+# non-zero.
 #
 # NVIDIA is set up only where the machine actually has an NVIDIA discrete GPU,
 # and only in one shape: the iGPU draws the desktop, the dGPU renders nothing
@@ -38,6 +43,10 @@ NO_ROOT=0
 ONLY=""
 SKIP=""
 WITH_HEAVY=0
+ASK_SETS=0
+WANT_AUR=""
+WANT_WEBAPPS=""
+WANT_EXTRAS=""
 PKG_FAILED=()
 MISSING_APPS=()
 LOGFILE="/tmp/hyprahaan-install-$(date +%Y%m%d-%H%M%S).log"
@@ -61,6 +70,13 @@ while [ $# -gt 0 ]; do
         --yes|-y)       ASSUME_YES=1 ;;
         --no-root)      NO_ROOT=1 ;;
         --with-heavy)   WITH_HEAVY=1 ;;
+        --ask-sets)     ASK_SETS=1 ;;   # ask the three questions despite --yes (bootstrap.sh)
+        --with-aur)     WANT_AUR=1 ;;
+        --no-aur)       WANT_AUR=0 ;;
+        --with-webapps) WANT_WEBAPPS=1 ;;
+        --no-webapps)   WANT_WEBAPPS=0 ;;
+        --with-extras)  WANT_EXTRAS=1 ;;
+        --no-extras)    WANT_EXTRAS=0 ;;
         --only)         ONLY="${2:-}"; shift ;;
         --skip)         SKIP="${SKIP} ${2:-}"; shift ;;
         --list)         echo "$ALL_PHASES" | tr ' ' '\n'; exit 0 ;;
@@ -75,6 +91,107 @@ want_phase() {
     [ -n "$ONLY" ] && { [ "$ONLY" = "$p" ]; return; }
     case " $SKIP " in *" $p "*) return 1 ;; esac
     return 0
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# THE OPTIONAL SETS
+# ═══════════════════════════════════════════════════════════════════════
+# Answers are kept here, not only in variables, because `--only verify` is a separate
+# run and has to know that a missing package was declined rather than lost. It lives
+# in ~/.local/state so it stays out of ~/.config, and therefore out of the mirror.
+CHOICES_FILE="$HOME/.local/state/hyprahaan/install-choices"
+
+saved_choice() {  # saved_choice <aur|webapps|extras> -> y, n or nothing
+    [ -r "$CHOICES_FILE" ] || return 0
+    sed -n "s/^$1=//p" "$CHOICES_FILE"
+}
+
+# Web apps are the launchers that are only a URL: `chromium --app=...`. Keyed on the
+# Exec line rather than a list of names, because that directory also holds launchers
+# that are not web apps at all (Viewfinder, claude-code-url-handler, Ahaan's builds)
+# and webapp-install.sh adds new ones under whatever name they were given.
+webapp_desktops() {
+    local d
+    for d in "$DOTDIR"/webapps/applications/*.desktop; do
+        [ -f "$d" ] || continue
+        [ "$(grep -c -- '^Exec=.*--app=' "$d")" -gt 0 ] && basename "$d"
+    done
+    return 0
+}
+
+# Manifest names with the "aur:" prefix and comments gone, on one line.
+manifest_names() {
+    local f k p out=""
+    for f in "$@"; do
+        while read -r k p; do out="$out $p"; done < <(read_manifest "$SCRIPT_DIR/packages/$f.txt")
+    done
+    printf '%s' "${out# }"
+}
+
+# choose_set <aur|webapps|extras> <asked?> <question> <what it covers>
+#
+# Precedence: a flag, then an answer typed now, then the saved answer, then yes. Yes
+# is the default everywhere, Enter and --yes alike, because it is the desktop as it
+# is set up; no is the thing somebody has to mean.
+#
+# Not asked with no terminal, for the reason maybe_reboot spells out: `[ -r /dev/tty ]`
+# passes where opening it fails, so the test opens it.
+choose_set() {
+    local key="$1" asked="$2" q="$3" what="$4" var saved def
+    var="WANT_${key^^}"
+    saved="$(saved_choice "$key")"
+    def="${saved:-y}"
+    if [ -n "${!var}" ]; then
+        CHOICE_DECIDED=1
+    elif [ "$asked" = 1 ] && { [ "$ASSUME_YES" = 0 ] || [ "$ASK_SETS" = 1 ]; } \
+            && { : </dev/tty; } 2>/dev/null; then
+        printf '\n'
+        printf '%s\n' "$what" | fold -s -w 74 | sed 's/^/    /'
+        local ASSUME_YES=0
+        if ask_yn "$q" "$def"; then printf -v "$var" 1; else printf -v "$var" 0; fi
+        CHOICE_DECIDED=1
+    elif [ "$def" = n ]; then
+        printf -v "$var" 0
+    else
+        printf -v "$var" 1
+    fi
+    _log_raw "SET   $key -> ${!var}"
+}
+
+# The questions that a phase in this run would act on. `--only theming` asks nothing,
+# and neither does `--only verify`, which reads the saved answers: a machine that
+# has none was installed before these questions existed and is expected to have
+# everything, which is what yes checks for.
+choose_optional_sets() {
+    local a_aur=0 a_web=0 a_ext=0 webs="" d names=""
+    want_phase packages && { a_aur=1; a_ext=1; }
+    want_phase tools && { a_web=1; a_ext=1; }
+    want_phase configs && a_web=1
+    CHOICE_DECIDED=0
+    for d in $(webapp_desktops); do
+        names="$(sed -n 's/^Name=//p' "$DOTDIR/webapps/applications/$d" | head -1)"
+        webs="$webs${webs:+, }${names:-${d%.desktop}}"
+    done
+    if [ $((a_aur + a_web + a_ext)) -gt 0 ] && { [ "$ASSUME_YES" = 0 ] || [ "$ASK_SETS" = 1 ]; }; then
+        printf '\n%sOptional software%s  One answer covers each whole set. Everything the\n' "$C_B" "$C_RST"
+        printf 'desktop needs is installed either way, and a "no" removes nothing.\n'
+    fi
+    choose_set aur "$a_aur" "Install the AUR packages?" \
+        "AUR, built from source, the slow part: $(manifest_names 50-aur). python-pywal is AUR too, but the colours need it, so it is always built."
+    choose_set webapps "$a_web" "Install the web apps?" \
+        "Web apps, launchers that open a site in its own window: ${webs:-none in this checkout}."
+    choose_set extras "$a_ext" "Install the extras?" \
+        "Extras, from the official repos: $(manifest_names 40-apps). Virtual machines: $(manifest_names 60-virt). From Flathub and the web: $(manifest_names 70-flatpak), kaggle, TinyTeX, herdr."
+
+    if [ "$CHOICE_DECIDED" = 1 ] && [ "$DRY_RUN" = 0 ]; then
+        mkdir -p "$(dirname "$CHOICES_FILE")"
+        { printf '# Your answers from install.sh, used as the defaults on the next run.\n'
+          printf 'aur=%s\nwebapps=%s\nextras=%s\n' \
+                 "$( [ "$WANT_AUR" = 1 ] && echo y || echo n)" \
+                 "$( [ "$WANT_WEBAPPS" = 1 ] && echo y || echo n)" \
+                 "$( [ "$WANT_EXTRAS" = 1 ] && echo y || echo n)"
+        } >"$CHOICES_FILE"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -206,13 +323,16 @@ install_gpu_userspace() {
             0x1002) vendor="amd";   break ;;
         esac
     done
+    # The lib32 half is here, BEFORE the manifests, because steam needs a
+    # lib32-vulkan-driver and pacman --noconfirm resolves a virtual package to
+    # the first provider it lists, not the one matching this GPU. Steam is the
+    # only reason for it, so it follows the extras answer.
+    local l=""
+    [ "$WANT_EXTRAS" != 1 ] || l=1
     case "$vendor" in
-        # The lib32 half is here, BEFORE the manifests, because steam needs a
-        # lib32-vulkan-driver and pacman --noconfirm resolves a virtual package
-        # to the first provider it lists, not the one matching this GPU.
-        intel) info "Intel graphics detected"; pac_install mesa vulkan-intel intel-media-driver libva-utils lib32-mesa lib32-vulkan-intel ;;
-        amd)   info "AMD graphics detected";   pac_install mesa vulkan-radeon libva-mesa-driver libva-utils lib32-mesa lib32-vulkan-radeon ;;
-        *)     warn "no Intel/AMD integrated GPU detected — software Vulkan"; pac_install mesa vulkan-swrast lib32-mesa lib32-vulkan-swrast ;;
+        intel) info "Intel graphics detected"; pac_install mesa vulkan-intel intel-media-driver libva-utils ${l:+lib32-mesa lib32-vulkan-intel} ;;
+        amd)   info "AMD graphics detected";   pac_install mesa vulkan-radeon libva-mesa-driver libva-utils ${l:+lib32-mesa lib32-vulkan-radeon} ;;
+        *)     warn "no Intel/AMD integrated GPU detected — software Vulkan"; pac_install mesa vulkan-swrast ${l:+lib32-mesa lib32-vulkan-swrast} ;;
     esac
     # CPU microcode, matched to the actual CPU
     if grep -qi 'GenuineIntel' /proc/cpuinfo; then pac_install intel-ucode
@@ -322,10 +442,14 @@ phase_packages() {
 
     install_gpu_userspace
 
-    # Core, fonts and applications go on every machine.
+    # Core and fonts go on every machine.
     install_manifest "$SCRIPT_DIR/packages/10-core.txt" \
-                     "$SCRIPT_DIR/packages/30-fonts.txt" \
-                     "$SCRIPT_DIR/packages/40-apps.txt"
+                     "$SCRIPT_DIR/packages/30-fonts.txt"
+    if [ "$WANT_EXTRAS" = 1 ]; then
+        install_manifest "$SCRIPT_DIR/packages/40-apps.txt"
+    else
+        skip "extras declined — 40-apps.txt skipped"
+    fi
 
     # Laptop-only: the battery panel and the fingerprint reader have nothing
     # to do on a desktop.
@@ -336,7 +460,9 @@ phase_packages() {
     fi
 
     # Virtualisation, only where the CPU can actually do it.
-    if [ "${HW_KVM:-0}" = 1 ]; then
+    if [ "$WANT_EXTRAS" != 1 ]; then
+        skip "extras declined — virtualisation packages skipped"
+    elif [ "${HW_KVM:-0}" = 1 ]; then
         install_manifest "$SCRIPT_DIR/packages/60-virt.txt"
     else
         skip "no VT-x/AMD-V support — virtualisation packages skipped"
@@ -346,7 +472,11 @@ phase_packages() {
 
     # AUR last: it is the slow, fallible part, so everything that can succeed
     # has already succeeded by the time a build can fail.
-    install_manifest "$SCRIPT_DIR/packages/50-aur.txt"
+    if [ "$WANT_AUR" = 1 ]; then
+        install_manifest "$SCRIPT_DIR/packages/50-aur.txt"
+    else
+        skip "AUR packages declined — 50-aur.txt skipped"
+    fi
     if [ "$WITH_HEAVY" = 1 ]; then
         install_manifest "$SCRIPT_DIR/packages/55-aur-heavy.txt"
     else
@@ -433,6 +563,17 @@ phase_configs() {
     # source repo — where the mirror-shaped files do not exist — still gets it.
     deploy_file "$DOTDIR/mimeapps.list" "$HOME/.config/mimeapps.list" || \
         deploy_file "$SCRIPT_DIR/templates/mimeapps.list" "$HOME/.config/mimeapps.list" || true
+    # Zen is the default browser in those files and an AUR package, so with the AUR
+    # declined (or Zen's build failed) every link would fall through to whatever
+    # happens to be next. chromium is in 10-core.txt. Checks the program rather than
+    # the answer, so a machine that already has Zen keeps it.
+    if [ ! -f /usr/share/applications/zen.desktop ] && [ "$DRY_RUN" = 0 ]; then
+        [ ! -f "$HOME/.config/mimeapps.list" ] || sed -i 's/\bzen\.desktop/chromium.desktop/g' "$HOME/.config/mimeapps.list"
+        [ ! -f "$HOME/.config/scripts/ui.conf" ] || sed -i \
+            -e 's/^DEFAULT_BROWSER="zen[^"]*"/DEFAULT_BROWSER="chromium"/' \
+            -e 's/^DEFAULT_BROWSER_DESKTOP="zen[^"]*"/DEFAULT_BROWSER_DESKTOP="chromium.desktop"/' \
+            "$HOME/.config/scripts/ui.conf"
+    fi
     # The shell rc files carry ABSOLUTE /home/<user>/ paths in a few aliases —
     # they are hand-written files that live only in the mirror, so nothing has
     # ever expanded $HOME in them. Under a different username those aliases
@@ -464,7 +605,14 @@ phase_configs() {
     # machine's home (a .desktop file cannot expand $HOME), so every one of them
     # would show a blank icon under a different username. Rewrite them to this
     # user's home after copying.
-    if deploy_dir "$DOTDIR/webapps/applications" "$HOME/.local/share/applications"; then
+    # Declined web apps are left out of the copy here, and their dock pins in
+    # deploy_dock_pins. The rest of that directory is not web apps and still goes.
+    local webapp_excl=() w
+    if [ "$WANT_WEBAPPS" != 1 ]; then
+        for w in $(webapp_desktops); do webapp_excl+=(--exclude "$w"); done
+        skip "web apps declined — their launchers and icons are left out"
+    fi
+    if deploy_dir "$DOTDIR/webapps/applications" "$HOME/.local/share/applications" ${webapp_excl[@]+"${webapp_excl[@]}"}; then
         if [ "$DRY_RUN" = 0 ]; then
             # A generated cache must never be copied in from the repo — it is
             # rebuilt below and a stale one hides newly added entries.
@@ -477,7 +625,10 @@ phase_configs() {
         fi
         ok "webapp launchers repointed at $HOME"
     fi
-    deploy_dir "$DOTDIR/webapps/icons" "$HOME/.local/share/icons/webapps" || true
+    # Nothing but a web app uses these (the other launchers name themed icons).
+    if [ "$WANT_WEBAPPS" = 1 ]; then
+        deploy_dir "$DOTDIR/webapps/icons" "$HOME/.local/share/icons/webapps" || true
+    fi
 
     # neofetch's config points image_source at a wallpaper by absolute path.
     # Same class as the rc files and the .desktop entries above: it is a
@@ -938,22 +1089,28 @@ try_tool() {
 }
 
 # The dock's pins, from the mirror's state/ (a path-scrubbed copy). Absolute
-# icon and command paths are rewritten to this home, and a pin whose command is
-# one of the programs that cannot be installed here is dropped, for the same
-# reason as the launcher rows below: a dock button that does nothing. An existing
-# pins file means a machine already set up, and it is left alone.
+# icon and command paths are rewritten to this home, and a pin whose program is
+# not on this machine is dropped, for the same reason as the launcher rows below:
+# a dock button that does nothing. That was only Ahaan's own builds until the sets
+# became optional; now it is also Zen, VSCodium and the rest of a declined set, so
+# it asks PATH. A web app's program is chromium, which is always there, so those
+# go by the answer. An existing pins file means a machine already set up, and it
+# is left alone.
 deploy_dock_pins() {
     local src="$DOTDIR/state/dock-pins.json" dst="$HOME/.local/state/hyprahaan/dock-pins.json"
     [ -f "$src" ] || return 0
     [ ! -e "$dst" ] || { skip "dock pins already set on this machine"; return 0; }
     mkdir -p "$(dirname "$dst")"
-    python3 - "$src" "$dst" "$HOME" <<'PY' || warn "dock pins not carried over"
-import json, os, re, sys
-src, dst, home = sys.argv[1:4]
+    python3 - "$src" "$dst" "$HOME" "$WANT_WEBAPPS" <<'PY' || warn "dock pins not carried over"
+import json, os, re, shlex, shutil, sys
+src, dst, home, webapps = sys.argv[1:5]
 text = re.sub(r"/home/[A-Za-z0-9_.-]+/", home + "/", open(src).read())
 d = json.loads(text)
-d["pins"] = [p for p in d["pins"]
-             if not p["command"].startswith(home) or os.access(p["command"].split()[0], os.X_OK)]
+def keep(p):
+    if webapps != "1" and "--app=" in p["command"]:
+        return False
+    return shutil.which(shlex.split(p["command"])[0]) is not None
+d["pins"] = [p for p in d["pins"] if keep(p)]
 json.dump(d, open(dst, "w"), indent=2)
 PY
     ok "dock pins carried over"
@@ -972,6 +1129,11 @@ phase_tools() {
         try_tool "Claude Code CLI" "curl -fsSL https://claude.ai/install.sh | bash"
     fi
 
+    # Everything from here to the launcher sweep is the extras answer. Claude Code,
+    # above, is not: EVE has nothing behind her without it.
+    if [ "$WANT_EXTRAS" != 1 ]; then
+        skip "extras declined — Flathub apps, kaggle, TinyTeX and herdr skipped"
+    else
     if have flatpak; then
         run sudo flatpak remote-add --if-not-exists --system \
             flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
@@ -999,6 +1161,7 @@ phase_tools() {
     else
         try_tool "herdr" "curl -fsSL https://herdr.dev/install.sh | sh"
     fi
+    fi
 
     # Launcher entries that travelled without their program. wwrite, magpie,
     # opentern, spotsie and herdr-app are built from Ahaan's own repos and are
@@ -1006,6 +1169,11 @@ phase_tools() {
     # does nothing when clicked. Removed from THIS machine's list, never from
     # the mirror, and only when its target really is absent, so a re-run on a
     # machine that has them changes nothing. Named at the end of the run.
+    #
+    # A declined set does the same thing to launchers that name a program on PATH:
+    # Viewfinder needs steam and youtube needs brave. Those are removed only if the
+    # mirror shipped them, because anything else in that directory is this machine's
+    # own, and a launcher for a program uninstalled last year is not ours to delete.
     MISSING_APPS=()
     if [ "$DRY_RUN" = 0 ]; then
         local d x
@@ -1015,7 +1183,7 @@ phase_tools() {
             x="$(sed -n 's/^Exec=//p' "$d" | head -1 | awk '{print $1}' | tr -d '"')"
             case "$x" in
                 "$HOME"/*) [ -x "$x" ] && continue ;;
-                *) continue ;;
+                *) { [ -f "$DOTDIR/webapps/applications/$(basename "$d")" ] && ! have "$x"; } || continue ;;
             esac
             MISSING_APPS+=("$(basename "$d" .desktop)")
             rm -f "$d"
@@ -2632,8 +2800,11 @@ phase_verify() {
     # ── every package the manifests name ───────────────────────────────
     # pacman -Q rather than PKG_FAILED, so this also holds for `--only verify`
     # and for a package removed since. Virtual names are found by -Qq too.
-    local pf pmiss="" pm k
-    for pf in 10-core 30-fonts 40-apps 50-aur; do
+    # A set that was declined is not missing.
+    local pf pmiss="" pm k pfs="10-core 30-fonts"
+    [ "$WANT_EXTRAS" != 1 ] || pfs="$pfs 40-apps"
+    [ "$WANT_AUR" != 1 ] || pfs="$pfs 50-aur"
+    for pf in $pfs; do
         while read -r k pm; do
             pacman -Qq "$pm" >/dev/null 2>&1 || pacman -Qqs "^$pm\$" >/dev/null 2>&1 || pmiss="$pmiss $pm"
         done < <(read_manifest "$SCRIPT_DIR/packages/$pf.txt")
@@ -2641,7 +2812,7 @@ phase_verify() {
     if [ -n "$pmiss" ]; then
         bad "packages missing:$pmiss"
     else
-        chk "every package in the manifests is installed"
+        chk "every package in the manifests is installed ($pfs)"
     fi
 
     printf '\n'
@@ -2773,7 +2944,12 @@ main() {
     fi
 
     local p
-    for p in $ALL_PHASES; do run_phase "$p"; done
+    # The questions go straight after preflight, where the hardware report and the
+    # sudo prompt have just been, so that the hour after them needs nobody.
+    for p in $ALL_PHASES; do
+        run_phase "$p"
+        [ "$p" != preflight ] || choose_optional_sets
+    done
 
     phase_close
     printf '\n%s══ Done in %s ══%s\n' "$C_B$C_GRN" "$(total_elapsed)" "$C_RST"
@@ -2795,7 +2971,7 @@ main() {
   Full log: $LOGFILE
 NEXT
     if [ "${#MISSING_APPS[@]}" -gt 0 ]; then
-        printf '\n  %sNot on this machine%s (your own builds, in no package or mirror; launcher rows removed):\n    %s\n' \
+        printf '\n  %sNot on this machine%s (your own builds, or in a set you declined; launcher rows removed):\n    %s\n' \
                "$C_YLW" "$C_RST" "${MISSING_APPS[*]}"
     fi
     if [ "${#FAILED_PHASES[@]}" -gt 0 ]; then

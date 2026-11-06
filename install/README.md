@@ -9,8 +9,9 @@ network option), reboot, log in on the TTY as that user, and run one line:
 curl -fsSL https://raw.githubusercontent.com/ahaan-shah/dotfiles/main/install/bootstrap.sh | bash
 ```
 
-It asks for the sudo password once and needs nothing else from you. Then reboot
-and log in at the greeter. About an hour, most of it AUR builds; ~37 GB on disk.
+It asks for the sudo password once and three y/n questions, then needs nothing else
+from you. Then reboot and log in at the greeter. With every set: about an hour, most
+of it AUR builds, and ~37 GB on disk.
 
 What only you can do afterwards, because it is yours and does not travel:
 
@@ -22,7 +23,8 @@ What only you can do afterwards, because it is yours and does not travel:
 | `magpie`, `opentern`, `spotsie`, `wwrite`, `herdr-app` | Built from your own repos, in no package. Their launcher rows and dock pins are dropped until they exist, and the run names them at the end |
 
 `--with-heavy` adds `freesurfer-bin` (18 GiB): `... | bash -s -- --with-heavy`.
-`--interactive` asks at each decision instead of taking the default.
+`--interactive` asks at each decision instead of taking the default. `--yes` asks
+nothing at all and answers yes to all three sets.
 
 The mirror has to be published (`bkpdots`, then push) for a new machine to get
 the current desktop: the one line clones whatever is on GitHub.
@@ -35,6 +37,7 @@ the current desktop: the one line clones whatever is on GitHub.
 ./install.sh --only hardware # re-run one phase
 ./install.sh --skip system   # skip one phase
 ./install.sh --yes           # no prompts, take every default
+./install.sh --no-aur        # answer a set in advance (see Packages)
 ```
 
 `--dry-run` is exhaustive: every package, file copy, symlink, `sudo` call and
@@ -45,11 +48,11 @@ the current desktop: the one line clones whatever is on GitHub.
 | Phase | |
 |---|---|
 | `preflight` | Arch check, network check, hardware detection report, confirm |
-| `packages` | Every manifest in `packages/`, GPU userspace matched to the actual vendor, then the AUR packages (bootstrapping `yay` first). One that fails costs only itself; it is named at the end |
+| `packages` | Core and fonts, whichever optional sets you said yes to, GPU userspace matched to the actual vendor, then the AUR packages (bootstrapping `yay` first). One that fails costs only itself; it is named at the end |
 | `configs` | Deploys config directories into `~/.config`, backing up anything it overwrites. Marks the launchers **and the extensionless agent collectors** executable |
 | `hardware` | Detects this machine and writes `~/.config/scripts/hardware.env` |
 | `nvidia` | Only where there is an NVIDIA dGPU: PRIME offload, or a documented refusal |
-| `tools` | What pacman does not carry: the Claude Code CLI, the Flathub apps, `kaggle`, TinyTeX, herdr |
+| `tools` | What pacman does not carry: the Claude Code CLI, then with the extras the Flathub apps, `kaggle`, TinyTeX, herdr |
 | `eve` | Deploys `jarvis/` to `~/.config/jarvis`, makes `~/EVE`, runs the policy selftest |
 | `apps` | voxtype model + config, Spotify Wayland flag, battery cap preference, login shell |
 | `usersystemd` | User units, enables the battery watchdog timer and voxtype |
@@ -101,20 +104,36 @@ built by this installer back to the one it was authored on.
 
 ## Packages
 
-There is no interactive package picker. Answering "no" to a group produced a
-machine that was subtly not this one, which defeats the point, so every
-manifest in `packages/` is installed:
+What the desktop needs is always installed. Three optional sets are one y/n each,
+asked together right after preflight so the rest of the run needs nobody:
+
+| Question | Covers | If you say no |
+|---|---|---|
+| AUR packages | `50-aur.txt` | Links open in chromium instead of Zen, the cursor is the fallback theme, and voice typing's bind does nothing |
+| Web apps | The `chromium --app=` launchers and their icons | Nothing else changes; Settings can still add one |
+| Extras | `40-apps.txt`, `60-virt.txt`, `70-flatpak.txt`, `kaggle`, TinyTeX, herdr, Steam's 32-bit drivers | No man pages or EVE's `docs` tool, no VMs, no printing, no Flatpak |
+
+Enter and `--yes` both mean yes on a first run. Answers are kept in
+`~/.local/state/hyprahaan/install-choices`, where they become the defaults on the next
+run and tell `verify` that a declined package is not a missing one. Saying yes later
+installs the set. Saying no later removes nothing: that is `pacman -R`.
+
+Each answer can be given in advance with `--with-aur`/`--no-aur`,
+`--with-webapps`/`--no-webapps` or `--with-extras`/`--no-extras`. A dock pin or launcher
+whose program ended up absent is dropped, and the launchers are named at the end.
+The dock's pins are only written once, so a set you say yes to later gets its launchers
+but not its pins; pin those from the dock.
 
 | Manifest | |
 |---|---|
-| `10-core.txt` | The compositor, the Quickshell apps' runtime deps, the shell |
+| `10-core.txt` | The compositor, the Quickshell apps' runtime deps, the shell, and what binds, bar buttons and default openers launch |
 | `20-laptop.txt` | Battery, fingerprint, zram — installed only when a battery exists |
 | `30-fonts.txt` | Every font this machine has |
-| `40-apps.txt` | The applications. Rebuilt from `pacman -Qqen` on 2026-11-05 |
-| `50-aur.txt` | The AUR set, browsers included, built one at a time |
+| `40-apps.txt` | **Extras.** The applications, man pages and tools nothing depends on |
+| `50-aur.txt` | **AUR.** Browsers included, built one at a time |
 | `55-aur-heavy.txt` | `freesurfer-bin`, only with `--with-heavy` |
-| `60-virt.txt` | QEMU/libvirt — installed only when the CPU reports VT-x/AMD-V |
-| `70-flatpak.txt` | Flathub application ids, for the `tools` phase |
+| `60-virt.txt` | **Extras.** QEMU/libvirt, and only when the CPU reports VT-x/AMD-V |
+| `70-flatpak.txt` | **Extras.** Flathub application ids, for the `tools` phase |
 | `90-nvidia.txt` | `nvidia-open`, `nvidia-utils`, `nvidia-prime` — only when the `nvidia` phase decides the machine fits |
 
 Install something new here and it is not on the next machine until it is in one

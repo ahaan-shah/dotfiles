@@ -36,32 +36,55 @@ QtObject {
     readonly property string dir:
         (Quickshell.env("XDG_STATE_HOME") || root._home + "/.local/state") + "/hyprahaan"
 
-    // Fired after every close_write / moved_to / create in the directory.
+    // Fired shortly after any close_write / moved_to / create in the directory.
     signal changed()
 
-    // mkdir -p in the command rather than at startup: the directory does not
-    // exist on a fresh machine until something first writes there, and
-    // inotifywait on a missing path exits immediately, which would spin the
-    // restart timer below for the life of the session.
+    // ── One long-lived watcher, not one per event ─────────────────────────
+    // This used to be `inotifywait` without -m: exit on the first event, re-read,
+    // re-arm 300 ms later. Every writer here does temp file then `mv`, so the
+    // FIRST event of every write is the temp file's create, and the event that
+    // carries the new contents arrives inside the dead window. Consumers re-read
+    // the old value and nothing ever told them again. That was the wallpaper that
+    // needed choosing twice (Ahaan, 2026-11-06; "often"): the second pick found
+    // the path the first had already written. It also left dune on screen under
+    // colours pywal had derived from frequency.png, since palette.sh reads the
+    // file directly and the shell had not.
+    //
+    // -m keeps one watch armed for the shell's life, so there is no window. `exec`
+    // makes the Process's child the inotifywait itself, not a bash holding it, so
+    // stopping the Process cannot orphan it. mkdir -p stays in the command: on a
+    // fresh machine the directory may not exist yet and inotifywait would exit at
+    // once, spinning the restart timer below.
     property var _watchProc: Process {
         id: watchProc
         command: ["bash", "-c",
             "mkdir -p '" + root.dir + "'; " +
-            "inotifywait -e close_write,moved_to,create --quiet '" + root.dir + "' 2>/dev/null"]
+            "exec inotifywait -m -e close_write,moved_to,create --quiet '" + root.dir + "' 2>/dev/null"]
         running: false
+        stdout: SplitParser { onRead: debounce.restart() }
     }
 
+    // One write is three events (create, close_write, moved_to), and consumers
+    // re-read a file each time, so a burst becomes one signal. Restarted on each
+    // event, so it fires after the LAST: a read can no longer land before the mv.
+    property var _debounce: Timer {
+        id: debounce
+        interval: 60
+        repeat: false
+        onTriggered: root.changed()
+    }
+
+    // Only reached if inotifywait dies. Anything written while it was down has no
+    // event coming, so the restart re-reads once it is armed again. The beat is
+    // what stops a tight respawn loop if the directory goes away.
     property var _watchConn: Connections {
         target: watchProc
         function onRunningChanged() {
-            if (watchProc.running) return
-            root.changed()
-            restartTimer.restart()
+            if (watchProc.running) debounce.restart()
+            else restartTimer.restart()
         }
     }
 
-    // inotifywait exits after one event, so the watch is re-armed each time. The
-    // beat is what stops a tight respawn loop if the directory goes away.
     property var _restartTimer: Timer {
         id: restartTimer
         interval: 300

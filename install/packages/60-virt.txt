@@ -1,7 +1,8 @@
 # Virtual machines — QEMU/KVM through libvirt, driven by virt-manager or by
 # vm-create.sh.
 #
-# Installed only when the CPU actually reports virtualisation support; the
+# Part of the extras answer (40-apps.txt) and installed only when the CPU actually
+# reports virtualisation support; the `virt` phase skips itself with no virsh. The
 # `virt` phase then sets the qemu user/group, enables the modular libvirt
 # daemons, marks the default NAT network autostart, adds an ISO pool with the
 # ACL that lets the qemu user reach it, and installs the osinfo entries

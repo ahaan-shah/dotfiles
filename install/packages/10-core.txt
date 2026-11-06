@@ -149,14 +149,6 @@ aur:python-pywal          # AUR, NOT a repo package — it was declared here as
                           #   install_manifest defers any aur: entry until it
                           #   has bootstrapped yay, so the prefix is the whole
                           #   fix. The whole colour scheme
-aur:python-pywalfox       # AUR as well, same failure, same fix.
-                          #   finder/apply-wallpaper.sh calls `pywalfox update`
-                          #   as one step of the theme fan-out, so Firefox
-                          #   retints with everything else. That script has no
-                          #   `set -e` by design, so a missing pywalfox is not
-                          #   fatal — it prints "command not found" to a stderr
-                          #   nobody reads and the browser just stays on the
-                          #   old palette.
 inotify-tools             # WalColors live theme reload in all three shells
 neovim                    # since 2026-09-20 the installer DEPLOYS a config for
                           #   it (~/.config/nvim, the LazyVim starter pinned by
@@ -180,7 +172,21 @@ gvfs-smb
 papirus-icon-theme        # DockModel.qml points at Papirus-Dark icon paths
 desktop-file-utils        # update-desktop-database, for the webapp .desktop entries
 gtk-update-icon-cache     # icon cache refresh after deploying webapp icons
-chromium                  # the dock's webapp entries are `chromium --app=...`
+chromium                  # the dock's webapp entries are `chromium --app=...`,
+                          #   and the browser when Zen (AUR) was declined
+
+# ── what the desktop opens ────────────────────────────────────────────
+# Moved from 40-apps.txt on 2026-11-06, when that file became optional: each is
+# named by a bind, a bar button or a default opener, so a "no" to the extras would
+# leave a control that does nothing.
+mpv                       # mimeapps.list: every audio/video type
+imv                       # mimeapps.list: every image type
+papers                    # mimeapps.list and ui.conf: application/pdf
+wiremix                   # Bar.qml: the audio panel's mixer button
+bluetui                   # Bar.qml: right-click on Bluetooth, and its panel
+impala                    # Bar.qml: right-click on wifi, and its panel
+nwg-displays              # Settings.qml: the displays row
+playerctl                 # jarvis/broker.py: EVE's music tool
 
 # ── referenced by configs this installer deploys ──────────────────────
 btop                      # F12
