@@ -9,8 +9,10 @@ export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
 export PATH="$HOME/.local/bin:$PATH"
 F=0
 t() { local n="$1"; shift; if timeout 90 bash -c "$*" >/tmp/chk.out 2>&1; then echo "PASS $n"; else echo "FAIL $n :: $(tail -2 /tmp/chk.out | tr '\n' ' ' | cut -c1-150)"; F=$((F+1)); fi; }
-# Checks for an optional set run only if it was accepted. A "no" gets its own checks.
-said() { [ "$(sed -n "s/^$1=//p" ~/.local/state/hyprahaan/install-choices 2>/dev/null)" != n ]; }
+# Checks of an optional list run only if nothing was left out of it, because they
+# name several of its members at once. What was left out gets checked below by name.
+left() { sed -n "s/^exclude_$1=//p" ~/.local/state/hyprahaan/install-choices 2>/dev/null; }
+said() { [ -z "$(left "$1")" ]; }
 t "hyprland: no config errors"      '[ -z "$(hyprctl configerrors | grep -v "no errors")" ]'
 t "hyprland: binds loaded (>=70; luastub counts 79)"   '[ "$(hyprctl binds | grep -c modmask)" -ge 70 ]'
 # Which colours depends on ui.conf's PALETTE at the time of the mirror, so this asks
@@ -28,7 +30,7 @@ t "clipboard: wl-copy round trip"   'printf hi | wl-copy && sleep 0.3 && [ "$(wl
 t "screenshot: grim"                'grim /tmp/s.png && [ -s /tmp/s.png ]'
 t "OCR: tesseract reads the screen" 'magick -size 600x120 xc:white -pointsize 48 -annotate +20+70 "HELLO EVE" /tmp/o.png && tesseract /tmp/o.png - 2>/dev/null | grep -q "HELLO EVE"'
 t "OCR: script deployed+deps"       '[ -x ~/.config/scripts/ocr-region.sh ] && command -v slurp grim tesseract wl-copy'
-if said aur; then
+if ! case " $(left aur) " in *" voxtype-bin "*) true ;; *) false ;; esac; then
 t "voxtype: daemon active"          'systemctl --user is-active voxtype.service'
 t "voxtype: model on disk"          'ls ~/.local/share/voxtype/models/ | grep -q base.en'
 t "voice typing: settings backend"  '~/.config/scripts/voice-typing.sh status'
@@ -41,8 +43,7 @@ t "webapp: chromium --app window"   'hyprctl dispatch "hl.dsp.exec_cmd(\"chromiu
 if said webapps; then
 t "webapps: launchers present"      '[ "$(ls ~/.local/share/applications/*.desktop | wc -l)" -gt 15 ]'
 else
-t "webapps: declined, none deployed" '! grep -l -- "--app=" ~/.local/share/applications/*.desktop'
-t "webapps: declined, no icons"     '[ ! -e ~/.local/share/icons/webapps ]'
+for w in $(left webapps); do t "webapps: $w left out" "[ ! -e ~/.local/share/applications/$w ]"; done
 fi
 t "webapps: icons resolve"          'for d in ~/.local/share/applications/*.desktop; do i=$(sed -n "s/^Icon=//p" "$d" | head -1); case "$i" in /*) [ -e "$i" ] || { echo "$d: $i"; exit 1; } ;; esac; done'
 t "dock: pins carried, no dead ones" 'python3 -c "import json,os;d=json.load(open(os.path.expanduser(\"~/.local/state/hyprahaan/dock-pins.json\")));print(len(d[\"pins\"]));assert len(d[\"pins\"])>=3;import shutil,shlex;assert not [p for p in d[\"pins\"] if not shutil.which(shlex.split(p[\"command\"])[0])]"'
@@ -50,18 +51,26 @@ if said aur; then
 t "default browser resolves"        '[ "$(xdg-settings get default-web-browser 2>/dev/null || xdg-mime query default x-scheme-handler/https)" = zen.desktop ] || xdg-mime query default x-scheme-handler/https | grep -q zen'
 t "zen/brave/codium/rstudio present" 'command -v zen-browser brave codium rstudio'
 else
-t "AUR declined: chromium opens links" 'xdg-mime query default x-scheme-handler/https | grep -q chromium'
-t "AUR declined: nothing of the set" '! command -v zen-browser brave codium rstudio voxtype'
-t "AUR declined: pywal still built" 'command -v wal'
+case " $(left aur) " in *" zen-browser-bin "*)
+t "no Zen: chromium opens links" 'xdg-mime query default x-scheme-handler/https | grep -q chromium' ;; esac
 fi
+t "pywal is built whatever was left out" 'command -v wal'
+# Everything excluded that is a package, by name. The rest of each list is verify's job.
+for p in $(left aur) $(left extras); do
+    case "$p" in
+        virtual-machines) t "left out: VMs" '! command -v virsh' ;;
+        kaggle|herdr) t "left out: $p" "! command -v $p" ;;
+        TinyTeX) t "left out: TinyTeX" '[ ! -d ~/.TinyTeX ]' ;;
+        org.*) t "left out: $p" "! flatpak list --app --columns=application 2>/dev/null | grep -q $p" ;;
+        *) t "left out: $p" "! pacman -Q $p" ;;
+    esac
+done
 if said extras; then
 t "steam/discord/signal/obs present" 'command -v steam discord signal-desktop obs'
 t "jasp flatpak"                    'flatpak list --app --columns=application | grep -q JASP'
 t "kaggle/herdr/tinytex"            'command -v kaggle herdr pdflatex'
-else
-t "extras declined: none of the set" '! command -v steam discord man virsh flatpak kaggle herdr pdflatex'
-t "extras declined: controls remain" 'for c in mpv imv papers wiremix bluetui impala nwg-displays playerctl; do command -v $c || exit 1; done'
 fi
+t "controls remain whatever was left out" 'for c in mpv imv papers wiremix bluetui impala nwg-displays playerctl; do command -v $c || exit 1; done'
 t "EVE: chat.py runs"               'cd ~/.config/jarvis && python3 -c "import chat" '
 t "EVE: claude CLI"                 'claude --version'
 t "EVE: broker lists its tools"     'cd ~/.config/jarvis && printf %s "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 8 python3 broker.py 2>/dev/null | grep -q search_text'
@@ -70,7 +79,7 @@ t "shell rc: zsh is the login shell" '[ "$(getent passwd $USER | cut -d: -f7)" =
 t "zsh loads clean"                 '[ "$(zsh -ic exit 2>&1 | grep -c "not found")" = 0 ]'
 t "starship prompt"                 'starship prompt >/dev/null'
 t "nvim opens headless"             'timeout 30 nvim --headless "+qa"'
-if said extras; then
+if ! case " $(left extras) " in *" virtual-machines "*) true ;; *) false ;; esac; then
 t "virt: system networks"           'LIBVIRT_DEFAULT_URI=qemu:///system virsh net-list --name | grep -q default'
 t "virt: iso pool"                  'LIBVIRT_DEFAULT_URI=qemu:///system virsh pool-list --name | grep -q iso_files'
 fi

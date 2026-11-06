@@ -9,8 +9,8 @@ network option), reboot, log in on the TTY as that user, and run one line:
 curl -fsSL https://raw.githubusercontent.com/ahaan-shah/dotfiles/main/install/bootstrap.sh | bash
 ```
 
-It asks for the sudo password once and three y/n questions, then needs nothing else
-from you. Then reboot and log in at the greeter. With every set: about an hour, most
+It asks for the sudo password once and shows three lists to exclude from, then needs
+nothing else from you. Then reboot and log in at the greeter. With every set: about an hour, most
 of it AUR builds, and ~37 GB on disk.
 
 What only you can do afterwards, because it is yours and does not travel:
@@ -24,7 +24,7 @@ What only you can do afterwards, because it is yours and does not travel:
 
 `--with-heavy` adds `freesurfer-bin` (18 GiB): `... | bash -s -- --with-heavy`.
 `--interactive` asks at each decision instead of taking the default. `--yes` asks
-nothing at all and answers yes to all three sets.
+nothing at all and excludes nothing.
 
 The mirror has to be published (`bkpdots`, then push) for a new machine to get
 the current desktop: the one line clones whatever is on GitHub.
@@ -37,7 +37,7 @@ the current desktop: the one line clones whatever is on GitHub.
 ./install.sh --only hardware # re-run one phase
 ./install.sh --skip system   # skip one phase
 ./install.sh --yes           # no prompts, take every default
-./install.sh --no-aur        # answer a set in advance (see Packages)
+./install.sh --no-aur        # exclude a whole list in advance (see Packages)
 ```
 
 `--dry-run` is exhaustive: every package, file copy, symlink, `sudo` call and
@@ -48,11 +48,11 @@ the current desktop: the one line clones whatever is on GitHub.
 | Phase | |
 |---|---|
 | `preflight` | Arch check, network check, hardware detection report, confirm |
-| `packages` | Core and fonts, whichever optional sets you said yes to, GPU userspace matched to the actual vendor, then the AUR packages (bootstrapping `yay` first). One that fails costs only itself; it is named at the end |
+| `packages` | Core and fonts, the optional lists minus what you excluded, GPU userspace matched to the actual vendor, then the AUR packages (bootstrapping `yay` first). One that fails costs only itself; it is named at the end |
 | `configs` | Deploys config directories into `~/.config`, backing up anything it overwrites. Marks the launchers **and the extensionless agent collectors** executable |
 | `hardware` | Detects this machine and writes `~/.config/scripts/hardware.env` |
 | `nvidia` | Only where there is an NVIDIA dGPU: PRIME offload, or a documented refusal |
-| `tools` | What pacman does not carry: the Claude Code CLI, then with the extras the Flathub apps, `kaggle`, TinyTeX, herdr |
+| `tools` | What pacman does not carry: the Claude Code CLI, then, unless excluded, the Flathub apps, `kaggle`, TinyTeX, herdr |
 | `eve` | Deploys `jarvis/` to `~/.config/jarvis`, makes `~/EVE`, runs the policy selftest |
 | `apps` | voxtype model + config, Spotify Wayland flag, battery cap preference, login shell |
 | `usersystemd` | User units, enables the battery watchdog timer and voxtype |
@@ -104,25 +104,37 @@ built by this installer back to the one it was authored on.
 
 ## Packages
 
-What the desktop needs is always installed. Three optional sets are one y/n each,
-asked together right after preflight so the rest of the run needs nobody:
+What the desktop needs is always installed. Three optional lists are numbered, right
+after preflight so the rest of the run needs nobody, and you type what to leave out:
 
-| Question | Covers | If you say no |
+```
+AUR packages
+   1. bibata-cursor-theme
+   2. voxtype-bin
+   ...
+  Exclude (numbers like 2 3, a for all, Enter for none): 2 5-7
+```
+
+`2 3`, `2,3` and `2-5` all work, and `a` excludes the whole list. A number that is not
+on the list asks again.
+
+| List | Covers | Without it |
 |---|---|---|
-| AUR packages | `50-aur.txt` | Links open in chromium instead of Zen, the cursor is the fallback theme, and voice typing's bind does nothing |
+| AUR packages | `50-aur.txt` | No Zen: links open in chromium. No Bibata: the fallback cursor. No voxtype: voice typing's bind does nothing |
 | Web apps | The `chromium --app=` launchers and their icons | Nothing else changes; Settings can still add one |
-| Extras | `40-apps.txt`, `60-virt.txt`, `70-flatpak.txt`, `kaggle`, TinyTeX, herdr, Steam's 32-bit drivers | No man pages or EVE's `docs` tool, no VMs, no printing, no Flatpak |
+| Extras | `40-apps.txt`, `virtual-machines` (all of `60-virt.txt`), `70-flatpak.txt`, `kaggle`, TinyTeX, herdr | No `man-db`: no man pages or EVE's `docs` tool. No `steam`: no 32-bit drivers either. No `flatpak` or `uv`: what needs them warns and is skipped |
 
-Enter and `--yes` both mean yes on a first run. Answers are kept in
-`~/.local/state/hyprahaan/install-choices`, where they become the defaults on the next
-run and tell `verify` that a declined package is not a missing one. Saying yes later
-installs the set. Saying no later removes nothing: that is `pacman -R`.
+Answers are kept in `~/.local/state/hyprahaan/install-choices`, which tells `verify` that
+a package left out is not a missing one. They are also the defaults on the next run: what
+was left out is starred, Enter keeps it, and `0` installs everything. Excluding later
+removes nothing: that is `pacman -R`. `--yes` keeps the last answers, or excludes nothing
+on a first run.
 
-Each answer can be given in advance with `--with-aur`/`--no-aur`,
-`--with-webapps`/`--no-webapps` or `--with-extras`/`--no-extras`. A dock pin or launcher
-whose program ended up absent is dropped, and the launchers are named at the end.
-The dock's pins are only written once, so a set you say yes to later gets its launchers
-but not its pins; pin those from the dock.
+`--no-aur`, `--no-webapps` and `--no-extras` exclude a whole list in advance, and
+`--with-aur`, `--with-webapps` and `--with-extras` exclude nothing from it. A dock pin or
+launcher whose program ended up absent is dropped, and the launchers are named at the end.
+The dock's pins are only written once, so something you add later gets its launcher
+but not its pin; pin it from the dock.
 
 | Manifest | |
 |---|---|

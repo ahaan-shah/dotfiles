@@ -1,7 +1,7 @@
 # EXTRAS, from the official repos: nothing the desktop needs in order to work.
-# One y/n at the start of the run covers this file, 60-virt.txt, 70-flatpak.txt
-# and the tools phase's downloads, as a set (Ahaan, 2026-11-06). This reverses the
-# 2026-11-05 "installed unconditionally" rule.
+# The installer numbers this file, 60-virt.txt (as one entry), 70-flatpak.txt and the
+# tools phase's downloads, and you type the ones to leave out (Ahaan, 2026-11-06).
+# This reverses the 2026-11-05 "installed unconditionally" rule.
 #
 # The test for this file: leave a package out and no bind, bar button, default
 # opener or verify check stops working. What fails that test lives in 10-core.txt,

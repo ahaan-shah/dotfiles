@@ -15,14 +15,15 @@
 #   ./install.sh --skip virt     skip a phase
 #   ./install.sh --list          list phases
 #   ./install.sh --with-heavy    also the one 18 GiB package (55-aur-heavy.txt)
-#   ./install.sh --no-aur        answer one of the three questions below in advance
+#   ./install.sh --no-aur        exclude a whole list in advance
 #                (also --with-aur, --no-webapps, --with-webapps, --no-extras, --with-extras)
 #
-# What the desktop needs is always installed. Three optional sets are each one
-# y/n, asked together right after preflight so the rest of the run needs nobody:
-# the AUR packages, the web apps, and the extras (40-apps.txt, VMs, Flatpak, and
-# the tools phase's downloads). --yes takes the last answer, or yes on a first run.
-# A "no" removes nothing that is already installed. A package that cannot be
+# What the desktop needs is always installed. Three optional lists are numbered,
+# and you type the numbers to leave out, or "a" for all of them, right after
+# preflight so the rest of the run needs nobody: the AUR packages, the web apps,
+# and the extras (40-apps.txt, VMs, Flatpak, and the tools phase's downloads).
+# --yes keeps the last answers, or excludes nothing on a first run. Excluding
+# removes nothing that is already installed. A package that cannot be
 # installed costs only itself: the run carries on, names it at the end and exits
 # non-zero.
 #
@@ -44,9 +45,12 @@ ONLY=""
 SKIP=""
 WITH_HEAVY=0
 ASK_SETS=0
-WANT_AUR=""
-WANT_WEBAPPS=""
-WANT_EXTRAS=""
+FLAG_AUR=""        # all|none from --no-aur/--with-aur; empty means ask or reuse
+FLAG_WEBAPPS=""
+FLAG_EXTRAS=""
+EXCL_AUR=""        # what is left out, by name; see choose_optional_sets
+EXCL_WEBAPPS=""
+EXCL_EXTRAS=""
 PKG_FAILED=()
 MISSING_APPS=()
 LOGFILE="/tmp/hyprahaan-install-$(date +%Y%m%d-%H%M%S).log"
@@ -70,13 +74,13 @@ while [ $# -gt 0 ]; do
         --yes|-y)       ASSUME_YES=1 ;;
         --no-root)      NO_ROOT=1 ;;
         --with-heavy)   WITH_HEAVY=1 ;;
-        --ask-sets)     ASK_SETS=1 ;;   # ask the three questions despite --yes (bootstrap.sh)
-        --with-aur)     WANT_AUR=1 ;;
-        --no-aur)       WANT_AUR=0 ;;
-        --with-webapps) WANT_WEBAPPS=1 ;;
-        --no-webapps)   WANT_WEBAPPS=0 ;;
-        --with-extras)  WANT_EXTRAS=1 ;;
-        --no-extras)    WANT_EXTRAS=0 ;;
+        --ask-sets)     ASK_SETS=1 ;;   # show the three lists despite --yes (bootstrap.sh)
+        --with-aur)     FLAG_AUR=none ;;
+        --no-aur)       FLAG_AUR=all ;;
+        --with-webapps) FLAG_WEBAPPS=none ;;
+        --no-webapps)   FLAG_WEBAPPS=all ;;
+        --with-extras)  FLAG_EXTRAS=none ;;
+        --no-extras)    FLAG_EXTRAS=all ;;
         --only)         ONLY="${2:-}"; shift ;;
         --skip)         SKIP="${SKIP} ${2:-}"; shift ;;
         --list)         echo "$ALL_PHASES" | tr ' ' '\n'; exit 0 ;;
@@ -96,14 +100,26 @@ want_phase() {
 # ═══════════════════════════════════════════════════════════════════════
 # THE OPTIONAL SETS
 # ═══════════════════════════════════════════════════════════════════════
+# Three numbered lists, and the numbers typed are what gets left out (Ahaan,
+# 2026-11-06, replacing a y/n per set the same day: all-or-nothing made him choose
+# between Zen and the rest of the AUR). Same shape as system-update.sh's prompt,
+# except that a number that means nothing asks again: there it costs one update,
+# here it silently installs something for an hour.
+#
 # Answers are kept here, not only in variables, because `--only verify` is a separate
-# run and has to know that a missing package was declined rather than lost. It lives
+# run and has to know that a missing package was left out rather than lost. It lives
 # in ~/.local/state so it stays out of ~/.config, and therefore out of the mirror.
 CHOICES_FILE="$HOME/.local/state/hyprahaan/install-choices"
 
-saved_choice() {  # saved_choice <aur|webapps|extras> -> y, n or nothing
+saved_exclusions() {  # saved_exclusions <aur|webapps|extras> -> names, or nothing
     [ -r "$CHOICES_FILE" ] || return 0
-    sed -n "s/^$1=//p" "$CHOICES_FILE"
+    sed -n "s/^exclude_$1=//p" "$CHOICES_FILE"
+}
+
+# Names are unique across the three lists, so one test serves every caller.
+is_excluded() {
+    case " $EXCL_AUR $EXCL_WEBAPPS $EXCL_EXTRAS " in *" $1 "*) return 0 ;; esac
+    return 1
 }
 
 # Web apps are the launchers that are only a URL: `chromium --app=...`. Keyed on the
@@ -119,77 +135,220 @@ webapp_desktops() {
     return 0
 }
 
-# Manifest names with the "aur:" prefix and comments gone, on one line.
+# Manifest names with the "aur:" prefix and comments gone, one per line.
 manifest_names() {
-    local f k p out=""
-    for f in "$@"; do
-        while read -r k p; do out="$out $p"; done < <(read_manifest "$SCRIPT_DIR/packages/$f.txt")
-    done
-    printf '%s' "${out# }"
+    local k p
+    while read -r k p; do printf '%s\n' "$p"; done < <(read_manifest "$SCRIPT_DIR/packages/$1.txt")
 }
 
-# choose_set <aur|webapps|extras> <asked?> <question> <what it covers>
+# ITEMS holds what gets stored and matched, LABELS what is shown. They differ only
+# for web apps, whose file is gmail.desktop and whose name is Gmail.
 #
-# Precedence: a flag, then an answer typed now, then the saved answer, then yes. Yes
-# is the default everywhere, Enter and --yes alike, because it is the desktop as it
-# is set up; no is the thing somebody has to mean.
+# Virtual machines are one entry because the nine packages are one thing: virt-manager
+# without libvirt pulls it back in anyway, and dropping dnsmasq or edk2-ovmf alone
+# leaves VMs that fail later, for a reason that names neither.
+list_items() {
+    ITEMS=(); LABELS=()
+    local d n
+    case "$1" in
+        aur)
+            while read -r n; do ITEMS+=("$n"); LABELS+=("$n"); done < <(manifest_names 50-aur)
+            ;;
+        webapps)
+            while read -r d; do
+                n="$(sed -n 's/^Name=//p' "$DOTDIR/webapps/applications/$d" | sed -n 1p)"
+                ITEMS+=("$d"); LABELS+=("${n:-${d%.desktop}}")
+            done < <(webapp_desktops)
+            ;;
+        extras)
+            while read -r n; do ITEMS+=("$n"); LABELS+=("$n"); done < <(manifest_names 40-apps)
+            if [ "${HW_KVM:-1}" = 1 ]; then
+                ITEMS+=(virtual-machines); LABELS+=("virtual-machines")
+            fi
+            while read -r n; do ITEMS+=("$n"); LABELS+=("$n"); done < <(manifest_names 70-flatpak)
+            for n in kaggle TinyTeX herdr; do ITEMS+=("$n"); LABELS+=("$n"); done
+            ;;
+    esac
+}
+
+# One entry per line while that fits the screen, as the short lists do. The extras
+# run to about 75, and the install starts on a bare TTY with no scrollback, so
+# those go into columns reading downward, each only as wide as its longest name, as
+# `ls` does. Measured at 80x25: equal columns took 41 lines. If it still cannot fit
+# it pages, because numbers that scrolled away are numbers nobody can choose.
+print_numbered() {
+    local n=$# size rows=24 cols=80 per r c i l len total shown=0 line
+    local -a e=("$@") wid
+    size="$(stty size </dev/tty 2>/dev/null || true)"
+    case "$size" in
+        [1-9]*" "[1-9]*) rows="${size% *}"; cols="${size#* }" ;;
+    esac
+    per=1
+    if [ "$n" -gt $((rows - 8)) ]; then
+        for ((per = 8; per > 1; per--)); do
+            r=$(( (n + per - 1) / per ))
+            wid=(); total=2
+            for ((c = 0; c < per; c++)); do
+                len=0
+                for ((i = c * r; i < (c + 1) * r && i < n; i++)); do
+                    if [ "${#e[$i]}" -gt "$len" ]; then len="${#e[$i]}"; fi
+                done
+                wid[c]=$((len + 5))    # "NN. " and a gap
+                total=$((total + wid[c]))
+            done
+            [ "$total" -gt "$cols" ] || break
+        done
+    fi
+    r=$(( (n + per - 1) / per ))
+    if [ "$per" = 1 ]; then wid=(0); fi
+    for ((i = 0; i < r; i++)); do
+        line=""
+        for ((c = 0; c < per; c++)); do
+            l=$((i + c * r))
+            [ "$l" -lt "$n" ] || continue
+            line="$line$(printf '%2d. %-*s' "$((l + 1))" "$((wid[c] > 4 ? wid[c] - 4 : 0))" "${e[$l]}")"
+        done
+        printf '  %s\n' "${line%"${line##*[! ]}"}"
+        shown=$((shown + 1))
+        if [ "$shown" -ge $((rows - 6)) ] && [ "$((i + 1))" -lt "$r" ]; then
+            printf '  %s-- Enter for the rest --%s' "$C_DIM" "$C_RST"
+            read -r _ </dev/tty || true
+            shown=0
+        fi
+    done
+}
+
+# parse_exclusions <answer> <count> — the 0-based positions to leave out, or
+# status 1 with the reason on stderr. "2 3", "2,3" and "2-5" all work.
+parse_exclusions() {
+    local ans="${1//,/ }" n="$2" t lo hi i
+    local -a out=()
+    case "${ans,,}" in
+        a|all)
+            for ((i = 0; i < n; i++)); do printf '%d\n' "$i"; done
+            return 0 ;;
+    esac
+    for t in $ans; do
+        case "$t" in
+            *[!0-9-]*|-*|*-|*-*-*) printf '    "%s" is not a number\n' "$t" >&2; return 1 ;;
+            *-*) lo="${t%-*}"; hi="${t#*-}" ;;
+            *)   lo="$t"; hi="$t" ;;
+        esac
+        # 10# so that a typed 08 is eight, not a bad octal number.
+        lo=$((10#$lo)); hi=$((10#$hi))
+        if [ "$lo" -lt 1 ] || [ "$hi" -gt "$n" ] || [ "$lo" -gt "$hi" ]; then
+            printf '    "%s" is not on this list of %d\n' "$t" "$n" >&2
+            return 1
+        fi
+        for ((i = lo; i <= hi; i++)); do out+=("$((i - 1))"); done
+    done
+    [ "${#out[@]}" -eq 0 ] || printf '%s\n' "${out[@]}"
+}
+
+# choose_set <aur|webapps|extras> <asked?> <title> <note>
+#
+# Precedence: a flag, then what is typed now, then the saved answer, then nothing
+# left out. Nothing left out is the default, Enter and --yes alike, because it is
+# the desktop as it is set up. Enter on a re-run keeps the last answer, so a repair
+# does not quietly bring back what was refused, and 0 is the way back to everything.
 #
 # Not asked with no terminal, for the reason maybe_reboot spells out: `[ -r /dev/tty ]`
 # passes where opening it fails, so the test opens it.
 choose_set() {
-    local key="$1" asked="$2" q="$3" what="$4" var saved def
-    var="WANT_${key^^}"
-    saved="$(saved_choice "$key")"
-    def="${saved:-y}"
-    if [ -n "${!var}" ]; then
+    local key="$1" asked="$2" title="$3" note="$4" var flag saved ans pos i
+    local -a shown result
+    var="EXCL_${key^^}"
+    flag="FLAG_${key^^}"
+    saved="$(saved_exclusions "$key")"
+    list_items "$key"
+
+    if [ "${!flag}" = all ]; then
+        printf -v "$var" '%s' "${ITEMS[*]}"
         CHOICE_DECIDED=1
-    elif [ "$asked" = 1 ] && { [ "$ASSUME_YES" = 0 ] || [ "$ASK_SETS" = 1 ]; } \
+    elif [ "${!flag}" = none ]; then
+        printf -v "$var" '%s' ""
+        CHOICE_DECIDED=1
+    elif [ "$asked" = 1 ] && [ "${#ITEMS[@]}" -gt 0 ] \
+            && { [ "$ASSUME_YES" = 0 ] || [ "$ASK_SETS" = 1 ]; } \
             && { : </dev/tty; } 2>/dev/null; then
-        printf '\n'
-        printf '%s\n' "$what" | fold -s -w 74 | sed 's/^/    /'
-        local ASSUME_YES=0
-        if ask_yn "$q" "$def"; then printf -v "$var" 1; else printf -v "$var" 0; fi
+        shown=()
+        for ((i = 0; i < ${#ITEMS[@]}; i++)); do
+            case " $saved " in
+                *" ${ITEMS[$i]} "*) shown+=("${LABELS[$i]} *") ;;
+                *) shown+=("${LABELS[$i]}") ;;
+            esac
+        done
+        printf '\n%s%s%s\n' "$C_B" "$title" "$C_RST"
+        [ -z "$note" ] || printf '%s\n' "$note" | fold -s -w 76 | sed 's/^/  /'
+        print_numbered "${shown[@]}"
+        if [ -n "$saved" ]; then
+            printf '  %s* left out last time. Enter keeps that; 0 installs everything.%s\n' "$C_DIM" "$C_RST"
+        fi
+        while true; do
+            printf '  %sExclude%s (numbers like 2 3, a for all, Enter for none): ' "$C_B" "$C_RST"
+            read -r ans </dev/tty || ans=""
+            if [ -z "${ans// /}" ]; then
+                printf -v "$var" '%s' "$saved"
+                break
+            fi
+            if [ "$ans" = 0 ]; then
+                printf -v "$var" '%s' ""
+                break
+            fi
+            if pos="$(parse_exclusions "$ans" "${#ITEMS[@]}")"; then
+                result=()
+                for ((i = 0; i < ${#ITEMS[@]}; i++)); do
+                    case $'\n'"$pos"$'\n' in
+                        *$'\n'"$i"$'\n'*) result+=("${ITEMS[$i]}") ;;
+                    esac
+                done
+                printf -v "$var" '%s' "${result[*]}"
+                break
+            fi
+        done
+        if [ -n "${!var}" ]; then
+            ans=""
+            for ((i = 0; i < ${#ITEMS[@]}; i++)); do
+                case " ${!var} " in *" ${ITEMS[$i]} "*) ans="$ans${ans:+, }${LABELS[$i]}" ;; esac
+            done
+            printf '  %sLeaving out: %s%s
+' "$C_DIM" "$ans" "$C_RST"
+        else
+            printf '  %sInstalling all %d.%s\n' "$C_DIM" "${#ITEMS[@]}" "$C_RST"
+        fi
         CHOICE_DECIDED=1
-    elif [ "$def" = n ]; then
-        printf -v "$var" 0
     else
-        printf -v "$var" 1
+        printf -v "$var" '%s' "$saved"
     fi
-    _log_raw "SET   $key -> ${!var}"
+    _log_raw "EXCL  $key -> ${!var:-nothing}"
 }
 
-# The questions that a phase in this run would act on. `--only theming` asks nothing,
+# The lists that a phase in this run would act on. `--only theming` shows nothing,
 # and neither does `--only verify`, which reads the saved answers: a machine that
-# has none was installed before these questions existed and is expected to have
-# everything, which is what yes checks for.
+# has none was installed before these lists existed and is expected to have
+# everything, which is what an empty exclusion checks for.
 choose_optional_sets() {
-    local a_aur=0 a_web=0 a_ext=0 webs="" d names=""
+    local a_aur=0 a_web=0 a_ext=0
     want_phase packages && { a_aur=1; a_ext=1; }
     want_phase tools && { a_web=1; a_ext=1; }
     want_phase configs && a_web=1
     CHOICE_DECIDED=0
-    for d in $(webapp_desktops); do
-        names="$(sed -n 's/^Name=//p' "$DOTDIR/webapps/applications/$d" | head -1)"
-        webs="$webs${webs:+, }${names:-${d%.desktop}}"
-    done
     if [ $((a_aur + a_web + a_ext)) -gt 0 ] && { [ "$ASSUME_YES" = 0 ] || [ "$ASK_SETS" = 1 ]; }; then
-        printf '\n%sOptional software%s  One answer covers each whole set. Everything the\n' "$C_B" "$C_RST"
-        printf 'desktop needs is installed either way, and a "no" removes nothing.\n'
+        printf '\n%sOptional software.%s Type the numbers to leave out. Everything the desktop\n' "$C_B" "$C_RST"
+        printf 'needs is installed either way, and leaving something out removes nothing.\n'
     fi
-    choose_set aur "$a_aur" "Install the AUR packages?" \
-        "AUR, built from source, the slow part: $(manifest_names 50-aur). python-pywal is AUR too, but the colours need it, so it is always built."
-    choose_set webapps "$a_web" "Install the web apps?" \
-        "Web apps, launchers that open a site in its own window: ${webs:-none in this checkout}."
-    choose_set extras "$a_ext" "Install the extras?" \
-        "Extras, from the official repos: $(manifest_names 40-apps). Virtual machines: $(manifest_names 60-virt). From Flathub and the web: $(manifest_names 70-flatpak), kaggle, TinyTeX, herdr."
+    choose_set aur "$a_aur" "AUR packages" \
+        "Built from source, the slow part. python-pywal is AUR too, but the colours need it, so it is always built."
+    choose_set webapps "$a_web" "Web apps" \
+        "Launchers that open a site in its own window."
+    choose_set extras "$a_ext" "Extras" \
+        "From the official repos, then Flathub and the web. Nothing depends on them."
 
     if [ "$CHOICE_DECIDED" = 1 ] && [ "$DRY_RUN" = 0 ]; then
         mkdir -p "$(dirname "$CHOICES_FILE")"
-        { printf '# Your answers from install.sh, used as the defaults on the next run.\n'
-          printf 'aur=%s\nwebapps=%s\nextras=%s\n' \
-                 "$( [ "$WANT_AUR" = 1 ] && echo y || echo n)" \
-                 "$( [ "$WANT_WEBAPPS" = 1 ] && echo y || echo n)" \
-                 "$( [ "$WANT_EXTRAS" = 1 ] && echo y || echo n)"
+        { printf '# What you left out in install.sh, kept as the default for the next run.\n'
+          printf 'exclude_aur=%s\nexclude_webapps=%s\nexclude_extras=%s\n' \
+                 "$EXCL_AUR" "$EXCL_WEBAPPS" "$EXCL_EXTRAS"
         } >"$CHOICES_FILE"
     fi
 }
@@ -326,9 +485,9 @@ install_gpu_userspace() {
     # The lib32 half is here, BEFORE the manifests, because steam needs a
     # lib32-vulkan-driver and pacman --noconfirm resolves a virtual package to
     # the first provider it lists, not the one matching this GPU. Steam is the
-    # only reason for it, so it follows the extras answer.
-    local l=""
-    [ "$WANT_EXTRAS" != 1 ] || l=1
+    # only reason for it, so it goes when steam does.
+    local l=1
+    if is_excluded steam; then l=""; fi
     case "$vendor" in
         intel) info "Intel graphics detected"; pac_install mesa vulkan-intel intel-media-driver libva-utils ${l:+lib32-mesa lib32-vulkan-intel} ;;
         amd)   info "AMD graphics detected";   pac_install mesa vulkan-radeon libva-mesa-driver libva-utils ${l:+lib32-mesa lib32-vulkan-radeon} ;;
@@ -343,13 +502,15 @@ install_gpu_userspace() {
 # alike, in two batches. yay is bootstrapped lazily, only if an AUR entry is
 # actually reached, so a machine that needs no AUR package never builds it.
 install_manifest() {
-    local repo=() aur=() kind pkg f
+    local repo=() aur=() kind pkg f left=0
     for f in "$@"; do
         [ -r "$f" ] || { skip "$(basename "$f"): no such manifest"; continue; }
         while read -r kind pkg; do
+            if is_excluded "$pkg"; then left=$((left + 1)); continue; fi
             if [ "$kind" = aur ]; then aur+=("$pkg"); else repo+=("$pkg"); fi
         done < <(read_manifest "$f")
     done
+    [ "$left" -eq 0 ] || skip "$left left out at your request"
     if [ "${#repo[@]}" -gt 0 ]; then
         info "installing ${#repo[@]} repository packages"
         # One name pacman cannot find aborts the whole transaction before it
@@ -445,11 +606,7 @@ phase_packages() {
     # Core and fonts go on every machine.
     install_manifest "$SCRIPT_DIR/packages/10-core.txt" \
                      "$SCRIPT_DIR/packages/30-fonts.txt"
-    if [ "$WANT_EXTRAS" = 1 ]; then
-        install_manifest "$SCRIPT_DIR/packages/40-apps.txt"
-    else
-        skip "extras declined — 40-apps.txt skipped"
-    fi
+    install_manifest "$SCRIPT_DIR/packages/40-apps.txt"
 
     # Laptop-only: the battery panel and the fingerprint reader have nothing
     # to do on a desktop.
@@ -460,8 +617,8 @@ phase_packages() {
     fi
 
     # Virtualisation, only where the CPU can actually do it.
-    if [ "$WANT_EXTRAS" != 1 ]; then
-        skip "extras declined — virtualisation packages skipped"
+    if is_excluded virtual-machines; then
+        skip "virtual machines left out at your request"
     elif [ "${HW_KVM:-0}" = 1 ]; then
         install_manifest "$SCRIPT_DIR/packages/60-virt.txt"
     else
@@ -472,11 +629,7 @@ phase_packages() {
 
     # AUR last: it is the slow, fallible part, so everything that can succeed
     # has already succeeded by the time a build can fail.
-    if [ "$WANT_AUR" = 1 ]; then
-        install_manifest "$SCRIPT_DIR/packages/50-aur.txt"
-    else
-        skip "AUR packages declined — 50-aur.txt skipped"
-    fi
+    install_manifest "$SCRIPT_DIR/packages/50-aur.txt"
     if [ "$WITH_HEAVY" = 1 ]; then
         install_manifest "$SCRIPT_DIR/packages/55-aur-heavy.txt"
     else
@@ -605,12 +758,18 @@ phase_configs() {
     # machine's home (a .desktop file cannot expand $HOME), so every one of them
     # would show a blank icon under a different username. Rewrite them to this
     # user's home after copying.
-    # Declined web apps are left out of the copy here, and their dock pins in
+    # Excluded web apps are left out of the copy here, and their dock pins in
     # deploy_dock_pins. The rest of that directory is not web apps and still goes.
-    local webapp_excl=() w
-    if [ "$WANT_WEBAPPS" != 1 ]; then
-        for w in $(webapp_desktops); do webapp_excl+=(--exclude "$w"); done
-        skip "web apps declined — their launchers and icons are left out"
+    local webapp_excl=() webapp_kept=0 w
+    for w in $(webapp_desktops); do
+        if is_excluded "$w"; then
+            webapp_excl+=(--exclude "$w")
+        else
+            webapp_kept=$((webapp_kept + 1))
+        fi
+    done
+    if [ "${#webapp_excl[@]}" -gt 0 ]; then
+        skip "$((${#webapp_excl[@]} / 2)) web app(s) left out at your request"
     fi
     if deploy_dir "$DOTDIR/webapps/applications" "$HOME/.local/share/applications" ${webapp_excl[@]+"${webapp_excl[@]}"}; then
         if [ "$DRY_RUN" = 0 ]; then
@@ -625,8 +784,10 @@ phase_configs() {
         fi
         ok "webapp launchers repointed at $HOME"
     fi
-    # Nothing but a web app uses these (the other launchers name themed icons).
-    if [ "$WANT_WEBAPPS" = 1 ]; then
+    # Nothing but a web app uses these (the other launchers name themed icons). All
+    # or none: the files are not named after the launchers, and a spare icon costs
+    # nothing.
+    if [ "$webapp_kept" -gt 0 ]; then
         deploy_dir "$DOTDIR/webapps/icons" "$HOME/.local/share/icons/webapps" || true
     fi
 
@@ -1093,21 +1254,27 @@ try_tool() {
 # not on this machine is dropped, for the same reason as the launcher rows below:
 # a dock button that does nothing. That was only Ahaan's own builds until the sets
 # became optional; now it is also Zen, VSCodium and the rest of a declined set, so
-# it asks PATH. A web app's program is chromium, which is always there, so those
-# go by the answer. An existing pins file means a machine already set up, and it
+# it asks PATH. A web app's program is chromium, which is always there, so an
+# excluded one is matched by its launcher's Exec line. An existing pins file means a machine already set up, and it
 # is left alone.
 deploy_dock_pins() {
     local src="$DOTDIR/state/dock-pins.json" dst="$HOME/.local/state/hyprahaan/dock-pins.json"
     [ -f "$src" ] || return 0
     [ ! -e "$dst" ] || { skip "dock pins already set on this machine"; return 0; }
     mkdir -p "$(dirname "$dst")"
-    python3 - "$src" "$dst" "$HOME" "$WANT_WEBAPPS" <<'PY' || warn "dock pins not carried over"
+    python3 - "$src" "$dst" "$HOME" "$DOTDIR/webapps/applications" "$EXCL_WEBAPPS" <<'PY' || warn "dock pins not carried over"
 import json, os, re, shlex, shutil, sys
-src, dst, home, webapps = sys.argv[1:5]
+src, dst, home, appdir, excluded = sys.argv[1:6]
+gone = set()
+for name in excluded.split():
+    for line in open(os.path.join(appdir, name)):
+        if line.startswith("Exec="):
+            gone.add(re.sub(r"\s+%[a-zA-Z]\s*$", "", line[5:].strip()))
+            break
 text = re.sub(r"/home/[A-Za-z0-9_.-]+/", home + "/", open(src).read())
 d = json.loads(text)
 def keep(p):
-    if webapps != "1" and "--app=" in p["command"]:
+    if p["command"] in gone:
         return False
     return shutil.which(shlex.split(p["command"])[0]) is not None
 d["pins"] = [p for p in d["pins"] if keep(p)]
@@ -1129,38 +1296,48 @@ phase_tools() {
         try_tool "Claude Code CLI" "curl -fsSL https://claude.ai/install.sh | bash"
     fi
 
-    # Everything from here to the launcher sweep is the extras answer. Claude Code,
-    # above, is not: EVE has nothing behind her without it.
-    if [ "$WANT_EXTRAS" != 1 ]; then
-        skip "extras declined — Flathub apps, kaggle, TinyTeX and herdr skipped"
-    else
+    # Everything from here to the launcher sweep is on the extras list. Claude Code,
+    # above, is not: EVE has nothing behind her without it. flatpak and uv are on the
+    # list too, so what needs them can be kept while they are not, and that has to
+    # say so rather than look like it worked.
+    local fp
     if have flatpak; then
         run sudo flatpak remote-add --if-not-exists --system \
             flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
-        local fp
-        while IFS= read -r fp; do
-            fp="${fp%%#*}"; fp="${fp//[[:space:]]/}"
-            [ -n "$fp" ] || continue
-            try_tool "flatpak $fp" "sudo flatpak install -y --noninteractive --system flathub $fp"
-        done <"$SCRIPT_DIR/packages/70-flatpak.txt"
     fi
+    while IFS= read -r fp; do
+        if is_excluded "$fp"; then
+            skip "$fp left out at your request"
+        elif have flatpak; then
+            try_tool "flatpak $fp" "sudo flatpak install -y --noninteractive --system flathub $fp"
+        elif [ "$DRY_RUN" = 0 ]; then
+            warn "$fp needs flatpak, which is not installed"
+        fi
+    done < <(manifest_names 70-flatpak)
 
-    if have uv; then
+    if is_excluded kaggle; then
+        skip "kaggle left out at your request"
+    elif have uv; then
         try_tool "kaggle (uv tool)" "uv tool install --quiet kaggle || uv tool list | grep -c '^kaggle' >/dev/null"
+    elif [ "$DRY_RUN" = 0 ]; then
+        warn "kaggle needs uv, which is not installed"
     fi
 
     # Used by rstudio's PDF output. Its installer links into ~/.local/bin.
-    if [ -d "$HOME/.TinyTeX" ]; then
+    if is_excluded TinyTeX; then
+        skip "TinyTeX left out at your request"
+    elif [ -d "$HOME/.TinyTeX" ]; then
         skip "TinyTeX already installed"
     else
         try_tool "TinyTeX" "curl -fsSL https://yihui.org/tinytex/install-bin-unix.sh | sh >/dev/null"
     fi
 
-    if [ -x "$HOME/.local/bin/herdr" ]; then
+    if is_excluded herdr; then
+        skip "herdr left out at your request"
+    elif [ -x "$HOME/.local/bin/herdr" ]; then
         skip "herdr already installed"
     else
         try_tool "herdr" "curl -fsSL https://herdr.dev/install.sh | sh"
-    fi
     fi
 
     # Launcher entries that travelled without their program. wwrite, magpie,
@@ -1170,7 +1347,7 @@ phase_tools() {
     # the mirror, and only when its target really is absent, so a re-run on a
     # machine that has them changes nothing. Named at the end of the run.
     #
-    # A declined set does the same thing to launchers that name a program on PATH:
+    # Leaving a package out does the same thing to launchers that name a program on PATH:
     # Viewfinder needs steam and youtube needs brave. Those are removed only if the
     # mirror shipped them, because anything else in that directory is this machine's
     # own, and a launcher for a program uninstalled last year is not ours to delete.
@@ -2800,19 +2977,18 @@ phase_verify() {
     # ── every package the manifests name ───────────────────────────────
     # pacman -Q rather than PKG_FAILED, so this also holds for `--only verify`
     # and for a package removed since. Virtual names are found by -Qq too.
-    # A set that was declined is not missing.
-    local pf pmiss="" pm k pfs="10-core 30-fonts"
-    [ "$WANT_EXTRAS" != 1 ] || pfs="$pfs 40-apps"
-    [ "$WANT_AUR" != 1 ] || pfs="$pfs 50-aur"
-    for pf in $pfs; do
+    # What was left out on purpose is not missing.
+    local pf pmiss="" pm k pleft=0
+    for pf in 10-core 30-fonts 40-apps 50-aur; do
         while read -r k pm; do
+            if is_excluded "$pm"; then pleft=$((pleft + 1)); continue; fi
             pacman -Qq "$pm" >/dev/null 2>&1 || pacman -Qqs "^$pm\$" >/dev/null 2>&1 || pmiss="$pmiss $pm"
         done < <(read_manifest "$SCRIPT_DIR/packages/$pf.txt")
     done
     if [ -n "$pmiss" ]; then
         bad "packages missing:$pmiss"
     else
-        chk "every package in the manifests is installed ($pfs)"
+        chk "every package in the manifests is installed ($pleft left out at your request)"
     fi
 
     printf '\n'
@@ -2944,7 +3120,7 @@ main() {
     fi
 
     local p
-    # The questions go straight after preflight, where the hardware report and the
+    # The lists go straight after preflight, where the hardware report and the
     # sudo prompt have just been, so that the hour after them needs nobody.
     for p in $ALL_PHASES; do
         run_phase "$p"
@@ -2971,7 +3147,7 @@ main() {
   Full log: $LOGFILE
 NEXT
     if [ "${#MISSING_APPS[@]}" -gt 0 ]; then
-        printf '\n  %sNot on this machine%s (your own builds, or in a set you declined; launcher rows removed):\n    %s\n' \
+        printf '\n  %sNot on this machine%s (your own builds, or left out; launcher rows removed):\n    %s\n' \
                "$C_YLW" "$C_RST" "${MISSING_APPS[*]}"
     fi
     if [ "${#FAILED_PHASES[@]}" -gt 0 ]; then

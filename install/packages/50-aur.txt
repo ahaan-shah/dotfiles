@@ -2,10 +2,10 @@
 # package that fails to build costs that package and not the rest. Failures are
 # listed at the end of the run and in verify.
 #
-# One y/n at the start of the run covers this whole file (Ahaan, 2026-11-06).
-# Nothing here may be something the desktop cannot run without: on a "no", voxtype's
-# bind does nothing, the cursor is the fallback theme, mimeapps.list is repointed
-# from Zen at chromium, and the dock drops pins for what is absent. The AUR packages
+# The installer numbers this file and you type the ones to leave out (Ahaan,
+# 2026-11-06). Nothing here may be something the desktop cannot run without: without
+# them voxtype's bind does nothing, the cursor is the fallback theme, mimeapps.list is
+# repointed from Zen at chromium, and the dock drops pins for what is absent. The AUR packages
 # that ARE required never come through this file: python-pywal (10-core.txt),
 # asusctl (install_power_backend) and limine-snapper-sync (the snapshots phase).
 # 55-aur-heavy.txt stays behind its own flag.
