@@ -513,6 +513,17 @@ hl.animation({ leaf = "workspaces",         enabled = true, speed = spd(2), bezi
 hl.animation({ leaf = "specialWorkspaceIn", enabled = true, speed = spd(6), bezier = "swirl",  style = "slidefadevert -50%" })
 hl.animation({ leaf = "specialWorkspaceOut",enabled = true, speed = spd(6), bezier = "swirl",  style = "fade" })
 
+-- The Alt-Tab switcher draws its own 160 ms fade, and since 2026-11-06 its surface
+-- is mapped per open (MacShell.qml). A layer surface inherits `fade` on map, so
+-- Hyprland's fade stacked on the Qt one. Measured with both slowed 10x and a frame
+-- burst: the fade-in took about 230 ms instead of 160, which is visible. With this
+-- rule the curve and the frames match the always-mapped switcher.
+--
+-- pcall because a bad call here would abort the parse and silently drop every bind
+-- below. Exercised on 0.57.1; the running 0.56.2 binary contains both names, but
+-- was not tried. If it is ever refused, the only symptom is that slower fade.
+pcall(hl.layer_rule, { match = { namespace = "^macswitcher$" }, no_anim = true })
+
 
 ------------------------------------------------------------------
 -- PLUGINS

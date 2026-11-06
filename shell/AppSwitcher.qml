@@ -13,6 +13,13 @@ Item {
     // Use a custom property — never override `visible` (it's FINAL on Item)
     property bool shown: false
 
+    // Whether the surface should exist: open, or still fading out. See the
+    // window in MacShell.qml for why it does not exist the rest of the time.
+    // Off `panel.opacity` rather than `shown` because the panel fades over
+    // 160 ms, and a window that unmapped on `shown` would cut that fade off.
+    // Same shape as the island tenants' `open || amount > 0.01`.
+    readonly property bool mapped: shown || panel.opacity > 0.001
+
     property int  selectedIndex: 0
     property var  appList: []
     property bool _firstOpen: true

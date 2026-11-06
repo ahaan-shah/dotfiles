@@ -530,6 +530,23 @@ Scope {
 
             anchors { top: true; left: true; right: true; bottom: true }
 
+            // Mapped only while the switcher is up or fading out, as the launcher is.
+            // It sat here for the whole session as a full-screen surface with
+            // nothing on it, and that costs GPU memory `btop` never shows: a
+            // surface's buffers are about 19 MB each at 2880x1620 and it keeps
+            // several. Measured 2026-11-06 in a nested compositor, closed, same
+            // windows open: drm-total 380-447 MB mapped against 342-377 MB, so
+            // 40-70 MB, and one render thread fewer.
+            //
+            // The price: the first visible frame lands about 40 ms later
+            // (20 ms -> 60 ms after the keypress at 60 Hz, 13 opens against
+            // 10), because the surface and its scene graph are built per open.
+            // The hyprland.lua layer rule for this namespace is part of this
+            // change, not separate from it: see there.
+            //
+            // switcher.mapped and not switcher.shown, or closing cuts the fade.
+            visible: switcher.mapped
+
             WlrLayershell.layer:     WlrLayer.Overlay
             WlrLayershell.namespace: "macswitcher"
             WlrLayershell.keyboardFocus: switcher.shown
