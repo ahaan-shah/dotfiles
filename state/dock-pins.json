@@ -98,13 +98,6 @@
       "command": "/home/USER/.local/bin/opentern",
       "windowClass": "opentern",
       "separator": false
-    },
-    {
-      "name": "Herdr",
-      "icon": "herdr-app",
-      "command": "/home/USER/.local/bin/herdr-app",
-      "windowClass": "herdr-app",
-      "separator": false
     }
   ]
 }

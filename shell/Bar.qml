@@ -4590,6 +4590,12 @@ Scope {
                 // Same-kind updates (a reply streaming in, the status words
                 // changing every 1.1 s) swap at once; they are not a new card.
                 property real fade: 1
+                // The card's opacity, and whether the card shown has the strip
+                // for the reply box (JarvisCard.inputRoom). They are out here
+                // because the box is on another surface (jarvisCatch), and it
+                // must go exactly as the card goes.
+                readonly property real cardOpacity: Math.max(0, (ex - 0.35) / 0.65) * fade
+                readonly property bool replyBoxUp: !!shownCard && shownCard.kind === "reply" && !shownCard.streaming
                 property bool fadingOut: false
                 property var pendingCard: null
                 // The ANSWER is the exception (Ahaan, same day, after trying
@@ -4714,7 +4720,7 @@ Scope {
                         anchors.fill: parent
                         r: centerIsland.shownCard
                         maxHeight: centerIsland.maxExtra
-                        opacity: Math.max(0, (centerIsland.ex - 0.35) / 0.65) * centerIsland.fade
+                        opacity: centerIsland.cardOpacity
                     },
                     // A reminder coming due, announced (RemindersState.announce
                     // has why): its text under a bell that wobbles left to
@@ -5942,7 +5948,13 @@ Scope {
     // it back, its right click clears it.
     PanelWindow {
         id: jarvisCatch
-        visible: JarvisState.interactive && !JarvisState.awaitingPassword
+        // Stays mapped past `interactive` until the reply box has faded with
+        // the card. Unmapping at once left Hyprland's layer fade (fadeLayersOut,
+        // inherited from `fade`) running on the last frame, the box whole and
+        // where it was, while the island collapsed out from under it (Ahaan:
+        // "the reply box part sticks around for an instant"). Input goes at
+        // `interactive` (jcFull, jcBoxHit), keys with `jc` (wantsKeys).
+        visible: !JarvisState.awaitingPassword && (JarvisState.interactive || jcReplyBox.opacity > 0.01)
         color: "transparent"
         anchors { top: true; left: true; right: true; bottom: true }
         exclusionMode: ExclusionMode.Ignore
@@ -6008,7 +6020,13 @@ Scope {
             Region { item: jcHole; intersection: Intersection.Subtract }
             Region { item: jcBoxHit; intersection: Intersection.Combine }
         }
-        Item { id: jcFull; anchors.fill: parent }
+        // Nothing while the box finishes fading: the panel is closed, so a
+        // click in those few frames belongs to whatever is underneath.
+        Item {
+            id: jcFull
+            width: JarvisState.interactive ? parent.width : 0
+            height: JarvisState.interactive ? parent.height : 0
+        }
         Item {
             id: jcHole
             readonly property var isl: JarvisState.island
@@ -6019,7 +6037,7 @@ Scope {
         }
         Item {
             id: jcBoxHit
-            readonly property bool on: jcReplyBox.opacity > 0.5
+            readonly property bool on: JarvisState.interactive && jcReplyBox.opacity > 0.5
             x: on ? jcReplyBox.x : 0
             y: on ? jcReplyBox.y : 0
             width: on ? jcReplyBox.width : 0
@@ -6112,11 +6130,13 @@ Scope {
                 else if (drop.hasText) jcReply.insert(jcReply.cursorPosition, drop.text)
                 jcFocus.tries = 0; jcFocus.start()
             }
-            // Fades with the card rather than vanishing the frame a follow-up
-            // is sent (the card under it turns to the thinking words then).
-            opacity: JarvisState.expanded && jarvisCatch.replying ? 1 : 0
-            // Out only: the box is there with the answer, instantly.
-            Behavior on opacity { enabled: jcReplyBox.opacity > 0.5; NumberAnimation { duration: 180; easing.type: Easing.OutQuad } }
+            // The card's own opacity, on the card the island is showing, so
+            // the box is part of the panel whichever way the panel goes: the
+            // close (ex), a follow-up turning it into the thinking words (fade,
+            // then the swap), an answer arriving (a reply swaps in at once).
+            // It had its own 180 ms fade off JarvisState.card, which never ran
+            // on a close because the card going null unmapped this surface.
+            opacity: isl && isl.replyBoxUp ? isl.cardOpacity : 0
             // A click anywhere on the box puts the cursor in it. It reaches
             // this surface since the box is back in the input mask (above);
             // the grab makes sure Hyprland hands the keys over too, not just

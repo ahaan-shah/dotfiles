@@ -9,7 +9,8 @@
 # KEYS: UI_FONT  ICON_THEME  GTK_THEME  PALETTE  DEFAULT_BROWSER
 #       DEFAULT_TERMINAL  DEFAULT_EDITOR  DEFAULT_PDF
 #       DOCK_AUTOHIDE (overlap|always)  DOCK_POSITION (bottom|left|right)
-#       SWITCHER_SPECIAL (on|off)
+#       SWITCHER_SPECIAL (on|off|workspace) — Alt+Tab lists all windows,
+#                        all but minimized, or only the focused workspace's
 #       BAR_POSITION     (top|left|right) — Settings -> Shell -> Bar
 #       BAR_HIDDEN       (none | comma list of module ids) — the bar's
 #                        Modules page; ids are the ones Bar.qml's modOn() reads
@@ -173,7 +174,10 @@ effective() {
             # xdg-settings answers with a .desktop name; the list is keyed by
             # command, so resolve one to the other or the current browser never
             # matches a row.
-            d="$(xdg-settings get default-web-browser 2>/dev/null || true)"
+            # Without $BROWSER, or it searches Exec lines for that word instead of
+            # reading the database: chromium came back as chatgpt.desktop, a
+            # webapp whose Exec is `chromium --app=...`.
+            d="$(env -u BROWSER xdg-settings get default-web-browser 2>/dev/null || true)"
             [ -n "$d" ] || return 0
             for f in "$HOME/.local/share/applications/$d" "/usr/share/applications/$d"; do
                 [ -f "$f" ] || continue
@@ -471,6 +475,35 @@ apply_editor() {
     xdg-mime default "$d" $types 2>/dev/null || true
 }
 
+# DEFAULT_BROWSER is a command for everything that RUNS a browser, and an
+# association for everything that asks the mime database: a link in EVE or a
+# chat app, an .html file in nautilus. Both have to follow the menu.
+#
+# Not `xdg-settings set default-web-browser`, which is what this used to be. It
+# refuses outright while $BROWSER is set ("$BROWSER is set and can't be changed
+# with xdg-settings", exit 4), hyprland.lua sets $BROWSER for the whole session,
+# and the error went to /dev/null: picking Chromium on 2026-11-07 left http and
+# https on zen.desktop with the notification saying it worked. It would not be
+# enough anyway. Run with $BROWSER unset it moved only http and https (measured
+# on a scratch mimeapps.list), leaving .xhtml and the x-extension-* types behind.
+#
+# A fixed list, unlike apply_editor's, because a browser's MimeType also claims
+# application/pdf and image/*: those belong to DEFAULT_PDF and imv. The list is
+# every web type in install/templates/mimeapps.list. Returns non-zero unless the
+# database reads back as chosen, so the caller can say so instead of claiming it.
+apply_browser() {
+    local d="$1"
+    command -v xdg-mime >/dev/null || return 1
+    xdg-mime default "$d" \
+        x-scheme-handler/http x-scheme-handler/https x-scheme-handler/chrome \
+        x-scheme-handler/about x-scheme-handler/unknown \
+        text/html application/xhtml+xml \
+        application/x-extension-htm application/x-extension-html \
+        application/x-extension-shtml application/x-extension-xhtml \
+        application/x-extension-xht 2>/dev/null || return 1
+    [ "$(xdg-mime query default x-scheme-handler/https 2>/dev/null)" = "$d" ]
+}
+
 # A terminal editor's entry says Terminal=true, and GLib — nautilus, gio open,
 # every GTK "open with" — then has to find a terminal itself. Measured on glib2
 # 2.90: its list is xdg-terminal-exec, ghostty, gnome-terminal, konsole … and
@@ -514,7 +547,7 @@ case "$cmd" in
             DOCK_AUTOHIDE=overlap|DOCK_AUTOHIDE=always) ;;
             DOCK_POSITION=bottom|DOCK_POSITION=left|DOCK_POSITION=right) ;;
             DOCK_*) die "bad value for $key: $val" ;;
-            SWITCHER_SPECIAL=on|SWITCHER_SPECIAL=off) ;;
+            SWITCHER_SPECIAL=on|SWITCHER_SPECIAL=off|SWITCHER_SPECIAL=workspace) ;;
             SWITCHER_SPECIAL=*) die "bad value for $key: $val" ;;
             BAR_POSITION=top|BAR_POSITION=left|BAR_POSITION=right) ;;
             BAR_POSITION=*) die "bad value for $key: $val" ;;
@@ -583,17 +616,19 @@ case "$cmd" in
                 ;;
             DEFAULT_EDITOR)   apply_editor "$val";   reload_hyprland; notify "Default editor" "$val" ;;
             DEFAULT_BROWSER)
-                # DETAIL is the .desktop file name. xdg-settings is what every
-                # OTHER app on the system consults when it opens a link, so
-                # recording the command in ui.conf alone would leave the two
-                # disagreeing — finder would search in one browser and a click
-                # in a chat app would open another.
-                if [ -n "$detail" ] && command -v xdg-settings >/dev/null; then
-                    pref_set DEFAULT_BROWSER_DESKTOP "$detail"
-                    xdg-settings set default-web-browser "$detail" 2>/dev/null || true
-                fi
+                # DETAIL is the .desktop file name. Recording only the command
+                # in ui.conf would leave the two disagreeing: finder would
+                # search in one browser and a click in a chat app would open
+                # another. The menu always passes DETAIL; a bare `set` from a
+                # shell does not, so look it up rather than half-apply.
+                [ -n "$detail" ] || detail="$(desktop_for_cmd "$val")"
                 reload_hyprland
-                notify "Default browser" "$val"
+                if [ -n "$detail" ] && apply_browser "$detail"; then
+                    pref_set DEFAULT_BROWSER_DESKTOP "$detail"
+                    notify "Default browser" "$val"
+                else
+                    notify "Default browser" "$val for shortcuts only: links and HTML files did not change"
+                fi
                 ;;
         esac
         ;;

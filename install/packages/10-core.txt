@@ -74,7 +74,7 @@ pipewire-alsa
 pipewire-jack
 pipewire-pulse
 wireplumber               # wpctl, used by the F3 volume bind
-libpulse                  # pactl, used by F1/F2 and micmute-led.sh
+libpulse                  # pactl, used by F1/F2 and micmute-led.sh (F9)
 gst-plugin-pipewire
 sof-firmware
 
@@ -135,7 +135,7 @@ libnotify                 # notify-send
 glib2                     # gio launch, used by finder's app launcher
 lua54                     # hyprland.lua offline syntax check
 libqalculate              # qalc, finder's calculator mode
-brightnessctl             # F4/F5, kbd backlight, micmute LED
+brightnessctl             # F4/F5, kbd backlight
 python                    # the agent-usage collectors are Python (stdlib only:
                           #   sqlite3, urllib). Pulled in by python-pywal anyway,
                           #   but named because code here calls it directly.
@@ -182,6 +182,8 @@ chromium                  # the dock's webapp entries are `chromium --app=...`,
 mpv                       # mimeapps.list: every audio/video type
 imv                       # mimeapps.list: every image type
 papers                    # mimeapps.list and ui.conf: application/pdf
+calibre                   # mimeapps.list: application/epub+zip (calibre-ebook-viewer). Absent
+                          #   from every manifest until verify flagged it in the 2026-11-08 VM run
 wiremix                   # Bar.qml: the audio panel's mixer button
 bluetui                   # Bar.qml: right-click on Bluetooth, and its panel
 impala                    # Bar.qml: right-click on wifi, and its panel

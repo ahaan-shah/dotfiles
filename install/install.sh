@@ -14,7 +14,6 @@
 #   ./install.sh --only hardware run one phase
 #   ./install.sh --skip virt     skip a phase
 #   ./install.sh --list          list phases
-#   ./install.sh --with-heavy    also the one 18 GiB package (55-aur-heavy.txt)
 #   ./install.sh --no-aur        exclude a whole list in advance
 #                (also --with-aur, --no-webapps, --with-webapps, --no-extras, --with-extras)
 #
@@ -43,7 +42,6 @@ ASSUME_YES=0
 NO_ROOT=0
 ONLY=""
 SKIP=""
-WITH_HEAVY=0
 ASK_SETS=0
 FLAG_AUR=""        # all|none from --no-aur/--with-aur; empty means ask or reuse
 FLAG_WEBAPPS=""
@@ -73,7 +71,6 @@ while [ $# -gt 0 ]; do
         --dry-run)      DRY_RUN=1 ;;
         --yes|-y)       ASSUME_YES=1 ;;
         --no-root)      NO_ROOT=1 ;;
-        --with-heavy)   WITH_HEAVY=1 ;;
         --ask-sets)     ASK_SETS=1 ;;   # show the three lists despite --yes (bootstrap.sh)
         --with-aur)     FLAG_AUR=none ;;
         --no-aur)       FLAG_AUR=all ;;
@@ -629,12 +626,10 @@ phase_packages() {
 
     # AUR last: it is the slow, fallible part, so everything that can succeed
     # has already succeeded by the time a build can fail.
+    # freesurfer-bin (18 GiB) was here behind --with-heavy until 2026-11-08. Ahaan:
+    # it was a one-time install for one project and never belongs on a new machine,
+    # so the manifest and the flag are gone rather than left defaulting to off.
     install_manifest "$SCRIPT_DIR/packages/50-aur.txt"
-    if [ "$WITH_HEAVY" = 1 ]; then
-        install_manifest "$SCRIPT_DIR/packages/55-aur-heavy.txt"
-    else
-        skip "freesurfer-bin (18 GiB) skipped — add --with-heavy to include it"
-    fi
 
     if [ "${#PKG_FAILED[@]}" -gt 0 ]; then
         warn "${#PKG_FAILED[@]} package(s) failed: ${PKG_FAILED[*]}"
@@ -686,8 +681,8 @@ phase_configs() {
     # starts them any more — and removing another machine's directories is not
     # this installer's business, so they are left alone and simply not deployed.
     # nvim is the LazyVim config (2026-09-20). Only the config travels; the
-    # plugins are restored by lazy.nvim itself on first launch, pinned to
-    # lazy-lock.json, which is why that file is mirrored with it.
+    # plugins are restored from lazy-lock.json (which is why that file is
+    # mirrored with it) by phase_apps, which also waits for Mason and the parsers.
     for d in shell lockscreen \
              kitty cava fastfetch neofetch fum btop mpv yazi gtk-3.0 gtk-4.0 nvim; do
         deploy_dir "$DOTDIR/$d" "$HOME/.config/$d" || true
@@ -1224,6 +1219,27 @@ phase_apps() {
     # already expect.
     deploy_file "$SCRIPT_DIR/templates/spotify-flags.conf" "$HOME/.config/spotify-flags.conf" || true
 
+    # ── Neovim: do LazyVim's first launch now, and wait for it ─────────
+    # The 2026-11-08 VM run's first `nvim` printed "Failed to install
+    # `tree-sitter-cli` with `mason.nvim`": the first launch starts Mason's tools and
+    # every treesitter parser downloading in the background, and quitting before they
+    # land aborts them. A person closing nvim early on a new machine hits the same.
+    # restore clones the plugins at lazy-lock.json's commits; nvim-firstrun.lua then
+    # waits for Mason and the parsers and exits non-zero if any are missing. Measured
+    # in an empty profile: ~70 s, 3 Mason tools, 24 parsers, then a clean launch.
+    # Never fatal: nvim retries whatever is missing on its next launch. Capped,
+    # because offline it waits on downloads that never come (124 after 300 s).
+    if have nvim && [ -f "$HOME/.config/nvim/init.lua" ]; then
+        info "Neovim: installing plugins, Mason tools and treesitter parsers (~1-2 min)"
+        if run_sh "timeout 300 nvim --headless '+Lazy! restore' +qa >/dev/null 2>&1 && timeout 600 nvim --headless -c 'luafile $SCRIPT_DIR/lib/nvim-firstrun.lua' >/dev/null 2>&1"; then
+            ok "Neovim ready: first launch has nothing left to download"
+        else
+            warn "Neovim's first-run downloads did not all finish; nvim retries them on its next launch"
+        fi
+    else
+        skip "nvim or its config absent — first run left to nvim"
+    fi
+
     # hyprshot's F11/Print binds write here; create it rather than let the first
     # screenshot of a fresh install fail.
     run mkdir -p "$HOME/Pictures/Screenshots"
@@ -1428,11 +1444,18 @@ phase_system() {
     sudo_prime
 
     # ── udev ───────────────────────────────────────────────────────────
-    if [ -n "${HW_MICMUTE_LED:-}" ]; then
-        sudo_file "$SCRIPT_DIR/system/udev/99-micmute-led.rules" \
-                  /etc/udev/rules.d/99-micmute-led.rules
-    else
-        skip "no mic-mute LED — that udev rule not installed"
+    # The mic-mute LED is the kernel's again (stock polarity: lit = muted).
+    # Until 2026-11-07 a 99-micmute-led.rules detached it from its
+    # audio-micmute trigger so scripts/micmute-led.sh could light it for a live
+    # mic instead. Deleting the rule does not undo that on a machine that had
+    # it: the trigger stays "none" until something writes it back, which a
+    # reboot or this does.
+    if [ -e /etc/udev/rules.d/99-micmute-led.rules ]; then
+        run sudo rm -f /etc/udev/rules.d/99-micmute-led.rules
+        ok "retired 99-micmute-led.rules"
+    fi
+    if [ -n "${HW_MICMUTE_LED:-}" ] && [ -e "/sys/class/leds/$HW_MICMUTE_LED/trigger" ]; then
+        run_sh "echo audio-micmute | sudo tee '/sys/class/leds/$HW_MICMUTE_LED/trigger' >/dev/null"
     fi
     run sudo udevadm control --reload-rules
     run sudo udevadm trigger --subsystem-match=power_supply --subsystem-match=leds

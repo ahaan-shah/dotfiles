@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Effects
 import Quickshell.Io
+import Quickshell.Hyprland
 
 Item {
     id: root
@@ -61,14 +62,16 @@ Item {
     function _fgA(a) { return Qt.rgba(root._walFg.r, root._walFg.g, root._walFg.b, a) }
 
     // ── Public API ────────────────────────────────────────────────
+    // The length guard matters since "This workspace" (2026-11-07): an empty
+    // workspace lists nothing, and Tab on it made selectedIndex x % 0 = NaN.
     function next() {
         if (!shown) _open()
-        else selectedIndex = (selectedIndex + 1) % appList.length
+        else if (appList.length > 0) selectedIndex = (selectedIndex + 1) % appList.length
     }
 
     function prev() {
         if (!shown) _open()
-        else selectedIndex = (selectedIndex - 1 + appList.length) % appList.length
+        else if (appList.length > 0) selectedIndex = (selectedIndex - 1 + appList.length) % appList.length
     }
 
     function confirm() {
@@ -119,15 +122,28 @@ Item {
         // (SUPER+X). Left out unless Settings -> App switcher says otherwise;
         // they keep their MRU place when listed, so a window minimized a
         // moment ago sits where it was rather than in a tail of its own.
-        const withSpecial = UiConfig.switcherSpecial === "on"
+        //
+        // "workspace" (2026-11-07, Ahaan: "per workspace will actually become
+        // a proper nice separate workspace"): only windows on the focused
+        // workspace. Read from Hyprland.focusedWorkspace, which is event-driven
+        // and current at the moment of opening, the way the bar's workspace
+        // dots read it; WindowTracker has no notion of the active workspace,
+        // and its activewindow poll says nothing on an empty one. Matching on
+        // id excludes special: windows by itself (their ids are negative).
+        // An empty workspace lists nothing, which is the honest answer.
+        const mode = UiConfig.switcherSpecial
+        const withSpecial = mode === "on"
+        const wsId = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : null
         const sorted = WindowTracker.windowsMru
-            .filter(w => withSpecial || !w.workspaceName.startsWith("special:"))
+            .filter(w => mode === "workspace"
+                ? (wsId === null || w.workspaceId === wsId)
+                : (withSpecial || !w.workspaceName.startsWith("special:")))
         // The shared WindowTracker polls continuously (the dock needs that),
         // where the switcher's old private WindowList only polled on open.
         // Reassigning appList rebuilds every Repeater delegate, so doing it on
         // every poll would restart the card animations several times a second
         // while the switcher is on screen. Rebuild only when the set changes.
-        const sig = sorted.map(w => w.address + w.workspaceName).join(",")
+        const sig = mode + "|" + sorted.map(w => w.address + w.workspaceName).join(",")
         if (sig === root._listSig && root.appList.length > 0) return
         root._listSig = sig
 

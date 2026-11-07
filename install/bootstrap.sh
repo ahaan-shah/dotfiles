@@ -8,8 +8,8 @@
 #
 # It asks for the sudo password once and shows three numbered lists (the AUR
 # packages, the web apps, the extras) to exclude from, all in the first minutes, then
-# needs nothing else from you. Extra arguments go to install.sh: `| bash -s -- --with-heavy`,
-# `--no-aur` to exclude a list in advance, `--yes` to be asked nothing, or `--interactive` to be asked at
+# needs nothing else from you. Extra arguments go to install.sh:
+# `| bash -s -- --no-aur` to exclude a list in advance, `--yes` to be asked nothing, or `--interactive` to be asked at
 # each decision instead of taking its defaults.
 #
 # Everything lives in main(), called on the last line, so a download cut off

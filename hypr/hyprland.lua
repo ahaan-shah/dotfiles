@@ -317,8 +317,9 @@ hl.env("TERMINAL", ui.DEFAULT_TERMINAL or "kitty")
 hl.env("EDITOR", ui.DEFAULT_EDITOR or "vim")
 -- BROWSER was never set here. It is now, so that a terminal program asking the
 -- environment which browser to open agrees with the one picked in
--- Settings -> Defaults -> Browser (and with xdg-settings, which ui-prefs.sh
--- points at the same choice).
+-- Settings -> Defaults -> Browser (and with the mime database, which ui-prefs.sh
+-- points at the same choice). Setting this makes `xdg-settings set` refuse, so
+-- ui-prefs.sh uses xdg-mime: that silently kept links on Zen until 2026-11-07.
 hl.env("BROWSER", ui.DEFAULT_BROWSER or "zen-browser")
 
 -- toolkit-specific scale
@@ -385,7 +386,7 @@ hl.on("hyprland.start", function()
     -- password box instead. See scripts/polkit-agent.py.
     hl.exec_cmd("~/.config/scripts/polkit-agent.py")
     hl.exec_cmd("~/.config/scripts/battery_notify.sh")
-    -- always come up with the mic MUTED and the LED off, whatever mute state
+    -- always come up with the mic MUTED, whatever mute state
     -- wireplumber restores from the last session (see scripts/micmute-led.sh)
     hl.exec_cmd("~/.config/scripts/micmute-led.sh startup")
     -- One shell, since 2026-09-14. macshell (dock, Alt-Tab, wallpaper),
@@ -558,6 +559,14 @@ pcall(hl.layer_rule, { match = { namespace = "^macswitcher$" }, no_anim = true }
 hl.config({
     input = {
         kb_layout    = "us",
+        -- Right Alt is push-to-talk (see PUSH-TO-TALK below), so it must stop
+        -- being Alt: with this option it is ISO_Level3_Shift on Mod5 instead of
+        -- Alt_R on Mod1, and every ALT combo -- Hyprland's and every app's --
+        -- answers to Left Alt only. Checked with xkbcli compile-keymap: the only
+        -- difference from plain "us" is the <RALT> key and Mod1 losing it; "us"
+        -- has no third level on any letter, so Right Alt + a key types the key.
+        -- Keycode 108 is unchanged, which is what the push-to-talk handler reads.
+        kb_options   = "lv3:ralt_switch",
         follow_mouse = 1,
         sensitivity  = 0, -- -1.0 - 1.0, 0 means no modification.
         touchpad = {
@@ -745,13 +754,11 @@ hl.bind("F5", hl.dsp.exec_cmd("brightnessctl set +10% && qs -p ~/.config/shell i
 -- desc: Toggles the keyboard backlight
 hl.bind("F7", hl.dsp.exec_cmd("~/.config/scripts/kbdbacklight_toggle.sh"))
 
--- Mic mute (with OSD + keyboard LED sync). Repeating, and NOT locked: this was the
+-- Mic mute (with OSD). Repeating, and NOT locked: this was the
 -- one bind that worked on the lock screen, which let anyone at a locked machine
 -- unmute the mic. Ahaan, 2026-11-05: nothing works until the password or fingerprint.
--- Routed through micmute-led.sh instead of a bare `pactl ... toggle` because
--- the kernel's own audio-micmute LED trigger drives the keyboard's mic LED
--- with the opposite polarity (lit = muted) from what's wanted (lit = on) —
--- see scripts/micmute-led.sh for the full story.
+-- Routed through micmute-led.sh for the bar's OSD. The keyboard's mic LED is
+-- the kernel's own (lit = muted) since 2026-11-07; see that script.
 -- desc: Mutes and unmutes the microphone
 hl.bind("F9", hl.dsp.exec_cmd("~/.config/scripts/micmute-led.sh toggle"), { repeating = true })
 
@@ -816,6 +823,92 @@ hl.bind("SUPER + SHIFT + M", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call mus
 -- bind is a silent no-op: `record toggle` just signals an existing daemon.
 -- desc: Toggles voice typing on/off
 hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record toggle"))
+
+------------------------------------------------------------------
+-- PUSH-TO-TALK (Right Alt): hold to record, release to transcribe
+------------------------------------------------------------------
+-- Alongside the toggle above, not instead of it (2026-11-07, Ahaan). Right Alt
+-- rather than Left because Left Alt is in every app's shortcuts, and a held Alt
+-- there would start dictation under Alt+Tab or Alt+Left; kb_options in INPUT
+-- takes Right Alt out of Alt altogether.
+--
+-- Not an hl.bind, deliberately. A press/release pair on a modifier key depends
+-- on what modmask Hyprland reports for the modifier's own press and release,
+-- and binds cannot be exercised without a physical key: wtype-injected keys
+-- reach the input.keyboard.key event but never fire binds (measured: an F24
+-- bind with a Lua callback did not run, the event did). This handler can be
+-- tested, and it sees the raw key: (xkb keycode, ?, 1 down / 0 up). Measured on
+-- 0.57.1: one down and one up per hold, no autorepeat events (a 700 ms hold).
+-- The cost: it is not on the Settings › Keybindings page and cannot be moved
+-- from there.
+--
+-- 108 is xkb's <RALT> (evdev KEY_RIGHTALT 100 + 8), the same on every Linux
+-- keyboard and unchanged by keyd, which only remaps capslock here.
+--
+-- Guards, each for a way this could type into the wrong place:
+--   * only from "idle": a hold during SUPER+Z's toggle or EVE's SUPER+A
+--     dictation must not stop it on release. No state file means the daemon
+--     is off (Settings › Voice typing), and record start would be a no-op.
+--   * not while locked: the event fires regardless of the session lock, and a
+--     transcript would be typed into the password field. The lock screen
+--     leaves its pid in lockscreen.pid; check that pid is still the lockscreen.
+--   * a tap under TAP_MS cancels instead of transcribing. voxtype has no
+--     minimum length, and Parakeet would be loaded to transcribe a quarter
+--     second of silence. Lua has no millisecond clock, so a oneshot timer per
+--     press marks the hold "long"; a generation counter makes a stale timer
+--     from an earlier press harmless.
+do
+    local RALT    = 108
+    local TAP_MS  = 250
+    local runtime = os.getenv("XDG_RUNTIME_DIR") or "/tmp"
+
+    local function read(path, fmt)
+        local f = io.open(path, "r")
+        if not f then return nil end
+        local s = f:read(fmt or "l")
+        f:close()
+        return s
+    end
+
+    local function session_locked()
+        local pid = read(runtime .. "/lockscreen.pid")
+        if not pid or not pid:match("^%d+$") then return false end
+        local cmd = read("/proc/" .. pid .. "/cmdline", "a")
+        return cmd ~= nil and cmd:find("lockscreen", 1, true) ~= nil
+    end
+
+    local ptt = { rec = false, long = false, gen = 0 }
+
+    -- A config reload re-runs this file. If the Lua state survives it, the old
+    -- subscription would still be live and every press would start twice, so
+    -- drop it first; if the state does not survive, there is nothing to drop.
+    if _G.__hyprahaan_ptt then pcall(function() _G.__hyprahaan_ptt:remove() end) end
+
+    _G.__hyprahaan_ptt = hl.on("input.keyboard.key", function(code, _, pressed)
+        if code ~= RALT then return end
+        if pressed == 1 then
+            if ptt.rec then return end
+            if read(runtime .. "/voxtype/state") ~= "idle" then return end
+            if session_locked() then return end
+            ptt.rec, ptt.long = true, false
+            ptt.gen = ptt.gen + 1
+            local mine = ptt.gen
+            -- Kept in ptt so nothing can collect it mid-hold. One cold hold in
+            -- testing cancelled when it should have stopped; it did not recur
+            -- in 11 more (5 cold), and a forced collectgarbage() mid-hold did
+            -- not reproduce it, so this is insurance, not a proven fix.
+            ptt.timer = hl.timer(function()
+                if ptt.gen == mine then ptt.long = true end
+            end, { timeout = TAP_MS, type = "oneshot" })
+            hl.exec_cmd("voxtype record start")
+        else
+            if not ptt.rec then return end
+            ptt.rec = false
+            ptt.gen = ptt.gen + 1
+            hl.exec_cmd(ptt.long and "voxtype record stop" or "voxtype record cancel")
+        end
+    end)
+end
 
 -- Btop
 -- desc: Opens btop

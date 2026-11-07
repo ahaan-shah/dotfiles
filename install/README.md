@@ -22,7 +22,6 @@ What only you can do afterwards, because it is yours and does not travel:
 | Wifi, browser logins, git identity, SSH keys | Your accounts. Never in the mirror |
 | `magpie`, `opentern`, `spotsie`, `wwrite`, `herdr-app` | Built from your own repos, in no package. Their launcher rows and dock pins are dropped until they exist, and the run names them at the end |
 
-`--with-heavy` adds `freesurfer-bin` (18 GiB): `... | bash -s -- --with-heavy`.
 `--interactive` asks at each decision instead of taking the default. `--yes` asks
 nothing at all and excludes nothing.
 
@@ -143,7 +142,6 @@ but not its pin; pin it from the dock.
 | `30-fonts.txt` | Every font this machine has |
 | `40-apps.txt` | **Extras.** The applications, man pages and tools nothing depends on |
 | `50-aur.txt` | **AUR.** Browsers included, built one at a time |
-| `55-aur-heavy.txt` | `freesurfer-bin`, only with `--with-heavy` |
 | `60-virt.txt` | **Extras.** QEMU/libvirt, and only when the CPU reports VT-x/AMD-V |
 | `70-flatpak.txt` | **Extras.** Flathub application ids, for the `tools` phase |
 | `90-nvidia.txt` | `nvidia-open`, `nvidia-utils`, `nvidia-prime` — only when the `nvidia` phase decides the machine fits |
@@ -232,8 +230,8 @@ laptop both GPUs expose connectors. Empty is a valid answer and means *do not
 pin*. The two `DGPU_` lines are recorded for the installer and for scripts;
 nothing in the running desktop reads them.
 
-`hyprland.lua` parses it; `toggle-touchpad.sh`, `kbdbacklight_toggle.sh`,
-`micmute-led.sh` and the taskbar's battery reader all source it. Every one of them falls back to something that works when the
+`hyprland.lua` parses it; `toggle-touchpad.sh`, `kbdbacklight_toggle.sh`
+and the taskbar's battery reader all source it. Every one of them falls back to something that works when the
 file is missing, so a config copied somewhere by hand still runs.
 
 After a TTY-only install the same file reads `MONITOR_MODE="highrr"`,

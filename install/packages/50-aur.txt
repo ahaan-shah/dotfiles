@@ -8,7 +8,6 @@
 # repointed from Zen at chromium, and the dock drops pins for what is absent. The AUR packages
 # that ARE required never come through this file: python-pywal (10-core.txt),
 # asusctl (install_power_backend) and limine-snapper-sync (the snapshots phase).
-# 55-aur-heavy.txt stays behind its own flag.
 #
 # The "aur:" prefix is what read_manifest keys on, so one parser handles every
 # manifest in this directory.

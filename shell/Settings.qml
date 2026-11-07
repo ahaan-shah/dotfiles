@@ -382,10 +382,22 @@ QtObject {
         // windows are left out. On lists them too, and picking one BRINGS it
         // to the current workspace instead of travelling to it — the same
         // move the dock makes for a minimized window (DockIcon.qml, focusAddr).
+        //
+        // 2026-11-07, on Ahaan's instruction: the switch became a three-way
+        // "cycle" row (EVE's old capabilities shape, Left/Right or Enter step
+        // it). The same key gained a third value rather than a new key, so a
+        // ui.conf written before this still means what it meant:
+        //   on        all apps, minimized included   (the old switch on)
+        //   off       all apps except minimized      (the old switch off)
+        //   workspace only windows on the focused workspace, so each
+        //             workspace behaves as a separate desktop under Alt+Tab.
+        //             Minimized windows live on special:, so they are out.
         "setup/shell/switcher": {
             title: "App switcher", icon: "󰕰",
             rows: [
-                { id: "special", icon: "󰘸", title: "Show minimized", kind: "toggle" }
+                { id: "special", icon: "󰘸", title: "Show", kind: "cycle",
+                  options: ["on", "off", "workspace"],
+                  labels:  ["All apps", "Hide minimized", "This workspace"] }
             ]
         },
 
@@ -1094,14 +1106,12 @@ QtObject {
         if (key === "setup/notifications/sound")
             return Object.assign({}, r, { value: r.id, active: r.id === NotifState.sound.id })
 
-        if (key === "setup/shell/switcher" && r.id === "special") {
-            const on = UiConfig.switcherSpecial === "on"
-            return { id: r.id, icon: r.icon, title: r.title, kind: r.kind,
-                     // No trail text. It read "brought to you" / "left
-                     // out" until 2026-09-30, when Ahaan had it removed:
-                     // the switch already says which way it is set.
-                     sub: r.sub || "", active: on, pending: false }
-        }
+        // Anything but the three known values reads as "off", which is what
+        // AppSwitcher.qml does with it too, so the row never shows a mode the
+        // switcher is not in.
+        if (key === "setup/shell/switcher" && r.id === "special")
+            return Object.assign({}, r, {
+                value: r.options.indexOf(UiConfig.switcherSpecial) >= 0 ? UiConfig.switcherSpecial : "off" })
 
         if (r.kind !== "toggle") return r
         const on = (key === "security/firewall" && r.id === "enabled")
@@ -1972,6 +1982,7 @@ QtObject {
         const i = Math.max(0, opts.indexOf(row.value))
         const next = opts[(i + dir + opts.length) % opts.length]
         if (key === "setup/notifications" && row.id === "duration") NotifState.setPref("NOTIF_DURATION", next)
+        if (key === "setup/shell/switcher" && row.id === "special") root.setDockPref("SWITCHER_SPECIAL", next)
         if (key === root.winKey) root.setWindowRule(row.id, next)
     }
 
@@ -2004,10 +2015,6 @@ QtObject {
         }
         if (key === "setup/ai" && row.id === "enabled") {
             root.setDockPref("AI_ENABLED", row.active === true ? "off" : "on")
-            return
-        }
-        if (key === "setup/shell/switcher" && row.id === "special") {
-            root.setDockPref("SWITCHER_SPECIAL", row.active === true ? "off" : "on")
             return
         }
         if (key === "setup/shell/bar" && row.id === "full") {

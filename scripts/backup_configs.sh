@@ -186,8 +186,7 @@ fi
 # world-readable and contain no credentials; /etc/NetworkManager/system-connections
 # (which holds wifi PSKs) is root-only and is deliberately NOT touched here.
 mkdir -p "$DOTDIR/system"
-for f in /etc/udev/rules.d/99-micmute-led.rules \
-         /etc/keyd/default.conf \
+for f in /etc/keyd/default.conf \
          /etc/systemd/zram-generator.conf \
          /etc/sysctl.d/99-zram-swappiness.conf \
          /etc/sysctl.d/20-quiet-printk.conf \

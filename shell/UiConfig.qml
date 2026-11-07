@@ -53,6 +53,7 @@ QtObject {
     // 2026-09-28). "off": Alt+Tab leaves special-workspace windows out, as it
     // always had. "on": it lists them, and choosing one moves it to the
     // current workspace rather than following it into the special one.
+    // "workspace" (2026-11-07): only the focused workspace's windows.
     property string switcherSpecial: "off"
     // The bar (Settings -> Shell -> Bar, 2026-10-31). Position is top, left
     // or right; barHidden is a comma list of module ids Bar.qml's modOn()

@@ -48,7 +48,10 @@ fi
 t "webapps: icons resolve"          'for d in ~/.local/share/applications/*.desktop; do i=$(sed -n "s/^Icon=//p" "$d" | head -1); case "$i" in /*) [ -e "$i" ] || { echo "$d: $i"; exit 1; } ;; esac; done'
 t "dock: pins carried, no dead ones" 'python3 -c "import json,os;d=json.load(open(os.path.expanduser(\"~/.local/state/hyprahaan/dock-pins.json\")));print(len(d[\"pins\"]));assert len(d[\"pins\"])>=3;import shutil,shlex;assert not [p for p in d[\"pins\"] if not shutil.which(shlex.split(p[\"command\"])[0])]"'
 if said aur; then
-t "default browser resolves"        '[ "$(xdg-settings get default-web-browser 2>/dev/null || xdg-mime query default x-scheme-handler/https)" = zen.desktop ] || xdg-mime query default x-scheme-handler/https | grep -q zen'
+# Asks whether links open in the browser ui.conf names, not in Zen: Ahaan's own default
+# is chromium, which the mirror carries, and this held Zen and failed a correct
+# desktop on 2026-11-08. The repoint below covers the case where Zen was left out.
+t "default browser resolves"        '. ~/.config/scripts/ui.conf; [ -n "$DEFAULT_BROWSER_DESKTOP" ] && [ "$(xdg-mime query default x-scheme-handler/https)" = "$DEFAULT_BROWSER_DESKTOP" ] && [ -e "/usr/share/applications/$DEFAULT_BROWSER_DESKTOP" ]'
 t "zen/brave/codium/rstudio present" 'command -v zen-browser brave codium rstudio'
 else
 case " $(left aur) " in *" zen-browser-bin "*)

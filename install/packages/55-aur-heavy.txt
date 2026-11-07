@@ -1,4 +1,0 @@
-# Only with --with-heavy. 18.35 GiB installed, which is more than everything else
-# in these manifests that is not a kernel, for one research application. Every
-# other package here is installed by default.
-aur:freesurfer-bin
