@@ -25,7 +25,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -609,6 +611,44 @@ def oauth_login(claude_dir: Path) -> tuple[str, int, str]:
   return str(login.get("accessToken") or ""), number(login.get("expiresAt")), plan
 
 
+# The access token lives ~8 h and only the CLI renews it, by spending the
+# refresh token it keeps beside it. A machine left alone past that showed
+# every idle account as "Sign-in expired" until some session started, though
+# the login was fine (2026-11-09). `claude auth status` runs that same renewal
+# and makes no model request: measured on that day, the expired default
+# account's file went from 2 h past expiry to 8.0 h ahead, in 0.23 s. So
+# hand the renewal back to the CLI, the one writer of its own credential file
+# (rotating the refresh token ourselves would race a live session's refresh),
+# and run it a few minutes early so a probe never carries a token about to
+# lapse. Output is discarded: status prints the email, and that stays put.
+REFRESH_MARGIN_MS = 5 * 60 * 1000
+
+
+def refresh_login(claude_dir: Path) -> None:
+  binary = shutil.which("claude") or str(Path.home() / ".local/bin/claude")
+  env = dict(os.environ)
+  # The default account is the one with CLAUDE_CONFIG_DIR unset; inheriting
+  # this collector's own value would renew the wrong login.
+  if claude_dir == default_config_dir():
+    env.pop("CLAUDE_CONFIG_DIR", None)
+  else:
+    env["CLAUDE_CONFIG_DIR"] = str(claude_dir)
+  try:
+    subprocess.run(
+      [binary, "auth", "status"],
+      env=env,
+      cwd=str(Path.home()),
+      stdin=subprocess.DEVNULL,
+      stdout=subprocess.DEVNULL,
+      stderr=subprocess.DEVNULL,
+      timeout=20,
+      check=False,
+    )
+  except Exception:
+    # No CLI, or a hang: fall through to the "Sign-in expired" card.
+    pass
+
+
 def plan_label(tier: str, subscription: str) -> str:
   if tier:
     match = re.search(r"max_(\d+x)", tier, re.IGNORECASE)
@@ -949,6 +989,10 @@ def main() -> int:
     one = account_stats(claude_dir, scan_age)
     stats = one if stats is None else merge_stats(stats, one)
     access_token, expires_at_ms, plan = oauth_login(claude_dir)
+    # An empty token is no login at all, which a renewal cannot fix.
+    if access_token and 0 < expires_at_ms <= time.time() * 1000 + REFRESH_MARGIN_MS:
+      refresh_login(claude_dir)
+      access_token, expires_at_ms, plan = oauth_login(claude_dir)
     limits = collect_limits(claude_dir, access_token, expires_at_ms, args.force)
     account = {
       "id": hashlib.sha1(str(claude_dir).encode("utf-8")).hexdigest()[:12],

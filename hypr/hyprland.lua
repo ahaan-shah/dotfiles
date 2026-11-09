@@ -346,7 +346,7 @@ hl.env("XCURSOR_SIZE", "28")
 ------------------------------------------------------------------
 -- Old hyprlang used $variables. In Lua these are just local variables.
 local terminal    = ui.DEFAULT_TERMINAL or "kitty"
-local fileManager = "nautilus --new-window"
+local fileManager = "filefinder"
 
 
 ------------------------------------------------------------------
@@ -358,7 +358,6 @@ hl.on("hyprland.start", function()
     -- D-Bus / systemd environment MUST come before the session target
     hl.exec_cmd("dbus-update-activation-environment --systemd --all && systemctl --user start hyprland-session.target")
 
-    -- GVFS early (so nautilus doesn't wait for it)
     hl.exec_cmd("/usr/lib/gvfsd")
     hl.exec_cmd("/usr/lib/gvfsd-fuse $XDG_RUNTIME_DIR/gvfs -f")
 
@@ -1005,14 +1004,6 @@ hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("~/.config/lockscreen/lockscreen-laun
 -- the DECLARED combo — a bind that vanishes from this file takes any
 -- reassignment of it with it.
 
--- Study
--- Personal shortcut: edit studyDir (or drop this bind) on a machine where
--- that folder does not exist. Nothing else depends on it.
-local studyDir = os.getenv("HOME") .. "/college/year-4/sleep deprivv project"
--- desc: Opens the study folder
-hl.bind("SUPER + G", hl.dsp.exec_cmd("nautilus \"" .. studyDir .. "\""))
-
-
 ------------------------------------------------------------------
 -- WINDOW RULES
 ------------------------------------------------------------------
@@ -1319,14 +1310,6 @@ hl.window_rule({
     no_blur     = true,
     border_size = 1,
     no_shadow   = true,
-})
-
--- Nautilus
-hl.window_rule({
-    name  = "nautilus-float",
-    match = { class = "^(org.gnome.Nautilus)$" },
-    size  = {"(monitor_w*0.59)", "(monitor_h*0.605)"},
-    move  = {"(monitor_w*0.3354)", "(monitor_h*0.152)"},
 })
 
 -- Evince Docs

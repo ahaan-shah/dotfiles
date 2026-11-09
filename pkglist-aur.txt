@@ -2,6 +2,7 @@ bibata-cursor-theme
 brave-bin
 cliamp
 clock-tui
+filefinder
 freesurfer-bin
 fum-bin
 localsend-bin

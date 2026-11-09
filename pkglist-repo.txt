@@ -97,7 +97,6 @@ meson
 minicom
 mpv
 nano
-nautilus
 neovim
 networkmanager
 noto-fonts
@@ -110,7 +109,6 @@ nwg-displays
 obs-studio
 obsidian
 obsidian-icon-theme
-openai-codex
 otf-codenewroman-nerd
 otf-font-awesome
 otf-monaspace-nerd

@@ -51,13 +51,6 @@
       "separator": false
     },
     {
-      "name": "Files",
-      "icon": "org.kde.dolphin",
-      "command": "nautilus --new-window",
-      "windowClass": "org.gnome.nautilus",
-      "separator": false
-    },
-    {
       "name": "Gmail",
       "icon": "/home/USER/.local/share/icons/webapps/gmail.svg",
       "command": "chromium --app=https://mail.google.com/mail/u/1/#inbox",
@@ -97,6 +90,13 @@
       "icon": "opentern",
       "command": "/home/USER/.local/bin/opentern",
       "windowClass": "opentern",
+      "separator": false
+    },
+    {
+      "name": "Filefinder",
+      "icon": "filefinder",
+      "command": "filefinder --gui",
+      "windowClass": "filefinder",
       "separator": false
     }
   ]

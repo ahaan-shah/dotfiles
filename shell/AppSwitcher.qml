@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Effects
+import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 
@@ -153,6 +154,42 @@ Item {
             address: w.address,
             special: w.workspaceName.startsWith("special:")
         }))
+
+        // Filefinder windows: ask each one where it is (see _ffProc).
+        const ff = sorted.filter(w => w.class === "filefinder" && w.pid > 0)
+        if (ff.length > 0 && !_ffProc.running) {
+            root._ffPaths = ({})
+            _ffProc.command = ["bash", "-c",
+                'for a in "$@"; do p=${a#*:}; ' +
+                'd=$(timeout 1 filefinder ipc --pid "$p" call filefinder path 2>/dev/null) ' +
+                '&& [ -n "$d" ] && printf "%s\\t%s\\n" "${a%%:*}" "$d"; done',
+                "_"].concat(ff.map(w => w.address + ":" + w.pid))
+            _ffProc.running = true
+        }
+    }
+
+    // Directory each Filefinder window is showing, keyed by window address.
+    // Filefinder's title is a constant "Filefinder" (measured 2026-11-09 with
+    // hyprctl clients), so unlike Nautilus, whose title WAS the directory,
+    // the title cannot tell two windows apart. Its IPC can: `filefinder ipc
+    // --pid N call filefinder path` returns the current directory in ~3 ms.
+    // Kept out of appList on purpose: reassigning that rebuilds every card
+    // and restarts their animations (see the note in _buildList), and the
+    // answers arrive after the cards exist.
+    property var _ffPaths: ({})
+    property var _ffProc: Process {
+        id: _ffProc
+        running: false
+        stdout: SplitParser {
+            splitMarker: "\n"
+            onRead: line => {
+                const i = line.indexOf("\t")
+                if (i < 0) return
+                const m = Object.assign({}, root._ffPaths)
+                m[line.slice(0, i)] = line.slice(i + 1)
+                root._ffPaths = m
+            }
+        }
     }
 
     // Rebuild when the shared WindowTracker reports new data
@@ -381,7 +418,8 @@ Item {
                         width:  panel.cardSize
                         height: panel.labelH
                         horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideRight
+                        // A path's tail is the part that tells windows apart.
+                        elide: _cls === "filefinder" ? Text.ElideLeft : Text.ElideRight
 
                         readonly property string _cls:   card.modelData.class
                         readonly property string _title: card.modelData.title
@@ -389,6 +427,7 @@ Item {
                         text: {
                             // kitty        → running command (title = "nvim ~/foo")
                             // nautilus     → open directory  (title = "Documents")
+                            // filefinder   → open directory, ~-abbreviated (via its IPC)
                             // evince       → file name       (title = "report.pdf - …")
                             // papers       → file name       (title = "report.pdf", no suffix)
                             // text editor  → file name       (title = "main.py - …")
@@ -409,6 +448,13 @@ Item {
                                 return /\bcall\b/i.test(_title) ? "Call" : ""
                             if (_cls.includes("kitty"))                return _title
                             if (_cls === "org.gnome.nautilus")         return _title
+                            if (_cls === "filefinder") {
+                                const d = root._ffPaths[card.modelData.address] || ""
+                                const h = Quickshell.env("HOME")
+                                return d === h ? "~"
+                                     : d.startsWith(h + "/") ? "~" + d.slice(h.length)
+                                     : d
+                            }
                             if (_cls === "org.gnome.evince")           return _title.split(" - ")[0]
                             if (_cls === "org.gnome.papers")           return _title
                             if (_cls === "org.gnome.texteditor")       return _title.split(" - ")[0]
