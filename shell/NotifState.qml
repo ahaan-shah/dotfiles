@@ -146,7 +146,7 @@ Singleton {
         if (dnd) return
         if (open || JarvisState.expanded || TodoState.amount > 0.01 || GitaState.amount > 0.01
             || CalendarState.amount > 0.01 || RemindersState.amount > 0.01 || MusicState.amount > 0.01
-            || RemindersState.announcing) return
+            || NotesState.amount > 0.01 || RemindersState.announcing) return
         announceTitle = plain(title)
         announceBody = plain(body)
         burst = announcing ? burst + 1 : 1

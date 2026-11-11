@@ -786,6 +786,32 @@ QtObject {
     function _regroup(key) {
         const rows = root.lists[key] || []
         const page = root.pages[key] || ({})
+        // Window rules groups by the script's `group` column rather than by
+        // name: the animation rows (on/off, overall speed, one length per
+        // animation) become one "Animations" menu row, placed where its first
+        // member was. Ahaan, 2026-11-11, asked for the per-animation lengths
+        // "under the animations section"; 21 rows on one page was too many.
+        if (page.list === "winrules") {
+            const top = [], byGroup = ({})
+            for (let i = 0; i < rows.length; i++) {
+                const g = rows[i].group || ""
+                if (g === "") { top.push(rows[i]); continue }
+                if (byGroup[g] === undefined) {
+                    byGroup[g] = []
+                    top.push({ id: g, icon: page.icon || "󰒓", title: g, kind: "menu", trail: "" })
+                }
+                byGroup[g].push(rows[i])
+            }
+            // The trail says whether the group's master switch is on, so
+            // "animations are off" can be read without opening the group.
+            for (let i = 0; i < top.length; i++) {
+                const ms = byGroup[top[i].id]
+                if (top[i].kind !== "menu" || !ms) continue
+                const sw = ms.find(r => r.kind === "toggle")
+                if (sw) top[i].trail = sw.active ? "on" : "off"
+            }
+            return { top: top, byGroup: byGroup }
+        }
         if (page.noGroup) return { top: rows, byGroup: ({}) }
         if (rows.length < 2) return { top: rows, byGroup: ({}) }
 
@@ -1464,6 +1490,9 @@ QtObject {
                     labels: opts ? opts.map(o => o.charAt(0).toUpperCase() + o.slice(1)) : undefined,
                     value: f[4] || "", unit: f[5] || "",
                     min: f[6] || "", max: f[7] || "", step: f[8] || "",
+                    // The sub-page this row lives on, or "" for the page
+                    // itself. See _regroup's winrules branch.
+                    group: f[9] || "",
                     // A toggle reads its state from `active`, like every other
                     // toggle in this file, rather than from the string.
                     active: f[4] === "true"
@@ -1493,7 +1522,11 @@ QtObject {
                            detail: f[3] || "",
                            // set when the combo in force is not the declared
                            // one, which is what the page marks as changed
-                           rebound: (f[1] || "") !== "" && f[1] !== f[0] })
+                           rebound: (f[1] || "") !== "" && f[1] !== f[0],
+                           // A key that is not an hl.bind (push-to-talk), so
+                           // keybinds.conf cannot move it: listed, never
+                           // reassigned or reset. list-keybinds.sh marks it.
+                           fixed: f[4] === "fixed" })
                 continue
             }
             out.push({
@@ -1983,7 +2016,8 @@ QtObject {
         const next = opts[(i + dir + opts.length) % opts.length]
         if (key === "setup/notifications" && row.id === "duration") NotifState.setPref("NOTIF_DURATION", next)
         if (key === "setup/shell/switcher" && row.id === "special") root.setDockPref("SWITCHER_SPECIAL", next)
-        if (key === root.winKey) root.setWindowRule(row.id, next)
+        // Also on a group sub-page (Window rules > Animations).
+        if (root.listPageKeyOf(key) === root.winKey) root.setWindowRule(row.id, next)
     }
 
     function setDockPref(key, val) {
@@ -2038,7 +2072,8 @@ QtObject {
                                        : "Turning the firewall off", want)
             return
         }
-        if (key === "setup/windowrules") {
+        // The page or one of its group sub-pages (Animations).
+        if (root.listPageKeyOf(key) === root.winKey) {
             // A window rule needs no password: everything it touches is this
             // user's own compositor and this user's own config file.
             root.setWindowRule(row.id, row.active === true ? "false" : "true")

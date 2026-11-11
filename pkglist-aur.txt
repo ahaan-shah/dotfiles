@@ -4,7 +4,6 @@ cliamp
 clock-tui
 filefinder
 freesurfer-bin
-fum-bin
 localsend-bin
 neofetch
 nomacs

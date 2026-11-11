@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # window-zoom.sh — SUPER+D. Fills the focused monitor with the focused window.
+#                  In the scrolling layout, toggles a tiled column between full
+#                  and half width instead (see "Scrolling" near the bottom).
 #
 # Was `hyprbars.sh zoom`, and is its own script now that hyprbars is gone. The
 # rest of that file — on/off/toggle/persist/status, and a `minimize` that was
@@ -197,6 +199,33 @@ if [ "${1:-}" = "refit" ]; then
 fi
 
 read_monitor
+
+# ── Scrolling: toggle the column between full and half width (2026-11-10) ──
+# Ahaan: in the scrolling layout every window opens at half the screen
+# (scrolling:column_width 0.5), and SUPER+D should make one take the whole
+# width, pushing its neighbour off into the scroll, then put it back. A tiled
+# window here cannot be placed with resize/move — the layout owns its box —
+# so this asks the layout itself: `colresize` is the scrolling layout's
+# layout message, sent with hl.dsp.layout.
+#
+# Full vs half is read off the window, not remembered: over 3/4 of the
+# monitor's logical width counts as full. Gaps, border and the bar's zone
+# (when it is on the left or right) all take a few px off the column, so a
+# full column is never exactly mw, and a half one is never near 3/4.
+# A FLOATING window in scrolling mode falls through to the zoom below, as in
+# every other mode.
+layout="$(hyprctl getoption general:layout 2>/dev/null | awk '/^str:/ { print $2; exit }')"
+if [ "${layout:-}" = "scrolling" ]; then
+    read -r floating ww < <(hyprctl activewindow -j 2>/dev/null \
+        | jq -r '"\(.floating) \(.size[0] // 0)"')
+    if [ "${floating:-true}" = "false" ]; then
+        if [ "$(( ww * 4 ))" -gt "$(( mw * 3 ))" ]; then width=0.5; else width=1.0; fi
+        if [ -n "${WINDOW_ZOOM_DRY:-}" ]; then echo "colresize $width"; exit 0; fi
+        hyprctl dispatch "hl.dsp.layout(\"colresize $width\")" >/dev/null
+        exit 0
+    fi
+fi
+
 read -r x y w h < <(box_for "$BAR_EDGE")
 
 # WINDOW_ZOOM_DRY=1 prints the geometry instead of applying it.

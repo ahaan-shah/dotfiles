@@ -169,10 +169,18 @@ part; edit's changes go in new_text, due/at/date, in_minutes, urgent/important).
 when {WHO} asks, one item per call; a remove he confirms on a card. If it says several \
 match, ask him which; never delete them all to be safe. To push a reminder back \
 ("snooze it 10 min"), edit it with in_minutes.
+- notes is {WHO}'s quick notes pad on the bar: read it, append to it, or replace the \
+whole page (he confirms). "note this down" / "add to my notes" is append.
 - gita is {WHO}'s copy of the Bhagavad-gita As It Is, in the reader on the bar. For what a \
 verse says, use gita read rather than your memory: the numbering and wording are this \
 edition's. Show {WHO} a verse in the reader with gita open and a ref.
-- Apps: open_app, close_app, focus_app. Captures: screenshot, record.
+- Desktop: window (focus, move to a workspace, fullscreen, float; switch workspace), clipboard \
+(copy text for {WHO} to paste; you cannot read it), audio (which output plays, one app's \
+output, each app's volume), power (power profile, night light), notifications (list, clear, do not \
+disturb), downloads (newest files in ~/Downloads; open one with open_file). A task with a \
+date or time is one todo add (due, at), not an add then an edit.
+- Apps: open_app, close_app, focus_app. Websites: open_url (his default browser unless he \
+names one; never open_app for a site). Captures: screenshot, record.
 - Commands: run takes a list of words, read-only commands only; anything else is \
 refused, so do not retry variants of a refused command.
 - Root: only the `system` tool (update, install, remove, firewall_on/off). {WHO} types \
@@ -338,13 +346,16 @@ def read_turn(p, sid=""):
     """Stream one turn's events to stdout; return Claude's result event, or
     None if its output ended first."""
     live, sent, last = "", "", 0.0
+    _limit[0] = None
     for line in p.stdout:
         try:
             e = json.loads(line)
         except ValueError:
             continue
         t = e.get("type")
-        if t == "stream_event":
+        if t == "rate_limit_event":
+            _limit[0] = e.get("rate_limit_info") or None
+        elif t == "stream_event":
             ev = e.get("event", {})
             et = ev.get("type")
             # Only the newest message's words are shown: the text before a
@@ -383,10 +394,44 @@ def read_turn(p, sid=""):
     return None
 
 
+# ── the usage limit, said plainly (2026-11-11) ──────────────────────────
+# Ahaan: show it like the "Interrupted" line, "session limit reached,
+# resets in xhrs ymins". The CLI's own
+# words are "You've hit your session limit · resets 3pm", and that reached
+# the card as "Claude didn't answer: You've hit your …". The numbers come
+# from stream-json's rate_limit_event instead of that text — captured on
+# 2.1.322: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed",
+# "resetsAt":1794348600,"rateLimitType":"five_hour", …}} — one per turn,
+# status "rejected" when the turn is refused. read_turn keeps the last one.
+_limit = [None]
+LIMIT_NAMES = {"five_hour": "Session limit", "seven_day": "Weekly limit",
+               "seven_day_opus": "Weekly Opus limit", "seven_day_sonnet": "Weekly Sonnet limit"}
+
+
+def limit_msg(info, why=""):
+    """-> "Session limit reached, resets in 2h 14m", or "" when
+    this failure is not the usage limit."""
+    hit = (info or {}).get("status") == "rejected"
+    if not hit and not re.search(r"hit your .*limit|usage limit|limit reached", str(why), re.I):
+        return ""
+    name = LIMIT_NAMES.get((info or {}).get("rateLimitType"), "Usage limit")
+    at = (info or {}).get("resetsAt")
+    if not hit or not isinstance(at, (int, float)) or at <= time.time():
+        return f"{name} reached"
+    # Whole minutes, rounded UP: truncating made 3d 4h read "3d 3h" a
+    # second later, and "resets in 0m" for the last minute.
+    mins = -(-int(at - time.time()) // 60)
+    h, m = mins // 60, mins % 60
+    # His wording, chosen over a version that added the clock time.
+    span = f"{h // 24}d {h % 24}h" if h >= 24 else f"{h}h {m}m" if h else f"{m}m"
+    return f"{name} reached, resets in {span}"
+
+
 def finish_turn(model, sid, text, result, err=""):
     if not result or result.get("is_error"):
         why = (result or {}).get("result") or (err.strip().splitlines()[-1:] or ["claude stopped"])[0]
-        emit(ev="result", kind="error", msg="Claude didn't answer: " + str(why)[:200])
+        msg = limit_msg(_limit[0], why)
+        emit(ev="result", kind="error", msg=msg or "Claude didn't answer: " + str(why)[:200])
         return
     d = prune(load())
     now = time.time()

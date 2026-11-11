@@ -54,6 +54,8 @@ ShellRoot {
     Notifications {}
     // The music player's keyboard surface; it too grows the centre island.
     Music {}
+    // Quick notes (SUPER+SHIFT+W), the eighth tenant.
+    Notes {}
     // Settings → System → About: the machine as a sigil. Built only while open.
     About {}
 }

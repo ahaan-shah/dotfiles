@@ -84,7 +84,7 @@ Singleton {
     // reminder is the one you asked for.
     function announce(text) {
         if (open || JarvisState.expanded || TodoState.amount > 0.01 || GitaState.amount > 0.01
-            || CalendarState.amount > 0.01 || NotifState.amount > 0.01) return
+            || CalendarState.amount > 0.01 || NotifState.amount > 0.01 || NotesState.amount > 0.01) return
         NotifState.announcing = false
         announceText = text
         announcing = true

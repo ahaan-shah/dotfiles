@@ -317,7 +317,7 @@ Scope {
     Timer { id: barGrace; interval: 1000 }
     readonly property bool barBusy: root.batVisible || root.netVisible || root.btVisible
         || root.audVisible || root.agentVisible || root.dispVisible
-        || TodoState.open || GitaState.open || CalendarState.open || RemindersState.open
+        || TodoState.open || GitaState.open || CalendarState.open || RemindersState.open || NotesState.open
         // EVE: her card, and the orb in FLIGHT — not the orb sitting in its
         // slot. That one can stay for hours now (a reply clicked away rests
         // there, JarvisState.resting; so does a run hidden while she thinks),
@@ -718,6 +718,7 @@ Scope {
         if (keep !== "rem") RemindersState.close();
         if (keep !== "music") MusicState.close();
         if (keep !== "notif") NotifState.close();
+        if (keep !== "notes") NotesState.close();
         // And whatever is being announced goes too. An announcement only
         // starts when the island is free (NotifState.announce), but nothing
         // ended one already up when a tenant opened, so the banner stayed
@@ -745,6 +746,11 @@ Scope {
         target: RemindersState
         function onOpenChanged() { if (RemindersState.open) root.islandOnly("rem"); }
     }
+    // Quick notes (Notes.qml, SUPER+SHIFT+W, 2026-11-11), on the same terms.
+    Connections {
+        target: NotesState
+        function onOpenChanged() { if (NotesState.open) root.islandOnly("notes"); }
+    }
     // The music player (Music.qml) moved here from the notification centre
     // (2026-10-25). It shows the player the old widget did — the sticky pick,
     // mprisPlayer — and Tab in the island walks the player list.
@@ -763,7 +769,7 @@ Scope {
     Binding {
         target: JarvisState; property: "islandTaken"
         value: TodoState.open || GitaState.open || CalendarState.open || RemindersState.open || MusicState.open
-               || NotifState.open
+               || NotifState.open || NotesState.open
     }
 
     function closePanels() {
@@ -4687,6 +4693,8 @@ Scope {
                                  Math.min(760, bar.width - 160) * RemindersState.amount,
                                  MusicState.targetWidth * MusicState.amount,
                                  NotifState.width * NotifState.amount,
+                                 // Notes: todo's width, a page tall.
+                                 Math.min(760, bar.width - 160) * NotesState.amount,
                                  // An announcement drops under the clock on a top bar, as
                                  // wide as the clock row, so it never needed width here.
                                  // Beside a side bar's column there IS no row width — it
@@ -4702,11 +4710,13 @@ Scope {
                                  RemindersState.announceH * RemindersState.announceAmount,
                                  MusicState.wantHeight * MusicState.amount,
                                  NotifState.wantHeight * NotifState.amount,
+                                 NotesState.wantHeight * NotesState.amount,
                                  NotifState.announceH * NotifState.announceAmount)
                 Component.onCompleted: {
                     JarvisState.island = centerIsland; TodoState.island = centerIsland; GitaState.island = centerIsland
                     CalendarState.island = centerIsland; RemindersState.island = centerIsland
                     MusicState.island = centerIsland; NotifState.island = centerIsland
+                    NotesState.island = centerIsland
                 }
                 belowData: [
                     JarvisCard {

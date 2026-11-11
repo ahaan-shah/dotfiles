@@ -564,8 +564,9 @@ def stamp(ms):
     return time.strftime("%a %d %b %H:%M", time.localtime(ms / 1000))
 
 
-@tool("todo", "Ahaan's todo list on the bar. action: list | add (with text) | edit | remove | show (open it "
-      "on screen). edit and remove find the task by text = its words or a unique part. edit changes any of: "
+@tool("todo", "Ahaan's todo list on the bar. action: list | add (with text; optionally due = today | "
+      "tomorrow | a weekday | YYYY-MM-DD, at = a time that day, urgent / important — a timed task still "
+      "ahead gets a reminder too) | edit | remove | show (open it on screen). edit and remove find the task by text = its words or a unique part. edit changes any of: "
       "new_text; urgent / important (true/false); due = today | tomorrow | a weekday | YYYY-MM-DD | none; "
       "at = a time on that day ('18:30', '6pm'; with no due, the task's current day or today) — a timed "
       "task still ahead gets its reminder moved with it. remove: he confirms on a card.",
@@ -645,9 +646,36 @@ def todo(a):
         return f"Edited {ttext!r}: " + "; ".join(said_) if out == "edited" else out
     if not text:
         raise Refused("add what?")
+    # A date, a time or a flag: the day view's rules through addWith (2026-11-11).
+    # Before, add took text only and a dated task needed a second call to edit.
+    due, at = (a.get("due") or "").strip().lower(), (a.get("at") or "").strip()
+    flags = {k: a[k] for k in ("urgent", "important") if isinstance(a.get(k), bool)}
+    if due or at or flags:
+        f, when = dict(flags), ""
+        if due == "none":
+            due = ""
+        if due or at:
+            b = time.localtime(day(due) if due else day("today"))
+            if at:
+                mins = clock(at)
+                f["due"] = int(time.mktime((b.tm_year, b.tm_mon, b.tm_mday, mins // 60, mins % 60, 0, 0, 0, -1)) * 1000)
+                f["timed"] = True
+            else:
+                f["due"] = int(time.mktime((b.tm_year, b.tm_mon, b.tm_mday, 0, 0, 0, 0, 0, -1)) * 1000)
+                f["timed"] = False
+            when = stamp(f["due"]) if f["timed"] else time.strftime("%a %d %b", b)
+        said_ = text + (f"  (due {when})" if when else "")
+        if not gate("todo", a, "Add this task?", said_):
+            raise Refused("Ahaan said no")
+        out = qs("todo", "addWith", "--", text, json.dumps(f))
+        if out != "ok":
+            return out
+        late = f.get("timed") and f["due"] <= time.time() * 1000
+        return f"Added: {said_}" + (" (that time has passed, so no reminder)" if late else
+                                     " — with a reminder" if f.get("timed") else "")
     if not gate("todo", a, "Add this task?", text):
         raise Refused("Ahaan said no")
-    qs("todo", "add", text)
+    qs("todo", "add", "--", text)
     return f"Added: {text}"
 
 
@@ -722,6 +750,50 @@ def reminder(a):
         raise Refused("Ahaan said no")
     r = act.reminder({"text": a["text"], "minutes": a.get("in_minutes"), "at": a.get("at")}, False)
     return r["msg"]
+
+
+@tool("notes", "Ahaan's quick notes pad on the bar (SUPER+SHIFT+W): one page of plain text he jots "
+      "in. action: read | append (text = line(s) added at the end) | replace (text = the whole new page; "
+      "he confirms on a card) | show (open it on screen). Reading it counts as a read (web goes off). "
+      "To change one line, read, then replace with the page as it should be.",
+      {"action": {"type": "string", "enum": ["read", "append", "replace", "show"]}, "text": S},
+      ["action"])
+def notes(a):
+    # 2026-11-11, with the pad (shell/Notes.qml). Everything goes through the
+    # shell's IPC, never the file: the pad saves what it holds, so a write
+    # beside it would be overwritten by the next keystroke's save.
+    #
+    # read SEALS, unlike the todo list. A task is a line Ahaan wrote for the
+    # bar; this pad is where text gets pasted — an address, a code, a token
+    # copied to keep for a minute — so it is treated as a file: redacted,
+    # and the web is off for the rest of the conversation.
+    act_ = a["action"]
+    if act_ == "show":
+        qs("notes", "open")
+        return "Notes open."
+    if act_ == "read":
+        mark_read("the notes pad")
+        body = qs("notes", "read")
+        if body.startswith("error:"):
+            raise Refused("could not read the notes (is the shell running?)")
+        body, n = policy.redact(body)
+        return (body or "(the notes pad is empty)") + (f"\n\n[{n} secret-looking value(s) were redacted]" if n else "")
+    text = (a.get("text") or "").rstrip()
+    if act_ == "append":
+        if not text.strip():
+            raise Refused("append what?")
+        if not gate("notes", a, "Add this to your notes?", text):
+            raise Refused("Ahaan said no")
+        # "--": a note starting with "-" (a list item) is a flag to qs.
+        out = qs("notes", "append", "--", text)
+        return "Added to notes." if out == "appended" else out
+    # replace: everything that was there goes, so always a card, web or not,
+    # as todo's remove is — with the new page on it, which is what he is
+    # agreeing to.
+    if not ask("action", "Replace your notes with this?", text or "(an empty page)", "Yes, replace them"):
+        raise Refused("Ahaan said no")
+    out = qs("notes", "set", "--", text)
+    return "Notes replaced." if out == "saved" else out
 
 
 @tool("agenda", "Today at a glance: date and time, the todo list (with due dates) and reminders. "
@@ -963,10 +1035,297 @@ def bluetooth(a):
     return f"{'Done' if ok else 'Failed'}: {act_} {name}" + ("" if ok else f" ({out.strip().splitlines()[-1:]})")
 
 
+# the desktop's own switches (2026-11-11)
+#
+# Ahaan asked for these from the list of things EVE could do safely that were
+# not built: dated tasks (todo above), window control, the clipboard, audio
+# outputs and app volumes, power profile / night light / do not disturb,
+# notification history and downloads. Theme, settings pages, wifi and
+# lock/suspend were left out on purpose. Every one below is reversible by
+# saying the opposite, so they use gate() (free, asks only after a web page
+# this turn), like volume and bluetooth.
+
+@tool("window", "Arrange windows. action: focus | move (to workspace) | fullscreen | float (toggle "
+      "floating/tiled) | workspace (switch to workspace N; no app). app = the app's name, or 'active' "
+      "for the focused window (the default).",
+      {"action": {"type": "string", "enum": ["focus", "move", "fullscreen", "float", "workspace"]},
+       "app": S, "workspace": I}, ["action"])
+def window(a):
+    # act.window and act.workspace were written for the old planner and never
+    # exposed after the move to Claude.
+    if a["action"] == "workspace":
+        n = a.get("workspace")
+        if not isinstance(n, int) or not 1 <= n <= 10:
+            raise Refused("which workspace? 1-10")
+        return act.workspace({"n": n}, False)["msg"]
+    if a["action"] == "move" and not a.get("workspace"):
+        raise Refused("move it to which workspace?")
+    app = (a.get("app") or "active").strip()
+    act._SAID[0] = said()
+    r = act.window({"app": app, "action": a["action"], "workspace": a.get("workspace")}, False)
+    if r["kind"] != "done":
+        raise Refused(r["msg"])
+    return r["msg"]
+
+
+@tool("clipboard", "Put text on Ahaan's clipboard so he can paste it (a command, an address, a reply "
+      "draft). Copy only: you cannot read the clipboard.", {"text": S}, ["text"])
+def clipboard(a):
+    # Write-only on purpose. Reading it would hand Claude whatever was last
+    # copied anywhere — a password from the manager, a token — so that would
+    # have to seal; nobody asked for it. Writing moves nothing off the machine.
+    text = a.get("text") or ""
+    if not text.strip():
+        raise Refused("copy what?")
+    if not gate("clipboard", a, "Copy this to the clipboard?", text[:400]):
+        raise Refused("Ahaan said no")
+    # wl-copy forks a server that holds the selection; DEVNULL for its stdout
+    # and stderr so it inherits no pipe (the SIGPIPE rule).
+    try:
+        subprocess.run(["wl-copy", "--", text], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=5, start_new_session=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Refused(f"could not copy: {e}")
+    return f"Copied ({len(text)} characters)."
+
+
+def _sinks():
+    """Output devices, as Ahaan would name them. The raw laptop "Speaker" is
+    left out when "Speaker Pro" exists: that is the bass-routing filter in
+    front of the broken right driver (system map, Audio), and playing to the
+    raw sink would bypass it."""
+    try:
+        sinks = json.loads(act.sh(["pactl", "-f", "json", "list", "sinks"]) or "[]")
+    except ValueError:
+        sinks = []
+    names = {x.get("description") for x in sinks}
+    return [x for x in sinks if not (x.get("description") == "Speaker" and "Speaker Pro" in names)]
+
+
+def _app_streams():
+    """What apps are playing, without the plumbing. Measured 2026-11-11: the
+    bass-route filter's own output (node.name effect_output.bassroute, which
+    feeds the raw speaker) is a sink-input too, named "Speaker Pro". Listed
+    as an app it reads as nonsense; MOVED to another output with the apps it
+    would break the speaker chain. A filter or loopback carries
+    node.link-group / node.virtual; an app's stream has neither."""
+    try:
+        streams = json.loads(act.sh(["pactl", "-f", "json", "list", "sink-inputs"]) or "[]")
+    except ValueError:
+        return []
+    out = []
+    for x in streams:
+        pr = x.get("properties", {})
+        if pr.get("node.link-group") or pr.get("node.virtual") == "true":
+            continue
+        out.append((x, pr.get("application.name") or pr.get("media.name") or "?"))
+    return out
+
+
+@tool("audio", "Where sound plays, and each app's volume — the same things the bar's volume panel and "
+      "wiremix do. action: outputs (list them) | output (all sound to `device`, as outputs names it) | "
+      "apps (what is playing, its volume and device) | app_output (one app to `device`) | app_volume "
+      "(app + level 0-150, or mute true/false).",
+      {"action": {"type": "string", "enum": ["outputs", "output", "apps", "app_output", "app_volume"]},
+       "device": S, "app": S, "level": I, "mute": {"type": "boolean"}}, ["action"])
+def audio(a):
+    # Ahaan, 2026-11-11: "Let eve do whatever my manual audio settings does
+    # already. No new stuff" — so each action is one thing he can already do
+    # by hand, and nothing more:
+    #   output      the volume panel's pick (Bar.qml audSetSink:
+    #               Pipewire.preferredDefaultAudioSink), which is
+    #               `pactl set-default-sink`: it sets the configured default,
+    #               and WirePlumber moves every app that follows the default.
+    #   app_output  wiremix moving one app: `pactl move-sink-input`.
+    #   app_volume  wiremix's per-app slider and mute.
+    # Whatever WirePlumber does afterwards with those choices (a configured
+    # default outranks Bluetooth's priority; a moved app is remembered) is
+    # what it already does for his own clicks.
+    act_ = a["action"]
+    sinks = _sinks()
+    label = lambda x: x.get("description") or x["name"]
+
+    def device():
+        want = (a.get("device") or "").strip()
+        best = max(sinks, key=lambda x: act.similar(want, label(x)), default=None)
+        if not want or not best or act.similar(want, label(best)) < 0.6:
+            raise Refused("no output matches; they are: " + ", ".join(label(x) for x in sinks))
+        return best
+
+    if act_ == "outputs":
+        cur = act.sh(["pactl", "get-default-sink"]).strip()
+        return "\n".join(f"{'▶ ' if x['name'] == cur else '  '}{label(x)}" for x in sinks)
+    if act_ == "output":
+        best = device()
+        if not gate("audio", a, "Play through this?", label(best)):
+            raise Refused("Ahaan said no")
+        act.sh(["pactl", "set-default-sink", best["name"]])
+        return f"Sound now plays through {label(best)}."
+    streams = [(x, n) for x, n in _app_streams() if n != "?"]
+    if act_ == "apps":
+        if not streams:
+            return "Nothing is playing."
+        where = {x["index"]: label(x) for x in sinks}
+        def vol(x):
+            v = next(iter((x.get("volume") or {}).values()), {})
+            return v.get("value_percent", "?")
+        return "\n".join(f"{n}: {vol(x)}{' (muted)' if x.get('mute') else ''} on {where.get(x.get('sink'), '?')}"
+                         for x, n in streams)
+    want = (a.get("app") or "").strip()
+    hits = [(x, n) for x, n in streams if want and act.similar(want, n) >= 0.6]
+    if not hits:
+        raise Refused("no playing app matches; playing: " + (", ".join(n for _, n in streams) or "nothing"))
+    names = ", ".join(sorted({n for _, n in hits}))
+    if act_ == "app_output":
+        best = device()
+        if not gate("audio", a, f"Move {names} to this?", label(best)):
+            raise Refused("Ahaan said no")
+        for x, _ in hits:
+            act.sh(["pactl", "move-sink-input", str(x["index"]), best["name"]])
+        return f"{names} now plays through {label(best)}."
+    if "mute" not in a and a.get("level") is None:
+        raise Refused("set it to what? level 0-150, or mute")
+    if a.get("level") is not None and not 0 <= a["level"] <= 150:
+        raise Refused("level must be 0-150")
+    for x, _ in hits:
+        if isinstance(a.get("mute"), bool):
+            act.sh(["pactl", "set-sink-input-mute", str(x["index"]), "1" if a["mute"] else "0"])
+        if a.get("level") is not None:
+            act.sh(["pactl", "set-sink-input-volume", str(x["index"]), f"{a['level']}%"])
+    what = ("muted" if a.get("mute") else "unmuted") if isinstance(a.get("mute"), bool) else f"at {a['level']}%"
+    return f"{names} {what}."
+
+
+@tool("power", "Power profile and night light. action: profile (get, or set `value` = power-saver | "
+      "balanced | performance) | night_light (value = on | off | status, or a temperature in kelvin "
+      "like 4000).", {"action": {"type": "string", "enum": ["profile", "night_light"]}, "value": S},
+      ["action"])
+def power(a):
+    # The same two scripts the battery and display panels call, so the bar's
+    # own indicators follow (power-profile.sh owns which daemon answers).
+    v = (a.get("value") or "").strip().lower()
+    if a["action"] == "profile":
+        if not v or v == "get":
+            return "Power profile: " + act.sh([str(SCRIPTS / "power-profile.sh"), "get"]).strip()
+        if v not in ("power-saver", "balanced", "performance"):
+            raise Refused("power-saver, balanced or performance")
+        if not gate("power", a, "Switch power profile?", v):
+            raise Refused("Ahaan said no")
+        act.sh([str(SCRIPTS / "power-profile.sh"), "set", v], timeout=10)
+        return "Power profile: " + act.sh([str(SCRIPTS / "power-profile.sh"), "get"]).strip()
+    nl = str(SCRIPTS / "nightlight.sh")
+
+    def status():
+        # nightlight.sh status prints "<on|off>|<kelvin>".
+        st, _, k = act.sh([nl, "status"]).strip().partition("|")
+        return f"Night light: {st or '?'}" + (f" ({k} K)" if k else "")
+    if not v or v == "status":
+        return status()
+    if v in ("on", "off"):
+        args = [v]
+    elif re.fullmatch(r"\d{4}", v) and 1000 <= int(v) <= 6500:
+        args = ["set", v]
+    else:
+        raise Refused("on, off, status, or a temperature 1000-6500")
+    if not gate("power", a, "Night light?", " ".join(args)):
+        raise Refused("Ahaan said no")
+    # nightlight.sh starts hyprsunset detached itself.
+    act.sh([nl, *args], timeout=10)
+    return status()
+
+
+@tool("notifications", "Ahaan's notification center on the bar. action: list (what came in) | clear | "
+      "dnd (value on|off: do not disturb) | show. Reading the list counts as a read (web goes off).",
+      {"action": {"type": "string", "enum": ["list", "clear", "dnd", "show"]}, "value": S}, ["action"])
+def notifications(a):
+    act_ = a["action"]
+    if act_ == "show":
+        qs("notifications", "open")
+        return "Notification center open."
+    if act_ == "list":
+        # Other apps' words — a message preview, a 2FA code — so it is treated
+        # like a file: sealed first, then redacted.
+        mark_read("the notification history")
+        body, n = policy.redact(qs("notifications", "list"))
+        return (body or "(no notifications)") + (f"\n\n[{n} secret-looking value(s) were redacted]" if n else "")
+    if act_ == "clear":
+        if not ask("action", "Clear all notifications?", "The notification center empties.", "Yes, clear them"):
+            raise Refused("Ahaan said no")
+        qs("notifications", "clear")
+        return "Notifications cleared."
+    v = (a.get("value") or "").strip().lower()
+    if v not in ("on", "off"):
+        raise Refused("dnd on or off?")
+    if not gate("notifications", a, f"Do not disturb {v}?", ""):
+        raise Refused("Ahaan said no")
+    return "Do not disturb: " + (qs("notifications", "dnd", v) or v)
+
+
+@tool("downloads", "The newest files in ~/Downloads, newest first, with size and age (names only, never "
+      "contents). Open one with open_file.", {"count": I})
+def downloads(a):
+    d = HOME / "Downloads"
+    n = max(1, min(int(a.get("count") or 10), 30))
+    try:
+        files = [p for p in d.iterdir() if not p.name.startswith(".") and act.safe(p)]
+    except OSError:
+        return "No Downloads folder."
+    # A browser's half-finished download is not a file yet.
+    files = [p for p in files if not p.name.endswith((".part", ".crdownload", ".tmp"))]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        return "Downloads is empty."
+    def size(p):
+        if p.is_dir():
+            return "folder"
+        b = p.stat().st_size
+        for u in ("B", "KB", "MB", "GB"):
+            if b < 1024 or u == "GB":
+                return f"{b:.0f} {u}" if u == "B" else f"{b:.1f} {u}"
+            b /= 1024
+    def age(p):
+        m = (time.time() - p.stat().st_mtime) / 60
+        return f"{m:.0f} min ago" if m < 60 else f"{m / 60:.0f} h ago" if m < 1440 else f"{m / 1440:.0f} d ago"
+    return "\n".join(f"{short(p)}  ({size(p)}, {age(p)})" for p in files[:n])
+
+
 # windows and apps
 
-@tool("open_app", "Open an app by name (e.g. 'spotsie', 'zen', 'kitty'); if it is already open it is "
-      "brought forward. workspace optional.", {"app": S, "workspace": I}, ["app"])
+@tool("open_url", "Open a web page in a browser on Ahaan's screen. url = an address ('github.com', "
+      "'https://…'); or query = words to search (site = 'youtube', 'amazon', 'github', 'reddit', "
+      "'wikipedia', 'maps', or a domain, searches that site; images=true for an image search). Opens in "
+      "his DEFAULT browser (Settings → Defaults); browser = a name only when he names one. Never use "
+      "open_app for a website.",
+      {"url": S, "query": S, "site": S, "images": {"type": "boolean"}, "browser": S, "workspace": I})
+def open_url(a):
+    # Ahaan, 2026-11-10: "open <site>" went to open_app("zen") — there was no
+    # tool that opens a page, and open_app's own description offered zen as
+    # its example — then "use chromium" opened the ChatGPT web app (act.py,
+    # exec_name). act.open_url has always opened in DEFAULT_BROWSER; it just
+    # was not reachable from here.
+    #
+    # Sealed: refused. The address is the payload — a page opened with text
+    # from a file in its query string has carried that text out, whoever's
+    # browser makes the request. Same flat rule as WebSearch/WebFetch after a
+    # read (chat.py's gate), not a card: Ahaan dropped per-call cards there.
+    if sealed():
+        raise Refused("this conversation has read local files, so it cannot open web pages; "
+                      "start a new conversation for that")
+    args = {k: a[k] for k in ("url", "query", "site", "images", "browser", "workspace") if a.get(k)}
+    if not any(k in args for k in ("url", "query", "site")):
+        raise Refused("open what? give a url, or words to search")
+    what = args.get("url") or " ".join(x for x in (args.get("site"), args.get("query")) if x)
+    if not gate("open_url", a, "Open this page?", what):
+        raise Refused("Ahaan said no")
+    r = act.open_url(args, False)
+    if r["kind"] != "done":
+        raise Refused(r["msg"])
+    return r["msg"]
+
+
+@tool("open_app", "Open an app by name (e.g. 'spotsie', 'kitty', 'obsidian'); if it is already open it is "
+      "brought forward. 'browser' / 'terminal' mean his default ones. For a website use open_url, not "
+      "this. workspace optional.", {"app": S, "workspace": I}, ["app"])
 def open_app(a):
     if not gate("open_app", a, "Open this app?", a["app"]):
         raise Refused("Ahaan said no")

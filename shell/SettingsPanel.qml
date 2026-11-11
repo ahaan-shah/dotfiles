@@ -161,6 +161,10 @@ Rectangle {
     function beginRebind(i) {
         const r = panel.rows[i]
         if (!r || r.kind !== "keybind") return
+        // Push-to-talk and anything else that is not an hl.bind: shown, but
+        // nothing would read a reassignment (see list-keybinds.sh).
+        if (r.fixed) { Settings.notify("Can't reassign " + r.value,
+                                       "This key is not a normal bind; change it in hyprland.lua"); return }
         // The DECLARED combo is r.id; r.value is whatever is in force.
         panel.requestRebind(r.id, r.title, r.value || "")
     }
@@ -533,14 +537,14 @@ Rectangle {
                                && panel.pageKey === "setup/keybindings") {
                         // Back to what hyprland.lua declares, for this bind only.
                         const r = panel.rows[panel.sel]
-                        if (r && r.kind === "keybind") {
+                        if (r && r.kind === "keybind" && !r.fixed) {
                             list.rememberScroll()
                             Settings.resetKeybind(r.id)
                         }
                         event.accepted = true
                     } else if (event.key === Qt.Key_R
                                && (event.modifiers & (Qt.ControlModifier | Qt.ShiftModifier))
-                               && panel.pageKey === "setup/windowrules") {
+                               && Settings.listPageKeyOf(panel.pageKey) === "setup/windowrules") {
                         // Everything back to what hyprland.lua hardcodes. The
                         // one escape hatch the page needs: a rule set to
                         // something unusable — opacity 0.1, animations off —
@@ -944,8 +948,18 @@ Rectangle {
                         Text {
                             id: trailT
                             width: parent.w
-                            x: Math.min(parent.width - panel.valueMid - parent.w / 2,
-                                        parent.width + panel.valueOver - 4 - parent.w)
+                            // On a page with number boxes (Window rules'
+                            // Animations row), the trail starts where a value
+                            // row's unit starts: that unit slot is the last 20 px
+                            // of the column, text 4 px in, so 16 from its right
+                            // edge. Both rows end at the same tick slot. Ahaan,
+                            // 2026-11-11: "align the on with the px". It may
+                            // spill right into the tick slot, which is empty on
+                            // a menu row.
+                            x: panel.boxCol
+                               ? parent.width - 16
+                               : Math.min(parent.width - panel.valueMid - parent.w / 2,
+                                          parent.width + panel.valueOver - 4 - parent.w)
                             text: row.modelData.trail || ""
                             color: Theme.dimmer
                             font.family: Theme.font

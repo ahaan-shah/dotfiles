@@ -471,6 +471,16 @@ hl.config({
         preserve_split = true,
     },
 
+    -- Hover focus scrolls the strip to the window only when at least this
+    -- fraction of it is already on screen (Hyprland's default is 0.4). With
+    -- the default, the column peeking in on the left slid into view on hover
+    -- and the one on the right took focus but stayed cut off until clicked
+    -- (Ahaan's screencast, 2026-11-11). 0 makes every hover-focus follow.
+    -- Ignored outside the scrolling layout.
+    scrolling = {
+        follow_min_visible = 0,
+    },
+
     misc = {
         force_default_wallpaper = 1,
         disable_hyprland_logo   = true,
@@ -485,33 +495,46 @@ hl.permission("/usr/(bin|local/bin)/hyprpm", "plugin", "allow")
 -- Points are given as a list of {x, y} control-point pairs.
 hl.curve("linear", { type = "bezier", points = { {0, 0}, {1, 1} } })
 hl.curve("swirl",  { type = "bezier", points = { {0.02, 1}, {0.2, 1.2} } })
+-- Ease-out with no overshoot: both control points stop at y = 1. For
+-- windowsMove, below.
+hl.curve("glide",  { type = "bezier", points = { {0.22, 1}, {0.36, 1} } })
 
 -- animation = NAME, ONOFF, SPEED, CURVE[, STYLE]  →  hl.animation({...})
 -- A style like "popin 0%" goes in the `style` field.
 --
--- The settings menu offers ONE animation speed rather than six, because the
--- six are already balanced against each other — a special workspace slides at
--- twice the rate a window pops for a reason. So WIN_ANIM_SPEED multiplies all
--- of them and the relationship survives. The base numbers below stay the
--- reference; window-rules.sh repeats them to apply a change live without a
--- reload, and that is the one place the two files have to agree.
+-- Each leaf's length is its own setting since 2026-11-11 (Ahaan: "add it in
+-- the settings menu too so i can adjust for all this"). They are in
+-- Settings > Window rules > Animations, as WIN_ANIM_*_MS in window.conf, in
+-- milliseconds. Hyprland's speed is tenths of a second, so ms / 100.
+-- WIN_ANIM_SPEED still multiplies every one of them, so the balance between
+-- them can be kept while the whole desktop gets faster or slower. The
+-- defaults below must match window-rules.sh's table, which is also what
+-- re-applies them live (apply_anim_all) without a reload.
 --
 -- Floored at a tenth: Hyprland treats a speed of 0 as a dead animation rather
 -- than an instant one, so a multiplier small enough to round there would
 -- freeze windows mid-open instead of making them snappy.
 local aspd = wnum("WIN_ANIM_SPEED", 1)
-local function spd(base)
-    local v = base * aspd
+local function spd(key, ms)
+    local v = wnum(key, ms) / 100 * aspd
     if v < 0.1 then v = 0.1 end
     return v
 end
 
-hl.animation({ leaf = "windows",            enabled = true, speed = spd(3), bezier = "swirl",  style = "popin 0%" })
-hl.animation({ leaf = "windowsOut",         enabled = true, speed = spd(3), bezier = "linear", style = "popin 0%" })
-hl.animation({ leaf = "fade",               enabled = true, speed = spd(2), bezier = "linear" })
-hl.animation({ leaf = "workspaces",         enabled = true, speed = spd(2), bezier = "linear" })
-hl.animation({ leaf = "specialWorkspaceIn", enabled = true, speed = spd(6), bezier = "swirl",  style = "slidefadevert -50%" })
-hl.animation({ leaf = "specialWorkspaceOut",enabled = true, speed = spd(6), bezier = "swirl",  style = "fade" })
+hl.animation({ leaf = "windows",            enabled = true, speed = spd("WIN_ANIM_OPEN_MS", 300),  bezier = "swirl",  style = "popin 0%" })
+hl.animation({ leaf = "windowsOut",         enabled = true, speed = spd("WIN_ANIM_CLOSE_MS", 300), bezier = "linear", style = "popin 0%" })
+-- windowsMove covers every move of an already-mapped window. That includes
+-- the scrolling strip sliding to a newly focused column, and tiled windows
+-- re-laying out. With no leaf of its own it inherited `windows`. swirl
+-- overshoots to y = 1.2, so the strip slid past the column and came back
+-- (Ahaan, 2026-11-11 screencast: "comes in a bit and then moves out
+-- again"). glide never passes 1. 500 ms was tried and Ahaan asked for 300
+-- back the same day; the curve is what fixed the bounce.
+hl.animation({ leaf = "windowsMove",        enabled = true, speed = spd("WIN_ANIM_MOVE_MS", 300),  bezier = "glide" })
+hl.animation({ leaf = "fade",               enabled = true, speed = spd("WIN_ANIM_FADE_MS", 200),  bezier = "linear" })
+hl.animation({ leaf = "workspaces",         enabled = true, speed = spd("WIN_ANIM_WORKSPACE_MS", 200), bezier = "linear" })
+hl.animation({ leaf = "specialWorkspaceIn", enabled = true, speed = spd("WIN_ANIM_SPECIAL_IN_MS", 600),  bezier = "swirl",  style = "slidefadevert -50%" })
+hl.animation({ leaf = "specialWorkspaceOut",enabled = true, speed = spd("WIN_ANIM_SPECIAL_OUT_MS", 600), bezier = "swirl",  style = "fade" })
 
 -- The Alt-Tab switcher draws its own 160 ms fade, and since 2026-11-06 its surface
 -- is mapped per open (MacShell.qml). A layer surface inherits `fade` on map, so
@@ -647,7 +670,7 @@ hl.bind(mainMod .. " + W", hl.dsp.window.float({ action = "toggle" }))
 -- no-ops and the window keeps the size its rule gave it), so a bind has to
 -- arrive with pixels already computed, and computing them means asking
 -- hyprctl which monitor has focus and how big it is.
--- desc: Fills the screen with the focused window
+-- desc: Fills the screen with the focused window (scrolling: toggles its column full/half width)
 hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("~/.config/scripts/window-zoom.sh"))
 -- desc: Toggles fullscreen
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
@@ -794,6 +817,11 @@ hl.bind("SUPER + SHIFT + C", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call cal
 -- desc: Toggles the todo list
 hl.bind("SUPER + SHIFT + T", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call todo toggle"))
 
+-- Quick notes (shell/Notes.qml, 2026-11-11). One page of plain text in the
+-- same island, cursor at the end; same toggle semantics as the todo list.
+-- desc: Toggles quick notes
+hl.bind("SUPER + SHIFT + W", hl.dsp.exec_cmd("qs -p ~/.config/shell ipc call notes toggle"))
+
 -- Gita reader (shell/Gita.qml). Same island, same toggle semantics as the
 -- todo list above; until now the bar button was its only way in.
 -- desc: Toggles the Gita reader
@@ -838,8 +866,8 @@ hl.bind("CTRL + period", hl.dsp.exec_cmd("voxtype record toggle"))
 -- bind with a Lua callback did not run, the event did). This handler can be
 -- tested, and it sees the raw key: (xkb keycode, ?, 1 down / 0 up). Measured on
 -- 0.57.1: one down and one up per hold, no autorepeat events (a 700 ms hold).
--- The cost: it is not on the Settings › Keybindings page and cannot be moved
--- from there.
+-- The cost: it cannot be moved from Settings › Keybindings. It is listed there
+-- (2026-11-10) as a fixed row that list-keybinds.sh adds by hand.
 --
 -- 108 is xkb's <RALT> (evdev KEY_RIGHTALT 100 + 8), the same on every Linux
 -- keyboard and unchanged by keyd, which only remaps capslock here.

@@ -253,7 +253,7 @@ def find_entry(name):
         s = max(similar(name, e.get("Name", "")), similar(name, e["id"]),
                 similar(name, e["id"].split(".")[-1]),
                 similar(name, e.get("StartupWMClass", "")),
-                similar(name, os.path.basename(shlex.split(e["Exec"])[0]) if e["Exec"] else ""),
+                similar(name, exec_name(e)),
                 0.85 if n and n in norm(e.get("Keywords", "")) else 0)
         if s >= 0.75:
             scored.append((s, e))
@@ -266,10 +266,30 @@ def find_entry(name):
 
 
 def entry_class_names(e):
-    names = {e["id"], e["id"].split(".")[-1], e.get("StartupWMClass", ""), e.get("Name", "")}
-    if e.get("Exec"):
-        names.add(os.path.basename(shlex.split(e["Exec"])[0]))
+    names = {e["id"], e["id"].split(".")[-1], e.get("StartupWMClass", ""), e.get("Name", ""), exec_name(e)}
     return {norm(x) for x in names if x}
+
+
+def is_web_app(e):
+    """A site wrapped as an app: `chromium --app=https://…` (the web apps in
+    ~/.local/share/applications), or a browser's own PWA launcher."""
+    return bool(re.search(r"(^|\s)--app(=|\s)|--app-id=", e.get("Exec") or ""))
+
+
+def exec_name(e):
+    """The binary an entry runs, as a name it may be asked for by — except a
+    web app's, which is the BROWSER's. Measured 2026-11-10: "open chromium"
+    reached open_app("chromium"), and every web app here (ChatGPT, WhatsApp,
+    X…) runs `chromium --app=…`, so each scored 1.0 against "chromium", tied
+    with chromium.desktop itself, and the user entries sort first: EVE said
+    "Opened ChatGPT". The same name in entry_class_names made a plain Chromium
+    window count as "WhatsApp is already open"."""
+    if not e.get("Exec") or is_web_app(e):
+        return ""
+    try:
+        return os.path.basename(shlex.split(e["Exec"])[0])
+    except ValueError:
+        return ""
 
 
 # ── windows ──────────────────────────────────────────────────────────────────

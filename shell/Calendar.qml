@@ -20,6 +20,11 @@
 // due that day; given a time still ahead, it gets a reminder too, which it
 // owns (TodoState.rid): editing the task moves it, checking it off or
 // deleting it drops it.
+// Since 2026-11-11 the day lists more than the tasks made here: a task from
+// the todo list is on the day it was written, and a reminder set in the
+// reminders panel is on the day it fires, by its time, with a bell for a box
+// (CalendarState.dayAgenda has the rules). Delete removes a reminder; the
+// other keys below are a task's and leave a reminder row alone.
 // The day's tasks are worked as in the todo list: Up from the box walks into
 // them, Enter checks one off, Delete removes it, Ctrl+U / Ctrl+I flip its
 // chips. Ctrl+E (or a double-click) loads it into the box to edit; Enter
@@ -115,28 +120,35 @@ Scope {
         // An id for the todo list's reason: a check-off or an edit re-sorts
         // the list, and a row number would then point at another task.
         property string selId: ""
+        // Over the day's AGENDA: its tasks and, since 2026-11-11, its own
+        // reminders (CalendarState.dayAgenda). A reminder row is kind "rem";
+        // Delete removes it, and the task-only keys (Enter, Ctrl+U/I/E)
+        // leave it alone.
         readonly property int sel: {
-            const d = CalendarState.dayTasks
+            const d = CalendarState.dayAgenda
             for (let i = 0; i < d.length; i++) if (d[i].id === selId) return i
             return -1
         }
         onSelChanged: if (selId !== "" && sel < 0) selId = ""
         function selectRow(i) {
-            const d = CalendarState.dayTasks
+            const d = CalendarState.dayAgenda
             selId = i >= 0 && i < d.length ? d[i].id : ""
         }
-        function selected() { return CalendarState.dayTasks.find(x => x.id === selId) }
+        function selected() { return CalendarState.dayAgenda.find(x => x.id === selId) }
+        function selectedTask() { const t = selected(); return t && t.kind === "task" ? t : null }
         function dropSel() {
-            const d = CalendarState.dayTasks, i = sel
-            const id = selId
+            const d = CalendarState.dayAgenda, i = sel
+            const r = d[i]
             selId = i + 1 < d.length ? d[i + 1].id : i > 0 ? d[i - 1].id : ""
-            TodoState.remove(id)
+            if (!r) return
+            if (r.kind === "rem") RemindersState.remove(r.rid)
+            else TodoState.remove(r.id)
         }
 
         // ── editing ───────────────────────────────────────────────────
         property string editId: ""
         function startEdit(t) {
-            if (!t) return
+            if (!t || t.kind === "rem") return
             editId = t.id
             selId = ""
             taskInput.text = t.text
@@ -186,7 +198,10 @@ Scope {
         // one's; Ctrl+E edits the selected task. As in the todo list.
         function ctrlKeys(event) {
             if (!(event.modifiers & Qt.ControlModifier)) return
-            const t = sel >= 0 ? selected() : null
+            const t = sel >= 0 ? selectedTask() : null
+            // A reminder selected: its chips do not exist, and the new
+            // task's are not what the keys are pointing at either.
+            if (sel >= 0 && !t) { event.accepted = true; return }
             if (event.key === Qt.Key_U) {
                 if (t) { if (!t.done) TodoState.setFlags(t.id, !t.urgent, t.important) }
                 else newUrgent = !newUrgent
@@ -483,8 +498,11 @@ Scope {
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         readonly property int open: CalendarState.dayTasks.filter(x => !x.done).length
-                        visible: CalendarState.dayTasks.length > 0
-                        text: open + (open === 1 ? " task" : " tasks")
+                        readonly property int rems: CalendarState.dayReminders.length
+                        visible: CalendarState.dayAgenda.length > 0
+                        text: [CalendarState.dayTasks.length > 0 ? open + (open === 1 ? " task" : " tasks") : "",
+                               rems > 0 ? rems + (rems === 1 ? " reminder" : " reminders") : ""]
+                              .filter(x => x).join("  ·  ")
                         font.family: Theme.font
                         font.pixelSize: Theme.fsRow
                         color: Theme.dim
@@ -506,14 +524,15 @@ Scope {
                     clip: true
                     interactive: contentHeight > height
                     boundsBehavior: Flickable.StopAtBounds
-                    model: CalendarState.dayTasks
+                    model: CalendarState.dayAgenda
                     delegate: Item {
                         id: trow
                         required property var modelData
                         required property int index
+                        readonly property bool rem: modelData.kind === "rem"
                         readonly property bool selected: modelData.id === win.selId
                         readonly property bool editing: modelData.id === win.editId
-                        readonly property bool chipsShown: !modelData.done && (selected || rowHover.hovered)
+                        readonly property bool chipsShown: !rem && !modelData.done && (selected || rowHover.hovered)
                         width: dayList.width
                         height: 38
                         HoverHandler { id: rowHover }
@@ -530,18 +549,24 @@ Scope {
                             width: 8; height: 8; radius: 4
                             color: TodoState.quadColor(TodoState.quadrantOf(trow.modelData.urgent, trow.modelData.important))
                             opacity: trow.modelData.done ? 0.35 : 1
+                            // A reminder has no quadrant; its bell is enough.
+                            visible: !trow.rem
                         }
                         Text {
                             id: tbox
                             x: 30
                             anchors.verticalCenter: parent.verticalCenter
                             width: 18
-                            text: trow.modelData.done ? "󰄲" : "󰄱"
+                            // A reminder's bell, the due chip's glyph, where a
+                            // task has its box: nothing to check off, so no
+                            // hand cursor and no tap.
+                            text: trow.rem ? "󰂚" : trow.modelData.done ? "󰄲" : "󰄱"
                             font.family: Theme.font
                             font.pixelSize: Theme.fsRow + 2
-                            color: trow.modelData.done ? Theme.dimmer : tboxHover.hovered ? Theme.text : Theme.dim
-                            HoverHandler { id: tboxHover; cursorShape: Qt.PointingHandCursor }
-                            TapHandler { margin: 8; onTapped: { TodoState.toggle(trow.modelData.id); taskInput.forceActiveFocus() } }
+                            color: trow.rem ? (trow.modelData.fired ? Theme.dimmer : Theme.dim)
+                                 : trow.modelData.done ? Theme.dimmer : tboxHover.hovered ? Theme.text : Theme.dim
+                            HoverHandler { id: tboxHover; enabled: !trow.rem; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { margin: 8; enabled: !trow.rem; onTapped: { TodoState.toggle(trow.modelData.id); taskInput.forceActiveFocus() } }
                         }
                         Text {
                             anchors.left: tbox.right; anchors.leftMargin: 10
@@ -566,7 +591,11 @@ Scope {
                             anchors.right: parent.right; anchors.rightMargin: 14
                             anchors.verticalCenter: parent.verticalCenter
                             visible: !trow.chipsShown
-                            text: trow.modelData.timed ? Qt.formatDateTime(new Date(trow.modelData.due), "hh:mm AP") : ""
+                            // A reminder that has gone off says so, as its
+                            // row in the reminders list does.
+                            text: !trow.modelData.timed ? ""
+                                : Qt.formatDateTime(new Date(trow.modelData.due), "hh:mm AP")
+                                  + (trow.rem && trow.modelData.fired ? "  ·  due" : "")
                             font.family: Theme.font
                             font.pixelSize: Theme.fsSub + 1
                             color: Theme.dim
@@ -636,17 +665,17 @@ Scope {
                             KeyNavigation.backtab: timeInput
                             onTextEdited: win.selId = ""
                             onAccepted: {
-                                if (win.sel >= 0) TodoState.toggle(win.selId)
+                                if (win.sel >= 0) { if (win.selectedTask()) TodoState.toggle(win.selId) }
                                 else win.commit()
                             }
                             Keys.onUpPressed: {
-                                const n = CalendarState.dayTasks.length
+                                const n = CalendarState.dayAgenda.length
                                 if (n === 0 || win.editId !== "") return
                                 win.selectRow(win.sel < 0 ? n - 1 : Math.max(0, win.sel - 1))
                             }
                             Keys.onDownPressed: {
                                 if (win.sel < 0) return
-                                win.selectRow(win.sel + 1 >= CalendarState.dayTasks.length ? -1 : win.sel + 1)
+                                win.selectRow(win.sel + 1 >= CalendarState.dayAgenda.length ? -1 : win.sel + 1)
                             }
                             Keys.onDeletePressed: event => {
                                 if (win.sel >= 0) win.dropSel()

@@ -52,14 +52,21 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # adding a rule is adding a line here plus one lookup in hyprland.lua, and
 # there is no second list to keep in step.
 #
-# Fields, tab-separated on output:
-#   KEY  label  description  kind  hyprctl-option  unit  min  max  step  default
+# Fields, tab-separated in the table:
+#   KEY  label  description  kind  hyprctl-option  unit  min  max  step  default  group
+# and on output (list):
+#   KEY  label  description  kind  value  unit  min  max  step  group
+#
+# `group`, optional, puts the row on a sub-page of that name instead of the
+# page itself: Settings.qml collapses a group into one menu row. Only
+# "Animations" uses it, since 2026-11-11, when each animation got its own
+# length and the page would otherwise have grown from 14 rows to 21.
 #
 # `hyprctl-option` is what getoption is asked for, and it is the live truth:
 # the menu shows what the compositor is ACTUALLY doing rather than what was
 # last written here, so a value changed by any other means still reads back
-# correctly. Two rows have no option and are reported from the store instead —
-# ANIM_SPEED and WINDOW_MODE; see current().
+# correctly. The rows with no option are reported from the store instead:
+# WINDOW_MODE, ANIM_SPEED and the WIN_ANIM_*_MS lengths. See current().
 #
 # WINDOW_MODE is first because it is the only row here that changes what the
 # desktop DOES rather than what it looks like, and because it is the one a
@@ -84,8 +91,15 @@ WIN_BLUR_SIZE	Blur size	Radius of one blur pass	int	decoration:blur:size	px	1	20
 WIN_BLUR_PASSES	Blur passes	How many times the blur is applied — costs GPU	int	decoration:blur:passes		1	10	1	5
 WIN_SHADOW_ENABLED	Shadow	Drop shadow under every window	bool	decoration:shadow:enabled					true
 WIN_SHADOW_RANGE	Shadow size	How far the shadow reaches	int	decoration:shadow:range	px	0	50	1	5
-WIN_ANIM_ENABLED	Animations	Every window and workspace animation at once	bool	animations:enabled					true
-WIN_ANIM_SPEED	Animation speed	Multiplies every animation — higher is faster	float		×	0.2	5	0.1	1
+WIN_ANIM_ENABLED	Animations	Every window and workspace animation at once	bool	animations:enabled					true	Animations
+WIN_ANIM_SPEED	Overall speed	Scales every animation below at once — higher is slower	float		×	0.2	5	0.1	1	Animations
+WIN_ANIM_OPEN_MS	Window open	A window popping in as it opens	int		ms	50	3000	50	300	Animations
+WIN_ANIM_CLOSE_MS	Window close	A window shrinking away as it closes	int		ms	50	3000	50	300	Animations
+WIN_ANIM_MOVE_MS	Window move	The scrolling strip sliding to a column, and tiled windows rearranging	int		ms	50	3000	50	300	Animations
+WIN_ANIM_FADE_MS	Fade	Windows and panels fading in and out	int		ms	50	3000	50	200	Animations
+WIN_ANIM_WORKSPACE_MS	Workspace switch	Sliding from one workspace to the next	int		ms	50	3000	50	200	Animations
+WIN_ANIM_SPECIAL_IN_MS	Special workspace in	The special workspace sliding down into view	int		ms	50	3000	50	600	Animations
+WIN_ANIM_SPECIAL_OUT_MS	Special workspace out	The special workspace fading away	int		ms	50	3000	50	600	Animations
 EOF
 )
 
@@ -321,27 +335,39 @@ apply_window_mode() {
     done <<< "$addrs"
 }
 
-# Every leaf, because the multiplier is global. The base speeds are the ones
-# hyprland.lua declares and they are repeated here — the one duplication in
+# Every leaf, because the multiplier is global. The curves and styles are the
+# ones hyprland.lua declares, repeated here. That is the one duplication in
 # this file, and it is deliberate: the alternative is `hyprctl reload`, which
 # re-parses the whole config and flickers the screen for what is one number.
-# If a leaf's base speed changes in hyprland.lua, change it here too.
-apply_anim_speed() {
-    local m="$1"
+# The default lengths are the table's, and hyprland.lua carries the same
+# numbers as its fallbacks. If one changes, change the other.
+#
+# Reads every value from the store, falling back to the table's default, so
+# one function serves a change to any of them.
+apply_anim_all() {
+    local m
     have hyprctl || return 0
-    apply_anim_leaf windows            3 swirl  "popin 0%"        "$m"
-    apply_anim_leaf windowsOut         3 linear "popin 0%"        "$m"
-    apply_anim_leaf fade               2 linear ""                "$m"
-    apply_anim_leaf workspaces         2 linear ""                "$m"
-    apply_anim_leaf specialWorkspaceIn 6 swirl  "slidefadevert -50%" "$m"
-    apply_anim_leaf specialWorkspaceOut 6 swirl "fade"            "$m"
+    m="$(stored WIN_ANIM_SPEED)"; [ -n "$m" ] || m=1
+    anim_ms() {
+        local v; v="$(stored "$1")"
+        [ -n "$v" ] || v="$(field "$(row_for "$1")" 10)"
+        printf '%s' "$v"
+    }
+    apply_anim_leaf windows             "$(anim_ms WIN_ANIM_OPEN_MS)"        swirl  "popin 0%"           "$m"
+    apply_anim_leaf windowsOut          "$(anim_ms WIN_ANIM_CLOSE_MS)"       linear "popin 0%"           "$m"
+    apply_anim_leaf windowsMove         "$(anim_ms WIN_ANIM_MOVE_MS)"        glide  ""                   "$m"
+    apply_anim_leaf fade                "$(anim_ms WIN_ANIM_FADE_MS)"        linear ""                   "$m"
+    apply_anim_leaf workspaces          "$(anim_ms WIN_ANIM_WORKSPACE_MS)"   linear ""                   "$m"
+    apply_anim_leaf specialWorkspaceIn  "$(anim_ms WIN_ANIM_SPECIAL_IN_MS)"  swirl  "slidefadevert -50%" "$m"
+    apply_anim_leaf specialWorkspaceOut "$(anim_ms WIN_ANIM_SPECIAL_OUT_MS)" swirl  "fade"               "$m"
 }
 
 apply_anim_leaf() {
-    local leaf="$1" base="$2" curve="$3" style="$4" mult="$5" spd expr
-    # Hyprland refuses a speed of 0 and the result is a dead animation rather
-    # than an instant one, so the product is floored at a tenth.
-    spd="$(awk -v b="$base" -v m="$mult" 'BEGIN{ s = b * m; if (s < 0.1) s = 0.1; printf "%g", s }')"
+    local leaf="$1" ms="$2" curve="$3" style="$4" mult="$5" spd expr
+    # Milliseconds to Hyprland's tenths of a second. Hyprland refuses a speed
+    # of 0 and the result is a dead animation rather than an instant one, so
+    # the product is floored at a tenth.
+    spd="$(awk -v b="$ms" -v m="$mult" 'BEGIN{ s = b / 100 * m; if (s < 0.1) s = 0.1; printf "%g", s }')"
     expr="hl.animation({ leaf = \"$leaf\", enabled = true, speed = $spd, bezier = \"$curve\""
     [ -n "$style" ] && expr="$expr, style = \"$style\""
     expr="$expr })"
@@ -415,7 +441,7 @@ cmd_list() {
             v = ($5 != "" && $5 in val) ? val[$5] \
               : ($1 in saved)           ? saved[$1] \
               :                           $10
-            print $1 "\t" $2 "\t" $3 "\t" $4 "\t" v "\t" $6 "\t" $7 "\t" $8 "\t" $9
+            print $1 "\t" $2 "\t" $3 "\t" $4 "\t" v "\t" $6 "\t" $7 "\t" $8 "\t" $9 "\t" $11
         }
     ' <(printf '%s\n' "$json") <(printf '%s\n' "$RULES")
 }
@@ -441,7 +467,12 @@ cmd_set() {
     if [ "$key" = "WIN_WINDOW_MODE" ]; then
         apply_window_mode "$val" || echo "window-rules: saved, but the live apply failed" >&2
     elif [ -z "$opt" ]; then
-        apply_anim_speed "$val"
+        # Every row left with no option is an animation length or the overall
+        # speed. Each leaf's live speed is the product of two stored values,
+        # so this one is written FIRST and apply_anim_all reads them all back.
+        # The write below repeats it, which is harmless.
+        write_conf "$key" "$val"
+        apply_anim_all
     elif [ "$key" = "WIN_GAPS_OUT" ]; then
         # Three edges, not four: the bar's edge stays 0 so windows meet the
         # bar's strip, the same shape hyprland.lua gives it at parse time.

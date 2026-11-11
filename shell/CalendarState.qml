@@ -131,10 +131,37 @@ Singleton {
     // dropdown recorded "today" going stale for the rest of the day without one.
     property var _clock: SystemClock { id: clock; precision: SystemClock.Minutes }
 
-    // Days with an open task on them, for the grid's dot.
+    // ── which day a task or reminder is on (2026-11-11) ────────────────
+    // Ahaan: "reminders and tasks set from their respective panels should
+    // also show up on the calendar day agenda for the day it is scheduled
+    // for … tasks default to for the day I set it on". Until then only a
+    // task made in the day view (with `due`) reached a day.
+    //   a task with a due date      that day (as before)
+    //   a task with none            the day it was written, `at` — not
+    //                               carried forward: it is a record of the
+    //                               day it was set, and the todo list is
+    //                               where open ones are worked from
+    //   a reminder                  the day it fires, `at`, whether it was
+    //                               set in minutes or at a time; "in 90
+    //                               minutes" at 11 PM lands tomorrow
+    //   a task's own reminder       not listed: the task already is, at
+    //                               the same time (TodoState.rid)
+    function taskDay(t) { return dayKey(new Date(t.due > 0 ? t.due : t.at)) }
+    readonly property var ownedRids: {
+        const s = {}
+        for (const t of TodoState.items) if (t.rid) s[t.rid] = true
+        return s
+    }
+    // The reminders the calendar lists: not a task's, and still in the
+    // store — a reminder is removed once acknowledged (RemindersState), so
+    // a cleared one leaves the day as it leaves the chip.
+    readonly property var reminders: RemindersState.items.filter(r => !ownedRids[r.id])
+
+    // Days with an open task or a pending reminder on them, for the grid's tint.
     readonly property var marked: {
         const s = {}
-        for (const t of TodoState.items) if (t.due > 0 && !t.done) s[dayKey(new Date(t.due))] = true
+        for (const t of TodoState.items) if (!t.done) s[taskDay(t)] = true
+        for (const r of reminders) if (!r.fired) s[dayKey(new Date(r.at))] = true
         return s
     }
 
@@ -166,11 +193,28 @@ Singleton {
         return (t - a) / (b - a)
     }
 
-    // The open day's tasks, timed ones by time first, then the rest.
+    // The open day's tasks, dated or written that day (taskDay).
     readonly property var dayTasks: {
         const k = dayKey(selDate)
-        return TodoState.items.filter(x => x.due > 0 && dayKey(new Date(x.due)) === k)
-            .sort((a, b) => (a.timed !== b.timed ? (a.timed ? -1 : 1) : a.due - b.due))
+        return TodoState.items.filter(x => taskDay(x) === k)
+    }
+    // The open day's own reminders, shaped as rows the day view can draw
+    // beside tasks: kind "rem", `id` prefixed so it can never equal a task's
+    // (the view selects by id), `rid` the store's.
+    readonly property var dayReminders: {
+        const k = dayKey(selDate)
+        return reminders.filter(r => dayKey(new Date(r.at)) === k)
+            .map(r => ({ kind: "rem", id: "rem:" + r.id, rid: r.id, text: r.text, at: r.at,
+                         fired: r.fired, done: false, timed: true, due: r.at,
+                         urgent: false, important: false }))
+    }
+    // What the day view lists: everything with a time, in time order —
+    // timed tasks and reminders together, so the day reads as a schedule —
+    // then the tasks without one, in the order they were written.
+    readonly property var dayAgenda: {
+        const rows = dayTasks.map(t => Object.assign({ kind: "task" }, t)).concat(dayReminders)
+        return rows.sort((a, b) => a.timed !== b.timed ? (a.timed ? -1 : 1)
+                                 : a.timed ? a.due - b.due : a.at - b.at)
     }
 
     // ── the time box ──────────────────────────────────────────────────────

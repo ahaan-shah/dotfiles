@@ -43,6 +43,21 @@ Scope {
         function open(): void { TodoState.show() }
         function close(): void { TodoState.close() }
         function add(text: string): string { return TodoState.add(text) ? "ok" : "empty text" }
+        // EVE's dated add (2026-11-11): fields is JSON of any of urgent,
+        // important, due (epoch ms, 0 = none), timed. The calendar day view's
+        // commit() rules, so a task from either place is the same task: a
+        // timed one still ahead gets a reminder it owns (rid); one logged for
+        // a time already past does not. The broker resolves the date.
+        function addWith(text: string, fields: string): string {
+            let f
+            try { f = JSON.parse(fields) } catch (e) { return "bad fields" }
+            const t = String(text || "").trim()
+            if (t === "") return "empty text"
+            const due = Number(f.due) || 0
+            const timed = due > 0 && f.timed === true
+            const rid = timed && due > Date.now() ? RemindersState.addAt(due, t, false) : ""
+            return TodoState.add(t, f.urgent === true, f.important !== false, due, timed, rid) ? "ok" : "empty text"
+        }
         function list(): string {
             // Due dates and the priority chips too since 2026-10-26: EVE's
             // agenda reads this, and "today" means nothing without dates.

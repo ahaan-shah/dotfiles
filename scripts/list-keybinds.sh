@@ -199,4 +199,25 @@ if command -v hyprctl >/dev/null; then
     fi
 fi
 
+# ── Keys that are not hl.bind ─────────────────────────────────────────────
+# Push-to-talk (Right Alt) is an input.keyboard.key handler in hyprland.lua,
+# not a bind — see PUSH-TO-TALK there for why — so the parser above cannot see
+# it and `hyprctl binds` does not count it. Ahaan, 2026-11-10: it belongs on
+# this page anyway. It is listed here by hand, with a FIFTH column "fixed"
+# that tells Settings.qml the row can be read but not reassigned or reset:
+# keybinds.conf overrides only reach hl.bind, so a capture box here would
+# write a setting nothing reads.
+#
+# After FILE_N on purpose: a fixed row is not a registered bind, and counting
+# it would trip the count warning on every open.
+#
+# Placed straight after the voice-typing toggle (declared CTRL + period), its
+# sibling, when that row is present; at the end otherwise.
+FIXED="$(printf '%s\t%s\t%s\t%s\t%s' "Right Alt (hold)" "Right Alt (hold)" \
+    "Push-to-talk: hold to dictate, release to type it" \
+    "voxtype record start / stop (input.keyboard.key 108)" "fixed")"
+ROWS="$(printf '%s\n' "$ROWS" | awk -F'\t' -v fixed="$FIXED" '
+    { print } $1 == "CTRL + period" && !done { print fixed; done = 1 }
+    END { if (!done) print fixed }')"
+
 printf '%s\n' "$ROWS"
